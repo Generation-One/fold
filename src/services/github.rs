@@ -459,6 +459,39 @@ impl GitHubService {
             .map_err(|e| Error::GitHub(format!("Failed to parse response: {}", e)))
     }
 
+    /// Get files changed in a pull request.
+    pub async fn get_pull_request_files(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u32,
+        token: &str,
+    ) -> Result<Vec<GitHubFile>> {
+        let url = format!(
+            "{}/repos/{}/{}/pulls/{}/files?per_page=100",
+            GITHUB_API_URL, owner, repo, pr_number
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .headers(self.build_headers(token))
+            .send()
+            .await
+            .map_err(|e| Error::GitHub(format!("Request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(Error::GitHub(format!("GitHub API error {}: {}", status, text)));
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| Error::GitHub(format!("Failed to parse response: {}", e)))
+    }
+
     /// Verify webhook signature.
     pub fn verify_signature(&self, payload: &[u8], signature: &str, secret: &str) -> bool {
         use hmac::{Hmac, Mac};

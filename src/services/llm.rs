@@ -520,6 +520,52 @@ Write in past tense, 2-3 paragraphs. Be specific about technical details."#,
         self.complete(&prompt, 400).await
     }
 
+    /// Summarize a PR file diff for impact analysis.
+    ///
+    /// Used for hybrid diff indexing - only called on top impactful files.
+    pub async fn summarize_pr_diff(
+        &self,
+        pr_title: &str,
+        file_path: &str,
+        status: &str,
+        additions: i32,
+        deletions: i32,
+        patch: Option<&str>,
+    ) -> Result<String> {
+        let patch_preview = patch
+            .map(|p| p.chars().take(2000).collect::<String>())
+            .unwrap_or_else(|| "(patch not available)".to_string());
+
+        let prompt = format!(
+            r#"Analyze this file change from a pull request.
+
+PR: {pr_title}
+File: {file_path}
+Status: {status}
+Changes: +{additions} -{deletions} lines
+
+Diff:
+```
+{patch}
+```
+
+Provide a concise technical analysis (3-5 sentences):
+1. What was changed in this file?
+2. Why might this change have been made? (infer from context)
+3. What areas of the codebase might be affected?
+
+Focus on actionable insights for developers reviewing or searching this change later."#,
+            pr_title = pr_title,
+            file_path = file_path,
+            status = status,
+            additions = additions,
+            deletions = deletions,
+            patch = patch_preview
+        );
+
+        self.complete(&prompt, 300).await
+    }
+
     /// Suggest links between a memory and candidate memories.
     pub async fn suggest_links(
         &self,

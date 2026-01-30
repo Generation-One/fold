@@ -486,16 +486,26 @@ async fn process_github_pull_request(
             "Stored pull request"
         );
 
-        // Process based on action
+        // Process based on action - hybrid diff indexing for opened/synchronized PRs
         match action {
             "opened" | "synchronize" => {
-                // Could trigger indexing job for PR changes in the future
-                tracing::debug!(action = %action, "PR action recorded");
+                // Hybrid diff indexing: fetch files, rank by impact, analyze top 4
+                if let Err(e) = process_pr_diff_hybrid(
+                    state,
+                    &repo_id_str,
+                    pr.number,
+                    &pr.title,
+                ).await {
+                    tracing::warn!(
+                        pr_number = pr.number,
+                        error = %e,
+                        "Failed to process PR diff (non-fatal)"
+                    );
+                }
             }
             "closed" => {
                 if pr.merged.unwrap_or(false) {
                     tracing::info!(pr_number = pr.number, "Pull request merged");
-                    // Could create a merge memory in the future
                 }
             }
             _ => {}
@@ -503,6 +513,118 @@ async fn process_github_pull_request(
     }
 
     Ok(None)
+}
+
+/// Process PR diff using hybrid approach - only analyze top impactful files.
+///
+/// Fetches PR files, ranks by impact (additions + deletions), and calls LLM
+/// for the top 4 most impactful files to minimize API costs while capturing
+/// the most important changes.
+async fn process_pr_diff_hybrid(
+    state: &AppState,
+    repo_id: &str,
+    pr_number: u32,
+    pr_title: &str,
+) -> Result<()> {
+    // Get repository details
+    let repo = db::get_repository(&state.db, repo_id).await?;
+
+    // Fetch PR files from GitHub
+    let files = state.github.get_pull_request_files(
+        &repo.owner,
+        &repo.repo,
+        pr_number,
+        &repo.access_token,
+    ).await?;
+
+    if files.is_empty() {
+        tracing::debug!(pr_number = pr_number, "No files in PR");
+        return Ok(());
+    }
+
+    // Rank files by impact (additions + deletions), excluding trivial files
+    let mut ranked_files: Vec<_> = files
+        .iter()
+        .filter(|f| {
+            // Exclude lockfiles, generated files, and very small changes
+            let path = f.filename.to_lowercase();
+            !path.contains("lock") &&
+            !path.contains(".min.") &&
+            !path.ends_with(".map") &&
+            !path.starts_with("vendor/") &&
+            !path.starts_with("node_modules/") &&
+            (f.additions + f.deletions) > 2
+        })
+        .collect();
+
+    // Sort by total changes (most impactful first)
+    ranked_files.sort_by(|a, b| {
+        (b.additions + b.deletions).cmp(&(a.additions + a.deletions))
+    });
+
+    // Take top 4 most impactful files
+    let top_files: Vec<_> = ranked_files.into_iter().take(4).collect();
+
+    if top_files.is_empty() {
+        tracing::debug!(pr_number = pr_number, "No significant files to analyze");
+        return Ok(());
+    }
+
+    tracing::info!(
+        pr_number = pr_number,
+        files_total = files.len(),
+        files_analyzed = top_files.len(),
+        "Analyzing top impactful files in PR"
+    );
+
+    // Analyze each top file with LLM
+    let mut analyses = Vec::new();
+    for file in &top_files {
+        match state.llm.summarize_pr_diff(
+            pr_title,
+            &file.filename,
+            &file.status,
+            file.additions,
+            file.deletions,
+            file.patch.as_deref(),
+        ).await {
+            Ok(analysis) => {
+                analyses.push(format!(
+                    "**{}** (+{}, -{})\n{}",
+                    file.filename, file.additions, file.deletions, analysis
+                ));
+            }
+            Err(e) => {
+                tracing::warn!(
+                    file = %file.filename,
+                    error = %e,
+                    "Failed to analyze file diff"
+                );
+            }
+        }
+    }
+
+    if !analyses.is_empty() {
+        // Store analysis in PR description field via update
+        let analysis_text = analyses.join("\n\n---\n\n");
+        tracing::debug!(
+            pr_number = pr_number,
+            analysis_len = analysis_text.len(),
+            "Generated PR diff analysis"
+        );
+
+        // Update PR record with analysis (stored in description field)
+        sqlx::query(
+            "UPDATE git_pull_requests SET description = ? WHERE repository_id = ? AND number = ?"
+        )
+        .bind(&analysis_text)
+        .bind(repo_id)
+        .bind(pr_number as i32)
+        .execute(&state.db)
+        .await?;
+    }
+
+    Ok(())
 }
 
 /// Process GitLab push event.
