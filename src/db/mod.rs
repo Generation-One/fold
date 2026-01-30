@@ -98,6 +98,7 @@ pub async fn migrate(pool: &DbPool) -> Result<()> {
         ("001_initial", include_str!("../../migrations/001_initial.sql")),
         ("002_repositories", include_str!("../../migrations/002_repositories.sql")),
         ("003_jobs", include_str!("../../migrations/003_jobs.sql")),
+        ("004_schema_fixes", include_str!("../../migrations/004_schema_fixes.sql")),
     ];
 
     for (name, sql) in migrations {
