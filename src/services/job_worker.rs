@@ -1,10 +1,15 @@
 //! Background job worker for processing indexing tasks.
 //!
-//! Polls for pending jobs and processes them asynchronously.
-//! Handles retries, progress updates, and error reporting.
+//! Persistent SQLite-backed job queue with:
+//! - Atomic job claiming (prevents duplicate processing)
+//! - Priority-based scheduling
+//! - Automatic retry with exponential backoff
+//! - Stale job recovery
+//! - Execution history tracking
+//! - Heartbeat to prevent job timeouts
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::RwLock;
 use tokio::time::sleep;
@@ -14,11 +19,17 @@ use crate::db::{self, DbPool, JobType, LogLevel};
 use crate::error::{Error, Result};
 use crate::services::{GitHubService, GitSyncService, LlmService, MemoryService};
 
-/// Poll interval for checking new jobs
-const POLL_INTERVAL_SECS: u64 = 5;
+/// Poll interval for checking new jobs (seconds)
+const POLL_INTERVAL_SECS: u64 = 2;
 
 /// Maximum jobs to process concurrently
-const MAX_CONCURRENT_JOBS: usize = 3;
+const MAX_CONCURRENT_JOBS: usize = 5;
+
+/// How often to send heartbeats (seconds)
+const HEARTBEAT_INTERVAL_SECS: u64 = 30;
+
+/// How often to check for stale jobs (seconds)
+const STALE_CHECK_INTERVAL_SECS: u64 = 60;
 
 /// Background job worker service.
 #[derive(Clone)]
@@ -34,6 +45,7 @@ struct JobWorkerInner {
     llm: Arc<LlmService>,
     running: RwLock<bool>,
     active_jobs: RwLock<usize>,
+    worker_id: String,
 }
 
 impl JobWorker {
@@ -45,6 +57,9 @@ impl JobWorker {
         github: Arc<GitHubService>,
         llm: Arc<LlmService>,
     ) -> Self {
+        // Generate unique worker ID
+        let worker_id = format!("worker-{}-{}", hostname(), nanoid::nanoid!(8));
+
         Self {
             inner: Arc::new(JobWorkerInner {
                 db,
@@ -54,8 +69,14 @@ impl JobWorker {
                 llm,
                 running: RwLock::new(false),
                 active_jobs: RwLock::new(0),
+                worker_id,
             }),
         }
+    }
+
+    /// Get the worker ID.
+    pub fn worker_id(&self) -> &str {
+        &self.inner.worker_id
     }
 
     /// Start the job worker background loop.

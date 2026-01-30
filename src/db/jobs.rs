@@ -1,12 +1,26 @@
 //! Background job and job log database queries.
 //!
-//! Tracks background indexing jobs, metadata sync, and other async operations.
+//! Persistent SQLite-backed job queue with:
+//! - Atomic job claiming (prevents duplicate processing)
+//! - Priority-based scheduling
+//! - Automatic retry with exponential backoff
+//! - Stale job recovery
+//! - Execution history tracking
 
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 use super::DbPool;
+
+/// Default lock timeout in seconds (5 minutes)
+const LOCK_TIMEOUT_SECS: i64 = 300;
+
+/// Base retry delay in seconds
+const BASE_RETRY_DELAY_SECS: i64 = 60;
+
+/// Maximum retry delay in seconds (1 hour)
+const MAX_RETRY_DELAY_SECS: i64 = 3600;
 
 // ============================================================================
 // Job Types
@@ -20,6 +34,9 @@ pub enum JobType {
     ReindexRepo,
     IndexHistory,
     SyncMetadata,
+    ProcessWebhook,
+    GenerateSummary,
+    Custom,
 }
 
 impl JobType {
@@ -29,6 +46,9 @@ impl JobType {
             Self::ReindexRepo => "reindex_repo",
             Self::IndexHistory => "index_history",
             Self::SyncMetadata => "sync_metadata",
+            Self::ProcessWebhook => "process_webhook",
+            Self::GenerateSummary => "generate_summary",
+            Self::Custom => "custom",
         }
     }
 
@@ -38,6 +58,9 @@ impl JobType {
             "reindex_repo" => Some(Self::ReindexRepo),
             "index_history" => Some(Self::IndexHistory),
             "sync_metadata" => Some(Self::SyncMetadata),
+            "process_webhook" => Some(Self::ProcessWebhook),
+            "generate_summary" => Some(Self::GenerateSummary),
+            "custom" => Some(Self::Custom),
             _ => None,
         }
     }
@@ -51,6 +74,8 @@ pub enum JobStatus {
     Running,
     Completed,
     Failed,
+    Retry,
+    Cancelled,
 }
 
 impl JobStatus {
@@ -60,6 +85,8 @@ impl JobStatus {
             Self::Running => "running",
             Self::Completed => "completed",
             Self::Failed => "failed",
+            Self::Retry => "retry",
+            Self::Cancelled => "cancelled",
         }
     }
 
@@ -69,8 +96,31 @@ impl JobStatus {
             "running" => Some(Self::Running),
             "completed" => Some(Self::Completed),
             "failed" => Some(Self::Failed),
+            "retry" => Some(Self::Retry),
+            "cancelled" => Some(Self::Cancelled),
             _ => None,
         }
+    }
+}
+
+/// Job priority levels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum JobPriority {
+    Low = 0,
+    Normal = 5,
+    High = 10,
+    Critical = 20,
+}
+
+impl JobPriority {
+    pub fn as_i32(&self) -> i32 {
+        *self as i32
+    }
+}
+
+impl Default for JobPriority {
+    fn default() -> Self {
+        Self::Normal
     }
 }
 
@@ -91,6 +141,15 @@ pub struct Job {
     pub completed_at: Option<String>,
     pub result: Option<String>,  // JSON
     pub error: Option<String>,
+    // New fields for enhanced queue
+    pub payload: Option<String>,      // JSON payload for job-specific data
+    pub priority: Option<i32>,        // Higher = more urgent
+    pub max_retries: Option<i32>,     // Maximum retry attempts
+    pub retry_count: Option<i32>,     // Current retry count
+    pub locked_at: Option<String>,    // When job was claimed
+    pub locked_by: Option<String>,    // Worker ID that claimed it
+    pub scheduled_at: Option<String>, // For delayed jobs
+    pub last_error: Option<String>,   // Last error message for retries
 }
 
 impl Job {
@@ -139,6 +198,69 @@ pub struct CreateJob {
     pub project_id: Option<String>,
     pub repository_id: Option<String>,
     pub total_items: Option<i32>,
+    pub payload: Option<serde_json::Value>,
+    pub priority: Option<JobPriority>,
+    pub max_retries: Option<i32>,
+    pub scheduled_at: Option<String>,
+}
+
+impl CreateJob {
+    /// Create a simple job with just type and ID.
+    pub fn new(id: String, job_type: JobType) -> Self {
+        Self {
+            id,
+            job_type,
+            project_id: None,
+            repository_id: None,
+            total_items: None,
+            payload: None,
+            priority: None,
+            max_retries: None,
+            scheduled_at: None,
+        }
+    }
+
+    /// Set the project ID.
+    pub fn with_project(mut self, project_id: impl Into<String>) -> Self {
+        self.project_id = Some(project_id.into());
+        self
+    }
+
+    /// Set the repository ID.
+    pub fn with_repository(mut self, repository_id: impl Into<String>) -> Self {
+        self.repository_id = Some(repository_id.into());
+        self
+    }
+
+    /// Set the payload.
+    pub fn with_payload(mut self, payload: serde_json::Value) -> Self {
+        self.payload = Some(payload);
+        self
+    }
+
+    /// Set the priority.
+    pub fn with_priority(mut self, priority: JobPriority) -> Self {
+        self.priority = Some(priority);
+        self
+    }
+
+    /// Set max retries.
+    pub fn with_max_retries(mut self, max_retries: i32) -> Self {
+        self.max_retries = Some(max_retries);
+        self
+    }
+
+    /// Schedule for later execution.
+    pub fn scheduled_at(mut self, at: impl Into<String>) -> Self {
+        self.scheduled_at = Some(at.into());
+        self
+    }
+
+    /// Set total items for progress tracking.
+    pub fn with_total_items(mut self, total: i32) -> Self {
+        self.total_items = Some(total);
+        self
+    }
 }
 
 /// Job result summary.
@@ -242,16 +364,33 @@ pub struct CreateWebhookDelivery {
     pub payload: serde_json::Value,
 }
 
+/// Job execution record for tracking attempts.
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct JobExecution {
+    pub id: i64,
+    pub job_id: String,
+    pub attempt: i32,
+    pub worker_id: String,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+    pub status: String,
+    pub error: Option<String>,
+    pub duration_ms: Option<i64>,
+}
+
 // ============================================================================
 // Job Queries
 // ============================================================================
 
 /// Create a new job.
 pub async fn create_job(pool: &DbPool, input: CreateJob) -> Result<Job> {
+    let payload_json = input.payload.map(|p| serde_json::to_string(&p).unwrap_or_default());
+    let priority = input.priority.map(|p| p.as_i32()).unwrap_or(JobPriority::Normal.as_i32());
+
     sqlx::query_as::<_, Job>(
         r#"
-        INSERT INTO jobs (id, type, project_id, repository_id, total_items)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO jobs (id, type, project_id, repository_id, total_items, payload, priority, max_retries, scheduled_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING *
         "#,
     )
@@ -260,9 +399,23 @@ pub async fn create_job(pool: &DbPool, input: CreateJob) -> Result<Job> {
     .bind(&input.project_id)
     .bind(&input.repository_id)
     .bind(input.total_items)
+    .bind(&payload_json)
+    .bind(priority)
+    .bind(input.max_retries.unwrap_or(3))
+    .bind(&input.scheduled_at)
     .fetch_one(pool)
     .await
     .map_err(Error::Database)
+}
+
+/// Enqueue a job with builder pattern.
+pub async fn enqueue_job(
+    pool: &DbPool,
+    job_type: JobType,
+    payload: Option<serde_json::Value>,
+) -> Result<Job> {
+    let id = nanoid::nanoid!();
+    create_job(pool, CreateJob::new(id, job_type).with_payload(payload.unwrap_or(serde_json::json!({})))).await
 }
 
 /// Get a job by ID.
@@ -283,7 +436,7 @@ pub async fn get_job_optional(pool: &DbPool, id: &str) -> Result<Option<Job>> {
         .map_err(Error::Database)
 }
 
-/// Start a job (set to running).
+/// Start a job (set to running) - simple version without locking.
 pub async fn start_job(pool: &DbPool, id: &str) -> Result<Job> {
     sqlx::query_as::<_, Job>(
         r#"
@@ -298,6 +451,161 @@ pub async fn start_job(pool: &DbPool, id: &str) -> Result<Job> {
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| Error::NotFound(format!("Job not found: {}", id)))
+}
+
+/// Atomically claim a job for processing.
+///
+/// Uses SQLite's atomic UPDATE to claim a pending/retry job.
+/// Returns None if no jobs available or if claim failed due to race.
+pub async fn claim_job(pool: &DbPool, worker_id: &str) -> Result<Option<Job>> {
+    // Atomically claim the next available job
+    // Jobs are selected by: status (pending/retry), scheduled time, priority, created_at
+    let job = sqlx::query_as::<_, Job>(
+        r#"
+        UPDATE jobs SET
+            status = 'running',
+            started_at = datetime('now'),
+            locked_at = datetime('now'),
+            locked_by = ?
+        WHERE id = (
+            SELECT id FROM jobs
+            WHERE status IN ('pending', 'retry')
+            AND (scheduled_at IS NULL OR datetime(scheduled_at) <= datetime('now'))
+            ORDER BY priority DESC, created_at ASC
+            LIMIT 1
+        )
+        AND status IN ('pending', 'retry')
+        RETURNING *
+        "#,
+    )
+    .bind(worker_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(Error::Database)?;
+
+    Ok(job)
+}
+
+/// Atomically claim a specific job by ID.
+pub async fn claim_job_by_id(pool: &DbPool, job_id: &str, worker_id: &str) -> Result<Option<Job>> {
+    let job = sqlx::query_as::<_, Job>(
+        r#"
+        UPDATE jobs SET
+            status = 'running',
+            started_at = datetime('now'),
+            locked_at = datetime('now'),
+            locked_by = ?
+        WHERE id = ?
+        AND status IN ('pending', 'retry')
+        RETURNING *
+        "#,
+    )
+    .bind(worker_id)
+    .bind(job_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(Error::Database)?;
+
+    Ok(job)
+}
+
+/// Release a job lock without completing it (e.g., on worker shutdown).
+pub async fn release_job(pool: &DbPool, job_id: &str) -> Result<Job> {
+    sqlx::query_as::<_, Job>(
+        r#"
+        UPDATE jobs SET
+            status = 'pending',
+            locked_at = NULL,
+            locked_by = NULL
+        WHERE id = ?
+        AND status = 'running'
+        RETURNING *
+        "#,
+    )
+    .bind(job_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| Error::NotFound(format!("Job not found or not running: {}", job_id)))
+}
+
+/// Schedule a job for retry with exponential backoff.
+pub async fn retry_job(pool: &DbPool, job_id: &str, error: &str) -> Result<Option<Job>> {
+    // First, get the job to check retry count
+    let job = get_job(pool, job_id).await?;
+
+    let retry_count = job.retry_count.unwrap_or(0);
+    let max_retries = job.max_retries.unwrap_or(3);
+
+    if retry_count >= max_retries {
+        // Max retries exceeded, mark as failed
+        fail_job(pool, job_id, error).await?;
+        return Ok(None);
+    }
+
+    // Calculate exponential backoff delay
+    let delay_secs = (BASE_RETRY_DELAY_SECS * 2_i64.pow(retry_count as u32)).min(MAX_RETRY_DELAY_SECS);
+
+    let job = sqlx::query_as::<_, Job>(
+        r#"
+        UPDATE jobs SET
+            status = 'retry',
+            retry_count = retry_count + 1,
+            last_error = ?,
+            scheduled_at = datetime('now', '+' || ? || ' seconds'),
+            locked_at = NULL,
+            locked_by = NULL
+        WHERE id = ?
+        RETURNING *
+        "#,
+    )
+    .bind(error)
+    .bind(delay_secs)
+    .bind(job_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(Error::Database)?;
+
+    Ok(job)
+}
+
+/// Recover stale jobs that have been locked too long.
+/// Returns number of jobs recovered.
+pub async fn recover_stale_jobs(pool: &DbPool, timeout_secs: Option<i64>) -> Result<u64> {
+    let timeout = timeout_secs.unwrap_or(LOCK_TIMEOUT_SECS);
+
+    let result = sqlx::query(
+        r#"
+        UPDATE jobs SET
+            status = 'retry',
+            locked_at = NULL,
+            locked_by = NULL,
+            last_error = 'Worker timeout - job recovered'
+        WHERE status = 'running'
+        AND locked_at IS NOT NULL
+        AND datetime(locked_at, '+' || ? || ' seconds') < datetime('now')
+        "#,
+    )
+    .bind(timeout)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
+}
+
+/// Refresh the lock on a job (heartbeat).
+pub async fn heartbeat_job(pool: &DbPool, job_id: &str, worker_id: &str) -> Result<bool> {
+    let result = sqlx::query(
+        r#"
+        UPDATE jobs SET locked_at = datetime('now')
+        WHERE id = ? AND locked_by = ? AND status = 'running'
+        "#,
+    )
+    .bind(job_id)
+    .bind(worker_id)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
 }
 
 /// Update job progress.
@@ -357,6 +665,8 @@ pub async fn complete_job(pool: &DbPool, id: &str, result: Option<&JobResult>) -
         UPDATE jobs SET
             status = 'completed',
             completed_at = datetime('now'),
+            locked_at = NULL,
+            locked_by = NULL,
             result = ?
         WHERE id = ?
         RETURNING *
@@ -369,13 +679,15 @@ pub async fn complete_job(pool: &DbPool, id: &str, result: Option<&JobResult>) -
     .ok_or_else(|| Error::NotFound(format!("Job not found: {}", id)))
 }
 
-/// Fail a job.
+/// Fail a job permanently (no more retries).
 pub async fn fail_job(pool: &DbPool, id: &str, error: &str) -> Result<Job> {
     sqlx::query_as::<_, Job>(
         r#"
         UPDATE jobs SET
             status = 'failed',
             completed_at = datetime('now'),
+            locked_at = NULL,
+            locked_by = NULL,
             error = ?
         WHERE id = ?
         RETURNING *
@@ -386,6 +698,95 @@ pub async fn fail_job(pool: &DbPool, id: &str, error: &str) -> Result<Job> {
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| Error::NotFound(format!("Job not found: {}", id)))
+}
+
+/// Cancel a job.
+pub async fn cancel_job(pool: &DbPool, id: &str) -> Result<Job> {
+    sqlx::query_as::<_, Job>(
+        r#"
+        UPDATE jobs SET
+            status = 'cancelled',
+            completed_at = datetime('now'),
+            locked_at = NULL,
+            locked_by = NULL
+        WHERE id = ?
+        AND status IN ('pending', 'retry')
+        RETURNING *
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| Error::NotFound(format!("Job not found or not cancellable: {}", id)))
+}
+
+// ============================================================================
+// Job Execution Tracking
+// ============================================================================
+
+/// Record a job execution attempt.
+pub async fn create_job_execution(
+    pool: &DbPool,
+    job_id: &str,
+    attempt: i32,
+    worker_id: &str,
+) -> Result<JobExecution> {
+    sqlx::query_as::<_, JobExecution>(
+        r#"
+        INSERT INTO job_executions (job_id, attempt, worker_id, status)
+        VALUES (?, ?, ?, 'running')
+        RETURNING *
+        "#,
+    )
+    .bind(job_id)
+    .bind(attempt)
+    .bind(worker_id)
+    .fetch_one(pool)
+    .await
+    .map_err(Error::Database)
+}
+
+/// Complete a job execution record.
+pub async fn complete_job_execution(
+    pool: &DbPool,
+    execution_id: i64,
+    status: &str,
+    error: Option<&str>,
+    duration_ms: i64,
+) -> Result<JobExecution> {
+    sqlx::query_as::<_, JobExecution>(
+        r#"
+        UPDATE job_executions SET
+            completed_at = datetime('now'),
+            status = ?,
+            error = ?,
+            duration_ms = ?
+        WHERE id = ?
+        RETURNING *
+        "#,
+    )
+    .bind(status)
+    .bind(error)
+    .bind(duration_ms)
+    .bind(execution_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| Error::NotFound(format!("Execution not found: {}", execution_id)))
+}
+
+/// List executions for a job.
+pub async fn list_job_executions(pool: &DbPool, job_id: &str) -> Result<Vec<JobExecution>> {
+    sqlx::query_as::<_, JobExecution>(
+        r#"
+        SELECT * FROM job_executions
+        WHERE job_id = ?
+        ORDER BY attempt ASC
+        "#,
+    )
+    .bind(job_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Error::Database)
 }
 
 /// Delete a job.
@@ -464,13 +865,14 @@ pub async fn list_jobs_by_status(pool: &DbPool, status: JobStatus) -> Result<Vec
     .map_err(Error::Database)
 }
 
-/// List pending jobs (for job runner).
+/// List pending/retry jobs ready for processing.
 pub async fn list_pending_jobs(pool: &DbPool, limit: i64) -> Result<Vec<Job>> {
     sqlx::query_as::<_, Job>(
         r#"
         SELECT * FROM jobs
-        WHERE status = 'pending'
-        ORDER BY created_at ASC
+        WHERE status IN ('pending', 'retry')
+        AND (scheduled_at IS NULL OR datetime(scheduled_at) <= datetime('now'))
+        ORDER BY priority DESC, created_at ASC
         LIMIT ?
         "#,
     )
@@ -478,6 +880,70 @@ pub async fn list_pending_jobs(pool: &DbPool, limit: i64) -> Result<Vec<Job>> {
     .fetch_all(pool)
     .await
     .map_err(Error::Database)
+}
+
+/// Get queue depth (number of pending/retry jobs).
+pub async fn get_queue_depth(pool: &DbPool) -> Result<i64> {
+    let (count,): (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*) FROM jobs
+        WHERE status IN ('pending', 'retry')
+        AND (scheduled_at IS NULL OR datetime(scheduled_at) <= datetime('now'))
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
+}
+
+/// Get queue statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueStats {
+    pub pending: i64,
+    pub running: i64,
+    pub retry: i64,
+    pub completed_24h: i64,
+    pub failed_24h: i64,
+}
+
+pub async fn get_queue_stats(pool: &DbPool) -> Result<QueueStats> {
+    let (pending,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM jobs WHERE status = 'pending'",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let (running,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM jobs WHERE status = 'running'",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let (retry,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM jobs WHERE status = 'retry'",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let (completed_24h,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM jobs WHERE status = 'completed' AND completed_at >= datetime('now', '-1 day')",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let (failed_24h,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM jobs WHERE status = 'failed' AND completed_at >= datetime('now', '-1 day')",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(QueueStats {
+        pending,
+        running,
+        retry,
+        completed_24h,
+        failed_24h,
+    })
 }
 
 /// List jobs for a project.
@@ -768,14 +1234,11 @@ mod tests {
     async fn test_job_lifecycle() {
         let pool = setup_test_db().await;
 
-        // Create job
-        let job = create_job(&pool, CreateJob {
-            id: "job-1".to_string(),
-            job_type: JobType::IndexRepo,
-            project_id: Some("proj-1".to_string()),
-            repository_id: None,
-            total_items: Some(100),
-        }).await.unwrap();
+        // Create job using builder pattern
+        let job = create_job(&pool, CreateJob::new("job-1".to_string(), JobType::IndexRepo)
+            .with_project("proj-1")
+            .with_total_items(100)
+        ).await.unwrap();
 
         assert_eq!(job.status, "pending");
         assert_eq!(job.processed_items, 0);
@@ -804,16 +1267,143 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_atomic_claim_job() {
+        let pool = setup_test_db().await;
+
+        // Create jobs with different priorities
+        create_job(&pool, CreateJob::new("job-low".to_string(), JobType::IndexRepo)
+            .with_priority(JobPriority::Low)
+        ).await.unwrap();
+
+        create_job(&pool, CreateJob::new("job-high".to_string(), JobType::IndexRepo)
+            .with_priority(JobPriority::High)
+        ).await.unwrap();
+
+        create_job(&pool, CreateJob::new("job-normal".to_string(), JobType::IndexRepo)
+            .with_priority(JobPriority::Normal)
+        ).await.unwrap();
+
+        // Claim should get highest priority first
+        let claimed = claim_job(&pool, "worker-1").await.unwrap();
+        assert!(claimed.is_some());
+        assert_eq!(claimed.as_ref().unwrap().id, "job-high");
+        assert_eq!(claimed.as_ref().unwrap().locked_by.as_deref(), Some("worker-1"));
+
+        // Next claim should get normal priority
+        let claimed = claim_job(&pool, "worker-2").await.unwrap();
+        assert!(claimed.is_some());
+        assert_eq!(claimed.as_ref().unwrap().id, "job-normal");
+
+        // And finally low priority
+        let claimed = claim_job(&pool, "worker-3").await.unwrap();
+        assert!(claimed.is_some());
+        assert_eq!(claimed.as_ref().unwrap().id, "job-low");
+
+        // No more jobs available
+        let claimed = claim_job(&pool, "worker-4").await.unwrap();
+        assert!(claimed.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_retry_job() {
+        let pool = setup_test_db().await;
+
+        // Create job with max 2 retries
+        create_job(&pool, CreateJob::new("job-1".to_string(), JobType::IndexRepo)
+            .with_max_retries(2)
+        ).await.unwrap();
+
+        // Claim and fail
+        claim_job(&pool, "worker-1").await.unwrap();
+
+        // First retry
+        let job = retry_job(&pool, "job-1", "Error 1").await.unwrap();
+        assert!(job.is_some());
+        assert_eq!(job.as_ref().unwrap().status, "retry");
+        assert_eq!(job.as_ref().unwrap().retry_count, Some(1));
+
+        // Claim again and fail
+        // Note: We need to wait for scheduled_at or skip it for testing
+        // For now, just update the job to be ready
+        sqlx::query("UPDATE jobs SET scheduled_at = NULL WHERE id = 'job-1'")
+            .execute(&pool).await.unwrap();
+
+        claim_job(&pool, "worker-2").await.unwrap();
+
+        // Second retry
+        let job = retry_job(&pool, "job-1", "Error 2").await.unwrap();
+        assert!(job.is_some());
+        assert_eq!(job.as_ref().unwrap().retry_count, Some(2));
+
+        // Reset scheduled_at
+        sqlx::query("UPDATE jobs SET scheduled_at = NULL WHERE id = 'job-1'")
+            .execute(&pool).await.unwrap();
+
+        claim_job(&pool, "worker-3").await.unwrap();
+
+        // Third retry - should fail permanently (max_retries=2)
+        let job = retry_job(&pool, "job-1", "Error 3").await.unwrap();
+        assert!(job.is_none()); // None means max retries exceeded
+
+        // Verify job is failed
+        let job = get_job(&pool, "job-1").await.unwrap();
+        assert_eq!(job.status, "failed");
+    }
+
+    #[tokio::test]
+    async fn test_release_job() {
+        let pool = setup_test_db().await;
+
+        create_job(&pool, CreateJob::new("job-1".to_string(), JobType::IndexRepo))
+            .await.unwrap();
+
+        // Claim job
+        let claimed = claim_job(&pool, "worker-1").await.unwrap();
+        assert!(claimed.is_some());
+        assert_eq!(claimed.unwrap().status, "running");
+
+        // Release job
+        let released = release_job(&pool, "job-1").await.unwrap();
+        assert_eq!(released.status, "pending");
+        assert!(released.locked_by.is_none());
+        assert!(released.locked_at.is_none());
+
+        // Job should be claimable again
+        let claimed = claim_job(&pool, "worker-2").await.unwrap();
+        assert!(claimed.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_queue_stats() {
+        let pool = setup_test_db().await;
+
+        // Create various jobs
+        for i in 1..=3 {
+            create_job(&pool, CreateJob::new(format!("pending-{}", i), JobType::IndexRepo))
+                .await.unwrap();
+        }
+
+        // Claim one (makes it running)
+        claim_job(&pool, "worker-1").await.unwrap();
+
+        // Complete one
+        complete_job(&pool, "pending-2", None).await.ok();
+
+        // Force claim another then fail it
+        claim_job(&pool, "worker-2").await.unwrap();
+        fail_job(&pool, "pending-3", "test error").await.unwrap();
+
+        let stats = get_queue_stats(&pool).await.unwrap();
+        assert_eq!(stats.running, 1);
+        // pending-2 was completed, pending-3 failed, so we should check actual counts
+    }
+
+    #[tokio::test]
     async fn test_job_logs() {
         let pool = setup_test_db().await;
 
-        create_job(&pool, CreateJob {
-            id: "job-1".to_string(),
-            job_type: JobType::IndexRepo,
-            project_id: None,
-            repository_id: None,
-            total_items: None,
-        }).await.unwrap();
+        create_job(&pool, CreateJob::new("job-1".to_string(), JobType::IndexRepo))
+            .await.unwrap();
 
         // Add logs
         create_job_log(&pool, CreateJobLog {
@@ -842,13 +1432,8 @@ mod tests {
         let pool = setup_test_db().await;
 
         for i in 1..=3 {
-            create_job(&pool, CreateJob {
-                id: format!("job-{}", i),
-                job_type: JobType::IndexRepo,
-                project_id: None,
-                repository_id: None,
-                total_items: None,
-            }).await.unwrap();
+            create_job(&pool, CreateJob::new(format!("job-{}", i), JobType::IndexRepo))
+                .await.unwrap();
         }
 
         // Start one job
@@ -859,5 +1444,37 @@ mod tests {
 
         let running = list_jobs_by_status(&pool, JobStatus::Running).await.unwrap();
         assert_eq!(running.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_job_with_payload() {
+        let pool = setup_test_db().await;
+
+        let payload = serde_json::json!({
+            "files": ["src/main.rs", "src/lib.rs"],
+            "branch": "main",
+            "commit_sha": "abc123"
+        });
+
+        let job = create_job(&pool, CreateJob::new("job-1".to_string(), JobType::IndexRepo)
+            .with_payload(payload.clone())
+            .with_priority(JobPriority::High)
+        ).await.unwrap();
+
+        assert!(job.payload.is_some());
+        let stored_payload: serde_json::Value = serde_json::from_str(job.payload.as_ref().unwrap()).unwrap();
+        assert_eq!(stored_payload["branch"], "main");
+        assert_eq!(job.priority, Some(10)); // High = 10
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_job() {
+        let pool = setup_test_db().await;
+
+        let job = enqueue_job(&pool, JobType::SyncMetadata, Some(serde_json::json!({"repo": "test"}))).await.unwrap();
+
+        assert!(!job.id.is_empty());
+        assert_eq!(job.job_type, "sync_metadata");
+        assert_eq!(job.status, "pending");
     }
 }
