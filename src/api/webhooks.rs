@@ -420,13 +420,10 @@ async fn process_github_push(
     let job_id = crate::models::new_id();
     let job = db::create_job(
         &state.db,
-        db::CreateJob {
-            id: job_id.clone(),
-            job_type: db::JobType::IndexRepo,
-            project_id: Some(repo.project_id),
-            repository_id: Some(repo_id_str),
-            total_items: Some(changed_files.len() as i32),
-        },
+        db::CreateJob::new(job_id.clone(), db::JobType::IndexRepo)
+            .with_project(repo.project_id.clone())
+            .with_repository(repo_id_str.clone())
+            .with_total_items(changed_files.len() as i32),
     )
     .await?;
 
@@ -687,13 +684,10 @@ async fn process_gitlab_push(
     let job_id = crate::models::new_id();
     let job = db::create_job(
         &state.db,
-        db::CreateJob {
-            id: job_id.clone(),
-            job_type: db::JobType::IndexRepo,
-            project_id: Some(repo.project_id),
-            repository_id: Some(repo_id_str),
-            total_items: Some(changed_files.len() as i32),
-        },
+        db::CreateJob::new(job_id.clone(), db::JobType::IndexRepo)
+            .with_project(repo.project_id.clone())
+            .with_repository(repo_id_str.clone())
+            .with_total_items(changed_files.len() as i32),
     )
     .await?;
 

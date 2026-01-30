@@ -157,6 +157,7 @@ pub enum JobStatus {
     Running,
     Completed,
     Failed,
+    Retry,
     Cancelled,
 }
 
@@ -290,7 +291,7 @@ async fn system_status(State(state): State<AppState>) -> Result<Json<SystemStatu
     let embeddings = get_embedding_status(&state)?;
 
     // Get jobs status
-    let jobs = get_jobs_status(&state).await?;
+    let jobs = get_jobs_status(&state.db).await?;
 
     // Get metrics
     let metrics = SystemMetrics {
@@ -325,18 +326,61 @@ async fn system_status(State(state): State<AppState>) -> Result<Json<SystemStatu
 /// GET /status/jobs
 #[axum::debug_handler]
 async fn list_jobs(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Query(query): Query<ListJobsQuery>,
 ) -> Result<Json<ListJobsResponse>> {
-    let limit = query.limit.min(100);
+    let limit = query.limit.min(100) as i64;
+    let offset = query.offset as i64;
 
-    // TODO: Fetch jobs from database with filters
+    // Convert query status to db status
+    let db_status = query.status.map(|s| match s {
+        JobStatus::Pending => crate::db::JobStatus::Pending,
+        JobStatus::Running => crate::db::JobStatus::Running,
+        JobStatus::Completed => crate::db::JobStatus::Completed,
+        JobStatus::Failed => crate::db::JobStatus::Failed,
+        JobStatus::Retry => crate::db::JobStatus::Retry,
+        JobStatus::Cancelled => crate::db::JobStatus::Cancelled,
+    });
+
+    // Convert query job_type to db job_type
+    let db_job_type = query.job_type.as_ref().and_then(|t| crate::db::JobType::from_str(t));
+
+    // Fetch jobs from database
+    let jobs = crate::db::list_jobs(&state.db, db_status, db_job_type, limit, offset).await?;
+
+    // Convert to API response format
+    let job_infos: Vec<JobInfo> = jobs.into_iter().map(|j| JobInfo {
+        id: Uuid::parse_str(&j.id).unwrap_or_else(|_| Uuid::new_v4()),
+        job_type: j.job_type,
+        status: match j.status.as_str() {
+            "pending" => JobStatus::Pending,
+            "running" => JobStatus::Running,
+            "completed" => JobStatus::Completed,
+            "failed" => JobStatus::Failed,
+            "retry" => JobStatus::Retry,
+            "cancelled" => JobStatus::Cancelled,
+            _ => JobStatus::Pending,
+        },
+        progress: j.total_items.map(|total| {
+            if total == 0 { 100 } else { ((j.processed_items as f64 / total as f64) * 100.0) as u32 }
+        }),
+        created_at: j.created_at.parse().unwrap_or_else(|_| Utc::now()),
+        started_at: j.started_at.and_then(|s| s.parse().ok()),
+        completed_at: j.completed_at.and_then(|s| s.parse().ok()),
+        error: j.error,
+        metadata: j.payload.and_then(|p| serde_json::from_str(&p).ok()).unwrap_or(serde_json::json!({})),
+    }).collect();
+
+    // Get total count for pagination
+    let total = crate::db::count_jobs_by_status(&state.db, db_status.unwrap_or(crate::db::JobStatus::Pending))
+        .await
+        .unwrap_or(job_infos.len() as i64) as u32;
 
     Ok(Json(ListJobsResponse {
-        jobs: vec![],
-        total: 0,
+        jobs: job_infos,
+        total,
         offset: query.offset,
-        limit,
+        limit: limit as u32,
     }))
 }
 
@@ -345,12 +389,33 @@ async fn list_jobs(
 /// GET /status/jobs/:job_id
 #[axum::debug_handler]
 async fn get_job(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(path): Path<JobPath>,
 ) -> Result<Json<JobInfo>> {
-    // TODO: Fetch job from database
+    let job_id = path.job_id.to_string();
+    let job = crate::db::get_job(&state.db, &job_id).await?;
 
-    Err(Error::NotFound(format!("Job: {}", path.job_id)))
+    Ok(Json(JobInfo {
+        id: path.job_id,
+        job_type: job.job_type,
+        status: match job.status.as_str() {
+            "pending" => JobStatus::Pending,
+            "running" => JobStatus::Running,
+            "completed" => JobStatus::Completed,
+            "failed" => JobStatus::Failed,
+            "retry" => JobStatus::Retry,
+            "cancelled" => JobStatus::Cancelled,
+            _ => JobStatus::Pending,
+        },
+        progress: job.total_items.map(|total| {
+            if total == 0 { 100 } else { ((job.processed_items as f64 / total as f64) * 100.0) as u32 }
+        }),
+        created_at: job.created_at.parse().unwrap_or_else(|_| Utc::now()),
+        started_at: job.started_at.and_then(|s| s.parse().ok()),
+        completed_at: job.completed_at.and_then(|s| s.parse().ok()),
+        error: job.error,
+        metadata: job.payload.and_then(|p| serde_json::from_str(&p).ok()).unwrap_or(serde_json::json!({})),
+    }))
 }
 
 /// Prometheus metrics endpoint.
@@ -503,12 +568,12 @@ fn get_embedding_status(state: &AppState) -> Result<EmbeddingStatus> {
 }
 
 /// Get jobs status.
-async fn get_jobs_status(_state: &AppState) -> Result<JobsStatus> {
-    // TODO: Get actual job stats
+async fn get_jobs_status(db: &crate::db::DbPool) -> Result<JobsStatus> {
+    let stats = crate::db::get_queue_stats(db).await?;
     Ok(JobsStatus {
-        pending: 0,
-        running: 0,
-        failed_24h: 0,
+        pending: stats.pending as u32 + stats.retry as u32,
+        running: stats.running as u32,
+        failed_24h: stats.failed_24h as u32,
     })
 }
 

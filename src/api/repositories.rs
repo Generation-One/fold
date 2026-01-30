@@ -598,13 +598,9 @@ async fn reindex_repository(
     let job_id = crate::models::new_id();
     let job = db::create_job(
         &state.db,
-        db::CreateJob {
-            id: job_id.clone(),
-            job_type: db::JobType::ReindexRepo,
-            project_id: Some(repo.project_id),
-            repository_id: Some(repo_id.clone()),
-            total_items: None,
-        },
+        db::CreateJob::new(job_id.clone(), db::JobType::ReindexRepo)
+            .with_project(repo.project_id)
+            .with_repository(repo_id.clone()),
     )
     .await?;
 

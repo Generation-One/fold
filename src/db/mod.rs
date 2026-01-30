@@ -94,13 +94,9 @@ pub async fn migrate(pool: &DbPool) -> Result<()> {
     .await?;
 
     // Define migrations in order
+    // Note: All schema is consolidated into 001_initial.sql
     let migrations: &[(&str, &str)] = &[
         ("001_initial", include_str!("../../migrations/001_initial.sql")),
-        ("002_repositories", include_str!("../../migrations/002_repositories.sql")),
-        ("003_jobs", include_str!("../../migrations/003_jobs.sql")),
-        ("004_schema_fixes", include_str!("../../migrations/004_schema_fixes.sql")),
-        ("005_file_sources", include_str!("../../migrations/005_file_sources.sql")),
-        ("006_job_queue_enhancements", include_str!("../../migrations/006_job_queue_enhancements.sql")),
     ];
 
     for (name, sql) in migrations {

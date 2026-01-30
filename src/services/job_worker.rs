@@ -647,6 +647,7 @@ impl JobWorker {
         JobWorkerStatus {
             running: *self.inner.running.read().await,
             active_jobs: *self.inner.active_jobs.read().await,
+            worker_id: self.inner.worker_id.clone(),
         }
     }
 }
@@ -669,6 +670,7 @@ impl JobWorkerHandle {
 pub struct JobWorkerStatus {
     pub running: bool,
     pub active_jobs: usize,
+    pub worker_id: String,
 }
 
 /// Decode base64 content (GitHub returns base64-encoded file content)

@@ -804,13 +804,8 @@ async fn execute_codebase_index(state: &AppState, args: Value) -> Result<String>
 
     let job = db::create_job(
         &state.db,
-        db::CreateJob {
-            id: job_id.clone(),
-            job_type: db::JobType::IndexRepo,
-            project_id: Some(project.id.clone()),
-            repository_id: None,
-            total_items: None,
-        },
+        db::CreateJob::new(job_id.clone(), db::JobType::IndexRepo)
+            .with_project(project.id.clone()),
     )
     .await?;
 
