@@ -74,6 +74,26 @@ cargo run
 
 Server runs at `http://localhost:8765`
 
+### Web UI
+
+A React-based web interface for Fold is available at:
+
+**[https://github.com/Generation-One/fold-ui](https://github.com/Generation-One/fold-ui)**
+
+Features:
+- Dashboard with memory stats and recent activity
+- MCP Tester for interactive tool testing
+- Settings for token management
+- Holographic design system
+
+```bash
+# Quick start with Docker
+cd fold-ui
+docker-compose up -d
+
+# Opens at http://localhost:5174
+```
+
 ### Docker Compose (Recommended)
 
 ```bash
@@ -221,19 +241,111 @@ curl http://localhost:8765/projects/{id}/repositories \
 
 ### MCP (for AI agents)
 
-Tools available in Claude Code, Cursor, etc:
+Fold exposes an MCP (Model Context Protocol) endpoint for AI coding assistants like Claude Code, Cursor, Windsurf, etc.
+
+#### Getting an API Token
+
+First, create an API token for MCP access:
+
+```bash
+# Bootstrap admin (first time only)
+curl -X POST http://localhost:8765/auth/bootstrap \
+  -H "Content-Type: application/json" \
+  -d '{"token": "YOUR_ADMIN_BOOTSTRAP_TOKEN"}'
+
+# Create an API token
+curl -X POST http://localhost:8765/auth/tokens \
+  -H "Authorization: Bearer {admin_session}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "claude-code",
+    "project_ids": []
+  }'
+# Returns: { "token": "fold_abc123..." }
+```
+
+#### Claude Code Setup
+
+**Option 1: CLI (recommended)**
+
+```bash
+claude mcp add -t http -s user fold http://localhost:8765/mcp \
+  --header "Authorization: Bearer fold_YOUR_TOKEN_HERE"
+```
+
+**Option 2: Manual config**
+
+Edit `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "fold": {
+      "url": "http://localhost:8765/mcp",
+      "headers": {
+        "Authorization": "Bearer fold_YOUR_TOKEN_HERE"
+      }
+    }
+  }
+}
+```
+
+Then restart Claude Code.
+
+#### Cursor Setup
+
+Add to Cursor settings (`.cursor/mcp.json` or global config):
+
+```json
+{
+  "mcpServers": {
+    "fold": {
+      "url": "http://localhost:8765/mcp",
+      "headers": {
+        "Authorization": "Bearer fold_YOUR_TOKEN_HERE"
+      }
+    }
+  }
+}
+```
+
+#### Windsurf / Other MCP Clients
+
+Most MCP clients follow the same pattern:
+- **URL**: `http://localhost:8765/mcp`
+- **Transport**: HTTP (not stdio)
+- **Auth**: Bearer token in `Authorization` header
+
+#### Available MCP Tools
 
 | Tool | Description |
 |------|-------------|
-| `memory_add` | Add a memory |
-| `memory_search` | Search memories |
-| `memory_list` | List memories |
-| `context_get` | Get relevant context for task |
+| `project_list` | List all projects |
+| `project_create` | Create a new project |
+| `memory_add` | Add a memory to a project |
+| `memory_search` | Semantic search across memories |
+| `memory_list` | List memories with filters |
+| `context_get` | Get relevant context for a task |
+| `codebase_index` | Index a project's codebase |
 | `codebase_search` | Search indexed code |
-| `project_list` | List projects |
-| `graph_context` | Get knowledge graph context |
-| `session_start` | Start working session |
-| `session_note` | Add note to session |
+| `team_status` | View/update team activity |
+| `file_upload` | Upload and index a single file |
+| `files_upload` | Batch upload multiple files |
+
+#### Example MCP Usage
+
+Once connected, your AI assistant can use Fold tools:
+
+```
+User: "Search for authentication-related memories"
+Assistant: [calls mcp__fold__memory_search with query="authentication"]
+
+User: "What context do I need to implement password reset?"
+Assistant: [calls mcp__fold__context_get with task="implement password reset"]
+
+User: "Save this session - we fixed the login bug"
+Assistant: [calls mcp__fold__memory_add with type="session", content="..."]
+```
 
 ## Memory Types
 
