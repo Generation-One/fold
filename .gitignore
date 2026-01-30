@@ -1,0 +1,45 @@
+# Build artifacts
+/target/
+debug/
+release/
+
+# Cargo
+Cargo.lock
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Data directories
+/data/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+*.profraw
+*.profdata
+coverage/
+tarpaulin-report.html
+
+# Temporary files
+tmp/
+temp/
+*.tmp
