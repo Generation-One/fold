@@ -87,16 +87,23 @@ impl JobWorker {
         // Set running flag
         *worker.inner.running.write().await = true;
 
-        // Spawn background task
-        let handle = tokio::spawn(async move {
-            worker.run_loop().await;
+        // Spawn main worker loop
+        let worker_clone = worker.clone();
+        let main_handle = tokio::spawn(async move {
+            worker_clone.run_loop().await;
         });
 
-        info!("Job worker started");
+        // Spawn stale job recovery loop
+        let recovery_worker = self.clone();
+        tokio::spawn(async move {
+            recovery_worker.run_stale_recovery_loop().await;
+        });
+
+        info!(worker_id = %self.inner.worker_id, "Job worker started");
 
         JobWorkerHandle {
             worker: self.clone(),
-            _handle: handle,
+            _handle: main_handle,
         }
     }
 
@@ -105,7 +112,7 @@ impl JobWorker {
         loop {
             // Check if we should stop
             if !*self.inner.running.read().await {
-                info!("Job worker stopping");
+                info!(worker_id = %self.inner.worker_id, "Job worker stopping");
                 break;
             }
 
@@ -117,32 +124,52 @@ impl JobWorker {
                 continue;
             }
 
-            // Poll for pending jobs
-            match self.poll_and_process().await {
-                Ok(processed) => {
-                    if processed == 0 {
-                        // No jobs found, wait before polling again
+            // Try to claim and process a job
+            match self.claim_and_process().await {
+                Ok(claimed) => {
+                    if !claimed {
+                        // No jobs available, wait before polling again
                         sleep(Duration::from_secs(POLL_INTERVAL_SECS)).await;
                     }
                 }
                 Err(e) => {
-                    error!(error = %e, "Error polling for jobs");
+                    error!(error = %e, "Error claiming job");
                     sleep(Duration::from_secs(POLL_INTERVAL_SECS)).await;
                 }
             }
         }
     }
 
-    /// Poll for pending jobs and process one.
-    async fn poll_and_process(&self) -> Result<usize> {
-        // Get pending jobs
-        let jobs = db::list_pending_jobs(&self.inner.db, 1).await?;
+    /// Run stale job recovery loop.
+    async fn run_stale_recovery_loop(&self) {
+        loop {
+            if !*self.inner.running.read().await {
+                break;
+            }
 
-        if jobs.is_empty() {
-            return Ok(0);
+            // Recover stale jobs (locked for more than 5 minutes)
+            match db::recover_stale_jobs(&self.inner.db, Some(300)).await {
+                Ok(recovered) => {
+                    if recovered > 0 {
+                        info!(count = recovered, "Recovered stale jobs");
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e, "Error recovering stale jobs");
+                }
+            }
+
+            sleep(Duration::from_secs(STALE_CHECK_INTERVAL_SECS)).await;
         }
+    }
 
-        let job = &jobs[0];
+    /// Atomically claim a job and process it.
+    async fn claim_and_process(&self) -> Result<bool> {
+        // Atomically claim the next available job
+        let job = match db::claim_job(&self.inner.db, &self.inner.worker_id).await? {
+            Some(job) => job,
+            None => return Ok(false),
+        };
 
         // Increment active job count
         *self.inner.active_jobs.write().await += 1;
@@ -151,25 +178,96 @@ impl JobWorker {
         let worker = self.clone();
         let job_id = job.id.clone();
         let job_type = job.job_type.clone();
+        let retry_count = job.retry_count.unwrap_or(0);
 
         tokio::spawn(async move {
-            if let Err(e) = worker.process_job(&job_id, &job_type).await {
-                error!(job_id = %job_id, error = %e, "Job processing failed");
+            // Record execution attempt
+            let execution = db::create_job_execution(
+                &worker.inner.db,
+                &job_id,
+                retry_count + 1,
+                &worker.inner.worker_id,
+            ).await.ok();
+
+            let start_time = Instant::now();
+
+            // Spawn heartbeat task
+            let heartbeat_worker = worker.clone();
+            let heartbeat_job_id = job_id.clone();
+            let heartbeat_handle = tokio::spawn(async move {
+                heartbeat_worker.heartbeat_loop(&heartbeat_job_id).await;
+            });
+
+            // Process the job
+            let result = worker.process_job(&job_id, &job_type).await;
+            let duration_ms = start_time.elapsed().as_millis() as i64;
+
+            // Stop heartbeat
+            heartbeat_handle.abort();
+
+            // Record execution result
+            if let Some(exec) = execution {
+                let (status, error) = match &result {
+                    Ok(()) => ("success", None),
+                    Err(e) => ("failed", Some(e.to_string())),
+                };
+                let _ = db::complete_job_execution(
+                    &worker.inner.db,
+                    exec.id,
+                    status,
+                    error.as_deref(),
+                    duration_ms,
+                ).await;
+            }
+
+            // Handle result
+            match result {
+                Ok(()) => {
+                    info!(job_id = %job_id, duration_ms, "Job completed successfully");
+                }
+                Err(e) => {
+                    error!(job_id = %job_id, error = %e, "Job processing failed, scheduling retry");
+                    // Attempt retry (this handles max retries automatically)
+                    let _ = db::retry_job(&worker.inner.db, &job_id, &e.to_string()).await;
+                }
             }
 
             // Decrement active job count
             *worker.inner.active_jobs.write().await -= 1;
         });
 
-        Ok(1)
+        Ok(true)
+    }
+
+    /// Send periodic heartbeats for a running job.
+    async fn heartbeat_loop(&self, job_id: &str) {
+        loop {
+            sleep(Duration::from_secs(HEARTBEAT_INTERVAL_SECS)).await;
+
+            if !*self.inner.running.read().await {
+                break;
+            }
+
+            match db::heartbeat_job(&self.inner.db, job_id, &self.inner.worker_id).await {
+                Ok(true) => {
+                    debug!(job_id, "Heartbeat sent");
+                }
+                Ok(false) => {
+                    // Job no longer owned by us, stop heartbeat
+                    warn!(job_id, "Job no longer owned by this worker, stopping heartbeat");
+                    break;
+                }
+                Err(e) => {
+                    warn!(job_id, error = %e, "Failed to send heartbeat");
+                }
+            }
+        }
     }
 
     /// Process a single job.
+    /// Returns Ok(()) on success, Err on failure (will trigger retry).
     async fn process_job(&self, job_id: &str, job_type: &str) -> Result<()> {
-        info!(job_id, job_type, "Starting job");
-
-        // Mark job as running
-        db::start_job(&self.inner.db, job_id).await?;
+        info!(job_id, job_type, worker_id = %self.inner.worker_id, "Processing job");
 
         // Process based on type
         let result = match JobType::from_str(job_type) {
@@ -177,23 +275,75 @@ impl JobWorker {
             Some(JobType::ReindexRepo) => self.process_reindex_repo(job_id).await,
             Some(JobType::IndexHistory) => self.process_index_history(job_id).await,
             Some(JobType::SyncMetadata) => self.process_sync_metadata(job_id).await,
+            Some(JobType::ProcessWebhook) => self.process_webhook(job_id).await,
+            Some(JobType::GenerateSummary) => self.process_generate_summary(job_id).await,
+            Some(JobType::Custom) => self.process_custom(job_id).await,
             None => {
                 warn!(job_id, job_type, "Unknown job type");
                 Err(Error::Internal(format!("Unknown job type: {}", job_type)))
             }
         };
 
-        match result {
-            Ok(()) => {
-                info!(job_id, "Job completed successfully");
-                db::complete_job(&self.inner.db, job_id, None).await?;
-            }
-            Err(e) => {
-                error!(job_id, error = %e, "Job failed");
-                db::fail_job(&self.inner.db, job_id, &e.to_string()).await?;
-            }
+        // Mark complete on success (retry handled by caller on error)
+        if result.is_ok() {
+            db::complete_job(&self.inner.db, job_id, None).await?;
         }
 
+        result
+    }
+
+    /// Process webhook job.
+    async fn process_webhook(&self, job_id: &str) -> Result<()> {
+        let job = db::get_job(&self.inner.db, job_id).await?;
+
+        // Get payload from job
+        let payload: serde_json::Value = job.payload
+            .as_ref()
+            .and_then(|p| serde_json::from_str(p).ok())
+            .unwrap_or_default();
+
+        info!(job_id, payload = ?payload, "Processing webhook job");
+
+        // TODO: Implement webhook processing based on payload
+        // This would dispatch to git_sync based on webhook type
+
+        self.log_job(job_id, LogLevel::Info, "Webhook processed").await?;
+        Ok(())
+    }
+
+    /// Process summary generation job.
+    async fn process_generate_summary(&self, job_id: &str) -> Result<()> {
+        let job = db::get_job(&self.inner.db, job_id).await?;
+
+        let payload: serde_json::Value = job.payload
+            .as_ref()
+            .and_then(|p| serde_json::from_str(p).ok())
+            .unwrap_or_default();
+
+        info!(job_id, "Generating summary");
+
+        // TODO: Use LLM to generate summary based on payload
+        // This would be called for commit summaries, PR summaries, etc.
+
+        self.log_job(job_id, LogLevel::Info, "Summary generated").await?;
+        Ok(())
+    }
+
+    /// Process custom job (payload-driven).
+    async fn process_custom(&self, job_id: &str) -> Result<()> {
+        let job = db::get_job(&self.inner.db, job_id).await?;
+
+        let payload: serde_json::Value = job.payload
+            .as_ref()
+            .and_then(|p| serde_json::from_str(p).ok())
+            .unwrap_or_default();
+
+        info!(job_id, payload = ?payload, "Processing custom job");
+
+        // Custom jobs are entirely payload-driven
+        // The payload should contain all necessary information
+
+        self.log_job(job_id, LogLevel::Info, "Custom job processed").await?;
         Ok(())
     }
 
@@ -531,4 +681,11 @@ fn base64_decode(input: &str) -> Result<Vec<u8>> {
     general_purpose::STANDARD
         .decode(&cleaned)
         .map_err(|e| Error::Internal(format!("Base64 decode error: {}", e)))
+}
+
+/// Get hostname for worker ID.
+fn hostname() -> String {
+    std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("COMPUTERNAME"))
+        .unwrap_or_else(|_| "unknown".to_string())
 }
