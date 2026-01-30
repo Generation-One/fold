@@ -8,7 +8,7 @@ use crate::db::DbPool;
 use crate::services::{
     AuthService, EmbeddingService, GitHubService, GitLabService, GitSyncService,
     GraphService, IndexerService, LinkerService, LlmService, MemoryService,
-    ProjectService, QdrantService,
+    ProjectService, ProviderRegistry, QdrantService,
 };
 use crate::{config, Error, Result};
 
@@ -27,6 +27,8 @@ pub struct AppState {
     pub github: Arc<GitHubService>,
     /// GitLab API service.
     pub gitlab: Arc<GitLabService>,
+    /// File source provider registry.
+    pub providers: Arc<ProviderRegistry>,
     /// Memory management service.
     pub memory: MemoryService,
     /// Project management service.
@@ -60,6 +62,7 @@ impl AppState {
         let llm = Arc::new(LlmService::new(&config.llm));
         let github = Arc::new(GitHubService::new());
         let gitlab = Arc::new(GitLabService::new());
+        let providers = Arc::new(ProviderRegistry::with_defaults());
 
         // Initialize high-level services
         let memory = MemoryService::new(
@@ -105,6 +108,7 @@ impl AppState {
             llm,
             github,
             gitlab,
+            providers,
             memory,
             project,
             indexer,

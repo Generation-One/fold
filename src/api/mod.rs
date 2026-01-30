@@ -56,6 +56,8 @@ fn protected_routes(state: AppState) -> Router<AppState> {
         .nest("/:project_id/graph", graph::routes())
         // Search and context endpoints
         .merge(search::routes())
+        // File source provider information (non-project-specific)
+        .nest("/file-sources", repositories::file_source_routes())
         // Apply token authentication to all protected routes
         .layer(axum::middleware::from_fn_with_state(state, require_token))
 }

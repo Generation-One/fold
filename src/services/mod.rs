@@ -7,6 +7,7 @@
 //! - Memory (high-level operations)
 //! - Project (project management)
 //! - Indexer (codebase indexing)
+//! - FileSource (abstraction for file providers)
 //! - GitHub/GitLab (git provider APIs)
 //! - GitSync (webhook processing)
 //! - Graph (relationship queries)
@@ -15,6 +16,7 @@
 
 mod auth;
 mod embeddings;
+pub mod file_source;
 mod git_sync;
 mod github;
 mod gitlab;
@@ -29,6 +31,10 @@ mod qdrant;
 
 pub use auth::AuthService;
 pub use embeddings::EmbeddingService;
+pub use file_source::{
+    ChangeEvent, FileContent, FileInfo, FileSourceProvider, GitHubFileSource,
+    GoogleDriveFileSource, NotificationConfig, ProviderRegistry, SourceConfig, SourceInfo,
+};
 pub use git_sync::GitSyncService;
 pub use github::GitHubService;
 pub use gitlab::GitLabService;

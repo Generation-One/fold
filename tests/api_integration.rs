@@ -16,7 +16,7 @@ use fold::db::{self, DbPool};
 use fold::services::{
     AuthService, EmbeddingService, GitHubService, GitLabService, GitSyncService,
     GraphService, IndexerService, LinkerService, LlmService, MemoryService,
-    ProjectService, QdrantService,
+    ProjectService, ProviderRegistry, QdrantService,
 };
 use fold::AppState;
 use serde_json::{json, Value};
@@ -165,6 +165,8 @@ async fn build_test_state(pool: DbPool) -> AppState {
 
     let auth = AuthService::new(pool.clone(), auth_config);
 
+    let providers = Arc::new(ProviderRegistry::with_defaults());
+
     AppState {
         db: pool,
         qdrant,
@@ -172,6 +174,7 @@ async fn build_test_state(pool: DbPool) -> AppState {
         llm,
         github,
         gitlab,
+        providers,
         memory,
         project,
         indexer,

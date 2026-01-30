@@ -1,6 +1,9 @@
 //! Webhooks Routes
 //!
-//! Git webhook handlers for GitHub and GitLab.
+//! Webhook handlers for file source providers (GitHub, GitLab, etc.).
+//!
+//! Uses the FileSourceProvider abstraction for signature verification
+//! and event parsing, allowing new providers to be added easily.
 //!
 //! Routes:
 //! - POST /webhooks/github/:repo_id - Handle GitHub webhook
@@ -20,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use uuid::Uuid;
 
+use crate::services::FileSourceProvider;
 use crate::{db, AppState, Error, Result};
 
 type HmacSha256 = Hmac<Sha256>;
@@ -184,7 +188,8 @@ pub struct RepoIdPath {
 ///
 /// POST /webhooks/github/:repo_id
 ///
-/// Verifies the webhook signature and processes the event.
+/// Verifies the webhook signature using the FileSourceProvider abstraction
+/// and processes the event.
 #[axum::debug_handler]
 async fn handle_github_webhook(
     State(state): State<AppState>,
@@ -206,16 +211,23 @@ async fn handle_github_webhook(
         "Received GitHub webhook"
     );
 
-    // TODO: Fetch repository from database to get webhook secret
+    // Get webhook secret from database
     let webhook_secret = get_github_webhook_secret(&state, repo_id).await?;
 
-    // Verify signature
+    // Verify signature using the provider abstraction
     if let Some(signature) = headers.get("X-Hub-Signature-256") {
         let signature = signature.to_str().map_err(|_| {
             Error::Webhook("Invalid signature header".into())
         })?;
 
-        verify_github_signature(&body, &webhook_secret, signature)?;
+        // Use provider-agnostic verification
+        let provider = state.providers.get("github").ok_or_else(|| {
+            Error::Webhook("GitHub provider not available".into())
+        })?;
+
+        if !provider.verify_notification(&body, signature, &webhook_secret) {
+            return Err(Error::Webhook("Signature verification failed".into()));
+        }
     } else {
         // Signature required if secret is configured
         if !webhook_secret.is_empty() {

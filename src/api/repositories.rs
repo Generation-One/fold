@@ -1,14 +1,18 @@
 //! Repositories Routes
 //!
-//! Git repository integration for projects.
+//! File source integration for projects.
+//!
+//! Supports multiple file source providers (GitHub, Google Drive, etc.)
+//! through a unified interface.
 //!
 //! Routes:
-//! - GET /projects/:project_id/repositories - List connected repositories
-//! - POST /projects/:project_id/repositories - Connect a repository
-//! - DELETE /projects/:project_id/repositories/:id - Disconnect repository
+//! - GET /projects/:project_id/repositories - List connected file sources
+//! - POST /projects/:project_id/repositories - Connect a file source
+//! - DELETE /projects/:project_id/repositories/:id - Disconnect file source
 //! - POST /projects/:project_id/repositories/:id/reindex - Trigger reindex
-//! - GET /projects/:project_id/repositories/:id/commits - List recent commits
-//! - GET /projects/:project_id/repositories/:id/pulls - List pull requests
+//! - GET /projects/:project_id/repositories/:id/commits - List recent commits (git only)
+//! - GET /projects/:project_id/repositories/:id/pulls - List pull requests (git only)
+//! - GET /file-sources/providers - List available file source providers
 
 use axum::{
     extract::{Path, Query, State},
@@ -17,12 +21,13 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+use crate::services::{SourceConfig, SourceInfo};
 use crate::{config, db, AppState, Error, Result};
 
-/// Build repository routes.
+/// Build repository routes (under /projects/:project_id/repositories).
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/", get(list_repositories).post(connect_repository))
@@ -32,16 +37,57 @@ pub fn routes() -> Router<AppState> {
         .route("/:repo_id/pulls", get(list_pull_requests))
 }
 
+/// Build file source provider routes (under /file-sources).
+pub fn file_source_routes() -> Router<AppState> {
+    Router::new()
+        .route("/providers", get(list_providers))
+}
+
 // ============================================================================
 // Request/Response Types
 // ============================================================================
 
-/// Repository provider type.
+/// File source provider type.
+///
+/// Represents the different types of file sources that can be connected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum RepositoryProvider {
+    /// GitHub repositories
     GitHub,
+    /// GitLab repositories
     GitLab,
+    /// Google Drive folders (future)
+    GoogleDrive,
+    /// OneDrive folders (future)
+    OneDrive,
+    /// Local filesystem (future)
+    Local,
+}
+
+impl RepositoryProvider {
+    /// Get the provider type string for the file source abstraction.
+    pub fn as_source_type(&self) -> &'static str {
+        match self {
+            Self::GitHub => "github",
+            Self::GitLab => "gitlab",
+            Self::GoogleDrive => "google-drive",
+            Self::OneDrive => "onedrive",
+            Self::Local => "local",
+        }
+    }
+
+    /// Parse from a source type string.
+    pub fn from_source_type(s: &str) -> Option<Self> {
+        match s {
+            "github" => Some(Self::GitHub),
+            "gitlab" => Some(Self::GitLab),
+            "google-drive" => Some(Self::GoogleDrive),
+            "onedrive" => Some(Self::OneDrive),
+            "local" => Some(Self::Local),
+            _ => None,
+        }
+    }
 }
 
 /// Repository status.
@@ -184,6 +230,27 @@ pub struct ListPullsResponse {
     pub has_more: bool,
 }
 
+/// File source provider information.
+#[derive(Debug, Serialize)]
+pub struct ProviderInfo {
+    /// Provider type identifier.
+    pub provider_type: String,
+    /// Human-readable display name.
+    pub display_name: String,
+    /// Whether real-time webhooks are supported.
+    pub supports_webhooks: bool,
+    /// Whether polling is required for change detection.
+    pub requires_polling: bool,
+    /// Whether this provider is currently available.
+    pub available: bool,
+}
+
+/// List providers response.
+#[derive(Debug, Serialize)]
+pub struct ListProvidersResponse {
+    pub providers: Vec<ProviderInfo>,
+}
+
 /// Reindex response.
 #[derive(Debug, Serialize)]
 pub struct ReindexResponse {
@@ -280,10 +347,16 @@ async fn connect_repository(
     // Get project by ID or slug
     let project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
 
-    // Convert provider
+    // Convert provider - only GitHub and GitLab supported for now
     let db_provider = match request.provider {
         RepositoryProvider::GitHub => db::GitProvider::GitHub,
         RepositoryProvider::GitLab => db::GitProvider::GitLab,
+        RepositoryProvider::GoogleDrive | RepositoryProvider::OneDrive | RepositoryProvider::Local => {
+            return Err(Error::Validation(format!(
+                "Provider '{}' is not yet supported. Currently supported: github, gitlab",
+                request.provider.as_source_type()
+            )));
+        }
     };
 
     let branch = request.default_branch.unwrap_or_else(|| "main".to_string());
@@ -658,4 +731,33 @@ async fn list_pull_requests(
         per_page,
         has_more,
     }))
+}
+
+// ============================================================================
+// File Source Provider Handlers
+// ============================================================================
+
+/// List available file source providers.
+///
+/// GET /file-sources/providers
+///
+/// Returns all registered file source providers with their capabilities.
+#[axum::debug_handler]
+async fn list_providers(
+    State(state): State<AppState>,
+) -> Result<Json<ListProvidersResponse>> {
+    let providers = state
+        .providers
+        .providers()
+        .into_iter()
+        .map(|p| ProviderInfo {
+            provider_type: p.provider_type.to_string(),
+            display_name: p.display_name.to_string(),
+            supports_webhooks: p.supports_webhooks,
+            requires_polling: p.requires_polling,
+            available: true,
+        })
+        .collect();
+
+    Ok(Json(ListProvidersResponse { providers }))
 }
