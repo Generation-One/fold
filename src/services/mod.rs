@@ -18,8 +18,9 @@ mod embeddings;
 mod git_sync;
 mod github;
 mod gitlab;
-mod graph;
+pub mod graph;
 mod indexer;
+mod job_worker;
 mod linker;
 mod llm;
 mod memory;
@@ -31,8 +32,12 @@ pub use embeddings::EmbeddingService;
 pub use git_sync::GitSyncService;
 pub use github::GitHubService;
 pub use gitlab::GitLabService;
-pub use graph::GraphService;
+pub use graph::{
+    AffectedMemory, GraphEdge, GraphNode, GraphResult, GraphService, GraphStats, ImpactAnalysis,
+    MemoryContext, RelatedMemory,
+};
 pub use indexer::IndexerService;
+pub use job_worker::{JobWorker, JobWorkerHandle, JobWorkerStatus};
 pub use linker::LinkerService;
 pub use llm::LlmService;
 pub use memory::MemoryService;

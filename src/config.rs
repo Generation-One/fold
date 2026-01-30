@@ -56,7 +56,17 @@ pub struct QdrantConfig {
 
 #[derive(Debug, Clone)]
 pub struct EmbeddingConfig {
+    pub providers: Vec<EmbeddingProvider>,
+    pub dimension: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct EmbeddingProvider {
+    pub name: String,
+    pub base_url: String,
     pub model: String,
+    pub api_key: String,
+    pub priority: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -143,12 +153,7 @@ impl Config {
                 url: env_or("QDRANT_URL", "http://localhost:6334"),
                 collection_prefix: env_or("QDRANT_COLLECTION_PREFIX", "fold_"),
             },
-            embedding: EmbeddingConfig {
-                model: env_or(
-                    "EMBEDDING_MODEL",
-                    "sentence-transformers/all-MiniLM-L6-v2",
-                ),
-            },
+            embedding: Self::parse_embedding_config(),
             auth: AuthConfig {
                 providers: Self::parse_auth_providers(),
                 bootstrap_token: env::var("ADMIN_BOOTSTRAP_TOKEN").ok(),
@@ -296,6 +301,76 @@ impl Config {
         // Sort by priority
         providers.sort_by_key(|p| p.priority);
         providers
+    }
+
+    /// Parse embedding providers from environment.
+    /// Supports Gemini (free) and OpenAI with automatic fallback ordering.
+    fn parse_embedding_config() -> EmbeddingConfig {
+        let mut providers = Vec::new();
+
+        // Gemini embeddings (priority 1 - free tier)
+        if let Ok(api_key) = env::var("GOOGLE_API_KEY") {
+            providers.push(EmbeddingProvider {
+                name: "gemini".to_string(),
+                base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
+                model: env_or("GEMINI_EMBEDDING_MODEL", "text-embedding-004"),
+                api_key,
+                priority: 1,
+            });
+        }
+
+        // OpenAI embeddings (priority 2)
+        if let Ok(api_key) = env::var("OPENAI_API_KEY") {
+            providers.push(EmbeddingProvider {
+                name: "openai".to_string(),
+                base_url: "https://api.openai.com/v1".to_string(),
+                model: env_or("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+                api_key,
+                priority: 2,
+            });
+        }
+
+        // Sort by priority
+        providers.sort_by_key(|p| p.priority);
+
+        // Get dimension from env or use default based on first provider's model
+        let default_dim = if providers.is_empty() {
+            384 // Hash placeholder dimension
+        } else {
+            Self::embedding_dimension(&providers[0].model)
+        };
+
+        let dimension = env_or("EMBEDDING_DIMENSION", &default_dim.to_string())
+            .parse()
+            .unwrap_or(default_dim);
+
+        EmbeddingConfig { providers, dimension }
+    }
+
+    /// Get embedding dimension for known models
+    fn embedding_dimension(model: &str) -> usize {
+        // Gemini models
+        if model.contains("text-embedding-004") {
+            768
+        } else if model.contains("embedding-001") {
+            768
+        }
+        // OpenAI models
+        else if model.contains("text-embedding-3-small") {
+            1536
+        } else if model.contains("text-embedding-3-large") {
+            3072
+        } else if model.contains("text-embedding-ada-002") {
+            1536
+        }
+        // Sentence transformers (for reference)
+        else if model.contains("MiniLM-L6") {
+            384
+        } else if model.contains("mpnet") {
+            768
+        } else {
+            384 // Default
+        }
     }
 }
 

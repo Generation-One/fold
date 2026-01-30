@@ -118,11 +118,18 @@ pub async fn migrate(pool: &DbPool) -> Result<()> {
         // Execute migration SQL (may contain multiple statements)
         // Split by semicolons and execute each statement
         for statement in sql.split(';') {
-            let stmt = statement.trim();
-            if stmt.is_empty() || stmt.starts_with("--") {
+            // Strip comment lines, keeping only actual SQL
+            let clean_stmt: String = statement
+                .lines()
+                .filter(|line| !line.trim().starts_with("--"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let clean_stmt = clean_stmt.trim();
+            if clean_stmt.is_empty() {
                 continue;
             }
-            sqlx::query(stmt).execute(pool).await?;
+            info!("Executing: {}", &clean_stmt[..clean_stmt.len().min(80)]);
+            sqlx::query(clean_stmt).execute(pool).await?;
         }
 
         // Record migration as applied

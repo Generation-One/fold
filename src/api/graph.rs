@@ -3,10 +3,12 @@
 //! Knowledge graph exploration and traversal endpoints.
 //!
 //! Routes:
+//! - GET /projects/:project_id/graph - Get graph for project
+//! - GET /projects/:project_id/graph/stats - Get graph statistics
 //! - GET /projects/:project_id/graph/neighbors/:id - Get neighboring nodes
 //! - POST /projects/:project_id/graph/cluster - Find memory clusters
 //! - POST /projects/:project_id/graph/path - Find path between nodes
-//! - GET /projects/:project_id/graph/history/:id - Get change history
+//! - GET /projects/:project_id/graph/context/:id - Get context for a memory
 //! - POST /projects/:project_id/graph/impact - Analyze impact of changes
 
 use axum::{
@@ -19,15 +21,19 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::memories::MemoryType;
-use crate::{AppState, Error, Result};
+use crate::models::LinkType;
+use crate::services::{GraphResult, GraphStats, ImpactAnalysis, MemoryContext};
+use crate::{db, AppState, Error, Result};
 
 /// Build graph routes.
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/", get(get_graph))
+        .route("/stats", get(get_stats))
         .route("/neighbors/:node_id", get(get_neighbors))
+        .route("/context/:node_id", get(get_context))
         .route("/cluster", post(find_clusters))
         .route("/path", post(find_path))
-        .route("/history/:node_id", get(get_history))
         .route("/impact", post(analyze_impact))
 }
 
@@ -322,23 +328,160 @@ pub struct NodePath {
 // Handlers
 // ============================================================================
 
+/// Query parameters for graph traversal.
+#[derive(Debug, Deserialize, Default)]
+pub struct GraphQuery {
+    /// Starting memory ID (optional - if not provided, returns stats only)
+    pub start_id: Option<String>,
+    /// Maximum depth of traversal (default 2)
+    #[serde(default = "default_graph_depth")]
+    pub depth: usize,
+    /// Filter by link types (comma-separated)
+    pub link_types: Option<String>,
+}
+
+fn default_graph_depth() -> usize {
+    2
+}
+
+/// Get graph traversal from a starting point.
+///
+/// GET /projects/:project_id/graph
+#[axum::debug_handler]
+async fn get_graph(
+    State(state): State<AppState>,
+    Path(path): Path<ProjectPath>,
+    Query(query): Query<GraphQuery>,
+) -> Result<Json<GraphResult>> {
+    let project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
+
+    let start_id = query.start_id.ok_or_else(|| {
+        Error::Validation("start_id query parameter is required".into())
+    })?;
+
+    // Parse link types filter
+    let link_types = query.link_types.as_ref().map(|lt| {
+        lt.split(',')
+            .filter_map(|s| LinkType::from_str(s.trim()))
+            .collect::<Vec<_>>()
+    });
+
+    let depth = query.depth.min(5); // Cap at 5 levels
+
+    let result = state
+        .graph
+        .traverse(&project.id, &start_id, depth, link_types)
+        .await?;
+
+    Ok(Json(result))
+}
+
+/// Get graph statistics for a project.
+///
+/// GET /projects/:project_id/graph/stats
+#[axum::debug_handler]
+async fn get_stats(
+    State(state): State<AppState>,
+    Path(path): Path<ProjectPath>,
+) -> Result<Json<GraphStats>> {
+    let project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
+
+    let stats = state.graph.get_stats(&project.id).await?;
+
+    Ok(Json(stats))
+}
+
 /// Get neighboring nodes in the graph.
 ///
 /// GET /projects/:project_id/graph/neighbors/:node_id
 #[axum::debug_handler]
 async fn get_neighbors(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(path): Path<NodePath>,
     Query(query): Query<NeighborsQuery>,
 ) -> Result<Json<NeighborsResponse>> {
-    let _node_id = path.node_id;
-    let depth = query.depth.min(3); // Cap at 3 levels
+    let project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
+    let node_id = path.node_id.to_string();
+    let depth = query.depth.min(3) as usize;
 
-    // TODO: Fetch center node from database
-    // TODO: Traverse graph to find neighbors
-    // TODO: Apply filters
+    // Get the center memory
+    let center_memory = db::get_memory(&state.db, &node_id).await?;
 
-    Err(Error::NotFound(format!("Node: {}", path.node_id)))
+    // Traverse to find neighbors
+    let graph_result = state
+        .graph
+        .traverse(&project.id, &node_id, depth, None)
+        .await?;
+
+    // Convert to response format
+    let created_at = DateTime::parse_from_rfc3339(&center_memory.created_at)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now());
+
+    let center = GraphNode {
+        id: Uuid::parse_str(&center_memory.id).unwrap_or_else(|_| Uuid::new_v4()),
+        title: center_memory.title.clone(),
+        node_type: parse_memory_type(&center_memory.memory_type),
+        preview: center_memory.content.chars().take(200).collect(),
+        metadata: NodeMetadata {
+            file_path: center_memory.file_path.clone(),
+            author: center_memory.author.clone(),
+            tags: center_memory.tags_vec(),
+            created_at,
+        },
+    };
+
+    let neighbors: Vec<GraphNode> = graph_result
+        .nodes
+        .iter()
+        .filter(|n| n.id != node_id)
+        .map(|n| GraphNode {
+            id: Uuid::parse_str(&n.id).unwrap_or_else(|_| Uuid::new_v4()),
+            title: n.title.clone(),
+            node_type: parse_memory_type(&n.memory_type),
+            preview: n.content_preview.clone(),
+            metadata: NodeMetadata {
+                file_path: n.file_path.clone(),
+                author: None,
+                tags: vec![],
+                created_at: Utc::now(), // Placeholder
+            },
+        })
+        .collect();
+
+    let edges: Vec<GraphEdge> = graph_result
+        .edges
+        .iter()
+        .map(|e| GraphEdge {
+            from: Uuid::parse_str(&e.source_id).unwrap_or_else(|_| Uuid::new_v4()),
+            to: Uuid::parse_str(&e.target_id).unwrap_or_else(|_| Uuid::new_v4()),
+            edge_type: parse_edge_type(&e.link_type),
+            weight: e.confidence.unwrap_or(1.0) as f32,
+            label: e.context.clone(),
+        })
+        .collect();
+
+    Ok(Json(NeighborsResponse {
+        center,
+        neighbors,
+        edges,
+        depth: query.depth,
+    }))
+}
+
+/// Get context for a memory node.
+///
+/// GET /projects/:project_id/graph/context/:node_id
+#[axum::debug_handler]
+async fn get_context(
+    State(state): State<AppState>,
+    Path(path): Path<NodePath>,
+) -> Result<Json<MemoryContext>> {
+    let node_id = path.node_id.to_string();
+
+    let context = state.graph.get_context(&node_id).await?;
+
+    Ok(Json(context))
 }
 
 /// Find clusters of related memories.
@@ -350,11 +493,13 @@ async fn find_clusters(
     Path(path): Path<ProjectPath>,
     Json(request): Json<ClusterRequest>,
 ) -> Result<Json<ClusterResponse>> {
-    let _project_id = &path.project_id;
+    let _project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
 
-    // TODO: Fetch all embeddings from Qdrant
-    // TODO: Run clustering algorithm
-    // TODO: Generate cluster labels using LLM
+    // Clustering is computationally expensive and requires Qdrant vectors
+    // For now, return empty - full implementation would:
+    // 1. Fetch all embeddings from Qdrant for the project
+    // 2. Run k-means or DBSCAN clustering
+    // 3. Label clusters using LLM
 
     Ok(Json(ClusterResponse {
         clusters: vec![],
@@ -367,39 +512,56 @@ async fn find_clusters(
 /// POST /projects/:project_id/graph/path
 #[axum::debug_handler]
 async fn find_path(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(path): Path<ProjectPath>,
     Json(request): Json<PathRequest>,
 ) -> Result<Json<PathResponse>> {
-    let _project_id = &path.project_id;
+    let project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
 
-    // TODO: Verify both nodes exist
-    // TODO: Run pathfinding algorithm (BFS/Dijkstra)
-    // TODO: Return paths within max_length
+    let from_id = request.from.to_string();
+    let to_id = request.to.to_string();
+    let max_depth = request.max_length.min(10) as usize;
+
+    let paths = state
+        .graph
+        .find_paths(&project.id, &from_id, &to_id, max_depth)
+        .await?;
+
+    let graph_paths: Vec<GraphPath> = paths
+        .into_iter()
+        .map(|path_edges| {
+            let total_weight: f32 = path_edges
+                .iter()
+                .map(|e| e.confidence.unwrap_or(1.0) as f32)
+                .sum();
+
+            let edges: Vec<GraphEdge> = path_edges
+                .iter()
+                .map(|e| GraphEdge {
+                    from: Uuid::parse_str(&e.source_id).unwrap_or_else(|_| Uuid::new_v4()),
+                    to: Uuid::parse_str(&e.target_id).unwrap_or_else(|_| Uuid::new_v4()),
+                    edge_type: parse_edge_type(&e.link_type),
+                    weight: e.confidence.unwrap_or(1.0) as f32,
+                    label: e.context.clone(),
+                })
+                .collect();
+
+            GraphPath {
+                nodes: vec![], // Would need to fetch actual node data
+                edges,
+                total_weight,
+            }
+        })
+        .collect();
+
+    let found = !graph_paths.is_empty();
 
     Ok(Json(PathResponse {
         from: request.from,
         to: request.to,
-        paths: vec![],
-        found: false,
+        paths: graph_paths,
+        found,
     }))
-}
-
-/// Get change history for a node.
-///
-/// GET /projects/:project_id/graph/history/:node_id
-#[axum::debug_handler]
-async fn get_history(
-    State(_state): State<AppState>,
-    Path(path): Path<NodePath>,
-    Query(query): Query<HistoryQuery>,
-) -> Result<Json<HistoryResponse>> {
-    let _node_id = path.node_id;
-
-    // TODO: Fetch history entries from database
-    // TODO: Include diffs if requested
-
-    Err(Error::NotFound(format!("Node: {}", path.node_id)))
 }
 
 /// Analyze impact of changes to nodes.
@@ -411,22 +573,111 @@ async fn analyze_impact(
     Path(path): Path<ProjectPath>,
     Json(request): Json<ImpactRequest>,
 ) -> Result<Json<ImpactResponse>> {
-    let _project_id = &path.project_id;
+    let project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
 
     if request.nodes.is_empty() {
         return Err(Error::Validation("At least one node is required".into()));
     }
 
-    // TODO: For each source node, traverse relationships
-    // TODO: Analyze code dependencies if include_code
-    // TODO: Find semantically similar nodes if include_semantic
-    // TODO: Generate impact summary using LLM
+    let depth = request.depth.min(5) as usize;
+    let mut all_impacted: Vec<ImpactItem> = Vec::new();
 
-    let summary = "No impact analysis available".to_string();
+    for node_id in &request.nodes {
+        let analysis = state
+            .graph
+            .analyze_impact(&project.id, &node_id.to_string(), depth)
+            .await?;
+
+        // Convert directly affected
+        for affected in analysis.directly_affected {
+            all_impacted.push(ImpactItem {
+                node: GraphNode {
+                    id: Uuid::parse_str(&affected.id).unwrap_or_else(|_| Uuid::new_v4()),
+                    title: affected.title,
+                    node_type: parse_memory_type(&affected.memory_type),
+                    preview: String::new(),
+                    metadata: NodeMetadata {
+                        file_path: affected.file_path,
+                        author: None,
+                        tags: vec![],
+                        created_at: Utc::now(),
+                    },
+                },
+                impact_type: ImpactType::Direct,
+                distance: affected.depth as u32,
+                confidence: 0.9,
+                reason: format!("Directly linked via {}", affected.impact_type),
+            });
+        }
+
+        // Convert indirectly affected
+        for affected in analysis.indirectly_affected {
+            all_impacted.push(ImpactItem {
+                node: GraphNode {
+                    id: Uuid::parse_str(&affected.id).unwrap_or_else(|_| Uuid::new_v4()),
+                    title: affected.title,
+                    node_type: parse_memory_type(&affected.memory_type),
+                    preview: String::new(),
+                    metadata: NodeMetadata {
+                        file_path: affected.file_path,
+                        author: None,
+                        tags: vec![],
+                        created_at: Utc::now(),
+                    },
+                },
+                impact_type: ImpactType::Indirect,
+                distance: affected.depth as u32,
+                confidence: 0.7,
+                reason: format!("Indirectly linked via {}", affected.impact_type),
+            });
+        }
+    }
+
+    let summary = if all_impacted.is_empty() {
+        "No impacted items found".to_string()
+    } else {
+        let direct_count = all_impacted.iter().filter(|i| i.impact_type == ImpactType::Direct).count();
+        let indirect_count = all_impacted.len() - direct_count;
+        format!(
+            "Found {} directly affected and {} indirectly affected items",
+            direct_count, indirect_count
+        )
+    };
 
     Ok(Json(ImpactResponse {
         source_nodes: request.nodes,
-        impacted: vec![],
+        impacted: all_impacted,
         summary,
     }))
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Parse edge type from string.
+fn parse_edge_type(s: &str) -> EdgeType {
+    match s.to_lowercase().as_str() {
+        "references" => EdgeType::References,
+        "similar" => EdgeType::Similar,
+        "same_file" => EdgeType::SameFile,
+        "same_author" => EdgeType::SameAuthor,
+        "temporal" => EdgeType::Temporal,
+        "same_session" => EdgeType::SameSession,
+        "implements" => EdgeType::Implements,
+        "derived_from" => EdgeType::DerivedFrom,
+        _ => EdgeType::References,
+    }
+}
+
+/// Parse memory type from string.
+fn parse_memory_type(s: &str) -> MemoryType {
+    match s.to_lowercase().as_str() {
+        "codebase" => MemoryType::Codebase,
+        "session" => MemoryType::Session,
+        "spec" => MemoryType::Spec,
+        "decision" => MemoryType::Decision,
+        "task" => MemoryType::Task,
+        _ => MemoryType::General,
+    }
 }

@@ -14,7 +14,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::db;
 use crate::middleware::require_token;
+use crate::models::{MemoryCreate, MemoryType};
 use crate::{AppState, Error, Result};
 
 /// Build MCP routes.
@@ -460,22 +462,115 @@ fn handle_resources_read(id: Option<Value>, _params: Value) -> JsonRpcResponse {
 // Tool Implementations
 // ============================================================================
 
-async fn execute_project_list(_state: &AppState) -> Result<String> {
-    // TODO: Implement
+async fn execute_project_list(state: &AppState) -> Result<String> {
+    let projects = db::list_projects(&state.db).await?;
+
     Ok(serde_json::to_string_pretty(&serde_json::json!({
-        "count": 0,
-        "projects": []
+        "count": projects.len(),
+        "projects": projects.iter().map(|p| serde_json::json!({
+            "id": p.id,
+            "slug": p.slug,
+            "name": p.name,
+            "description": p.description
+        })).collect::<Vec<_>>()
     }))?)
 }
 
-async fn execute_project_create(_state: &AppState, args: Value) -> Result<String> {
-    // TODO: Implement
-    Ok(format!("Project created: {:?}", args))
+async fn execute_project_create(state: &AppState, args: Value) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Params {
+        name: String,
+        description: Option<String>,
+    }
+
+    let params: Params = serde_json::from_value(args)?;
+
+    // Generate slug from name
+    let slug = params
+        .name
+        .to_lowercase()
+        .replace(|c: char| !c.is_alphanumeric() && c != '-', "-")
+        .trim_matches('-')
+        .to_string();
+
+    // Generate ID
+    let id = crate::models::new_id();
+
+    let project = db::create_project(
+        &state.db,
+        db::CreateProject {
+            id,
+            slug,
+            name: params.name,
+            description: params.description,
+        },
+    )
+    .await?;
+
+    // Create Qdrant collection for this project
+    state
+        .qdrant
+        .create_collection(&project.slug, state.embeddings.dimension())
+        .await?;
+
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "id": project.id,
+        "slug": project.slug,
+        "name": project.name,
+        "description": project.description,
+        "created_at": project.created_at
+    }))?)
 }
 
-async fn execute_memory_add(_state: &AppState, args: Value) -> Result<String> {
-    // TODO: Implement
-    Ok(format!("Memory added: {:?}", args))
+async fn execute_memory_add(state: &AppState, args: Value) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Params {
+        project: String,
+        content: String,
+        #[serde(rename = "type", default)]
+        memory_type: Option<String>,
+        author: Option<String>,
+        #[serde(default)]
+        tags: Vec<String>,
+    }
+
+    let params: Params = serde_json::from_value(args)?;
+
+    // Get project by ID or slug
+    let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
+
+    // Parse memory type (default to general)
+    let memory_type = params
+        .memory_type
+        .as_deref()
+        .and_then(MemoryType::from_str)
+        .unwrap_or(MemoryType::General);
+
+    // Create memory via service (handles DB + Qdrant + auto-linking)
+    let memory = state
+        .memory
+        .add(
+            &project.id,
+            &project.slug,
+            MemoryCreate {
+                memory_type,
+                content: params.content,
+                author: params.author,
+                tags: params.tags,
+                ..Default::default()
+            },
+            true, // auto-generate metadata
+        )
+        .await?;
+
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "id": memory.id,
+        "type": memory.memory_type,
+        "title": memory.title,
+        "content": memory.content.chars().take(200).collect::<String>(),
+        "author": memory.author,
+        "created_at": memory.created_at.to_rfc3339()
+    }))?)
 }
 
 async fn execute_memory_search(state: &AppState, args: Value) -> Result<String> {
@@ -483,6 +578,8 @@ async fn execute_memory_search(state: &AppState, args: Value) -> Result<String> 
     struct Params {
         project: String,
         query: String,
+        #[serde(rename = "type")]
+        memory_type: Option<String>,
         #[serde(default = "default_limit")]
         limit: u32,
     }
@@ -493,26 +590,102 @@ async fn execute_memory_search(state: &AppState, args: Value) -> Result<String> 
 
     let params: Params = serde_json::from_value(args)?;
 
-    // Generate embedding
-    let _embedding = state
-        .embeddings
-        .embed_single(&params.query)
-        .await
-        .map_err(|e| Error::Embedding(e.to_string()))?;
+    // Get project
+    let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
 
-    // TODO: Search Qdrant
-    // TODO: Fetch full memories from database
+    // Parse memory type filter
+    let memory_type = params.memory_type.as_deref().and_then(MemoryType::from_str);
+
+    // Search via memory service (handles embedding + Qdrant + DB lookup)
+    let results = state
+        .memory
+        .search(
+            &project.id,
+            &project.slug,
+            &params.query,
+            memory_type,
+            params.limit as usize,
+        )
+        .await?;
+
+    let results_json: Vec<_> = results
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "id": r.memory.id,
+                "type": r.memory.memory_type,
+                "title": r.memory.title,
+                "content": r.memory.content.chars().take(300).collect::<String>(),
+                "author": r.memory.author,
+                "score": r.score,
+                "file_path": r.memory.file_path,
+                "created_at": r.memory.created_at.to_rfc3339()
+            })
+        })
+        .collect();
 
     Ok(serde_json::to_string_pretty(&serde_json::json!({
-        "project": params.project,
+        "project": project.slug,
         "query": params.query,
-        "results": []
+        "count": results_json.len(),
+        "results": results_json
     }))?)
 }
 
-async fn execute_memory_list(_state: &AppState, args: Value) -> Result<String> {
-    // TODO: Implement
-    Ok(format!("Memory list for: {:?}", args))
+async fn execute_memory_list(state: &AppState, args: Value) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Params {
+        project: String,
+        #[serde(rename = "type")]
+        memory_type: Option<String>,
+        author: Option<String>,
+        #[serde(default = "default_list_limit")]
+        limit: i64,
+    }
+
+    fn default_list_limit() -> i64 {
+        20
+    }
+
+    let params: Params = serde_json::from_value(args)?;
+
+    // Get project
+    let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
+
+    // Parse memory type filter
+    let memory_type = params.memory_type.as_deref().and_then(MemoryType::from_str);
+
+    // List memories via service
+    let memories = state
+        .memory
+        .list(
+            &project.id,
+            memory_type,
+            params.author.as_deref(),
+            params.limit,
+            0,
+        )
+        .await?;
+
+    let memories_json: Vec<_> = memories
+        .iter()
+        .map(|m| {
+            serde_json::json!({
+                "id": m.id,
+                "type": m.memory_type,
+                "title": m.title,
+                "author": m.author,
+                "file_path": m.file_path,
+                "created_at": m.created_at.to_rfc3339()
+            })
+        })
+        .collect();
+
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "project": project.slug,
+        "count": memories_json.len(),
+        "memories": memories_json
+    }))?)
 }
 
 async fn execute_context_get(state: &AppState, args: Value) -> Result<String> {
@@ -530,28 +703,124 @@ async fn execute_context_get(state: &AppState, args: Value) -> Result<String> {
 
     let params: Params = serde_json::from_value(args)?;
 
-    // Generate embedding
-    let _embedding = state
-        .embeddings
-        .embed_single(&params.task)
-        .await
-        .map_err(|e| Error::Embedding(e.to_string()))?;
+    // Get project
+    let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
 
-    // TODO: Search for relevant context
+    // Get context via memory service (searches all relevant types)
+    let context = state
+        .memory
+        .get_context(&project.id, &project.slug, &params.task, None, params.limit as usize)
+        .await?;
+
+    // Collect all memory IDs from the search results
+    let memory_ids: Vec<String> = context
+        .code
+        .iter()
+        .chain(context.specs.iter())
+        .chain(context.decisions.iter())
+        .chain(context.sessions.iter())
+        .map(|item| item.id.clone())
+        .take(5) // Only get graph context for top 5 results
+        .collect();
+
+    // Get graph context for top results (related memories via links)
+    let mut related_context = Vec::new();
+    for memory_id in memory_ids.iter().take(3) {
+        if let Ok(graph_context) = state.graph.get_context(memory_id).await {
+            // Add parents
+            for parent in graph_context.parents.iter().take(2) {
+                related_context.push(serde_json::json!({
+                    "id": parent.id,
+                    "type": parent.memory_type,
+                    "title": parent.title,
+                    "relation": "parent",
+                    "preview": parent.content_preview
+                }));
+            }
+            // Add related decisions and specs
+            for decision in graph_context.decisions.iter().take(2) {
+                related_context.push(serde_json::json!({
+                    "id": decision.id,
+                    "type": "decision",
+                    "title": decision.title,
+                    "relation": "decision",
+                    "preview": decision.content_preview
+                }));
+            }
+            for spec in graph_context.specs.iter().take(2) {
+                related_context.push(serde_json::json!({
+                    "id": spec.id,
+                    "type": "spec",
+                    "title": spec.title,
+                    "relation": "specification",
+                    "preview": spec.content_preview
+                }));
+            }
+        }
+    }
+
+    // Deduplicate related context by id
+    let mut seen = std::collections::HashSet::new();
+    let unique_related: Vec<_> = related_context
+        .into_iter()
+        .filter(|item| {
+            let id = item["id"].as_str().unwrap_or("");
+            if seen.contains(id) || memory_ids.contains(&id.to_string()) {
+                false
+            } else {
+                seen.insert(id.to_string());
+                true
+            }
+        })
+        .take(5)
+        .collect();
 
     Ok(serde_json::to_string_pretty(&serde_json::json!({
-        "task": params.task,
-        "relevant_code": [],
-        "specifications": [],
-        "decisions": [],
-        "recent_sessions": [],
-        "other": []
+        "task": context.task,
+        "code": context.code,
+        "specifications": context.specs,
+        "decisions": context.decisions,
+        "sessions": context.sessions,
+        "other": context.other,
+        "related_context": unique_related
     }))?)
 }
 
-async fn execute_codebase_index(_state: &AppState, args: Value) -> Result<String> {
-    // TODO: Implement
-    Ok(format!("Indexing triggered: {:?}", args))
+async fn execute_codebase_index(state: &AppState, args: Value) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Params {
+        project: String,
+        path: Option<String>,
+        author: Option<String>,
+    }
+
+    let params: Params = serde_json::from_value(args)?;
+
+    // Get project
+    let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
+
+    // Create a background job for indexing
+    let job_id = crate::models::new_id();
+
+    let job = db::create_job(
+        &state.db,
+        db::CreateJob {
+            id: job_id.clone(),
+            job_type: db::JobType::IndexRepo,
+            project_id: Some(project.id.clone()),
+            repository_id: None,
+            total_items: None,
+        },
+    )
+    .await?;
+
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "message": "Indexing job created",
+        "job_id": job.id,
+        "status": job.status,
+        "project": project.slug,
+        "path": params.path
+    }))?)
 }
 
 async fn execute_codebase_search(state: &AppState, args: Value) -> Result<String> {
@@ -569,33 +838,235 @@ async fn execute_codebase_search(state: &AppState, args: Value) -> Result<String
 
     let params: Params = serde_json::from_value(args)?;
 
-    // Generate embedding
-    let _embedding = state
-        .embeddings
-        .embed_single(&params.query)
-        .await
-        .map_err(|e| Error::Embedding(e.to_string()))?;
+    // Get project
+    let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
 
-    // TODO: Search code index
+    // Search for codebase memories specifically
+    let results = state
+        .memory
+        .search(
+            &project.id,
+            &project.slug,
+            &params.query,
+            Some(MemoryType::Codebase),
+            params.limit as usize,
+        )
+        .await?;
+
+    let results_json: Vec<_> = results
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "id": r.memory.id,
+                "file_path": r.memory.file_path,
+                "language": r.memory.language,
+                "title": r.memory.title,
+                "content": r.memory.content.chars().take(500).collect::<String>(),
+                "score": r.score
+            })
+        })
+        .collect();
 
     Ok(serde_json::to_string_pretty(&serde_json::json!({
-        "project": params.project,
+        "project": project.slug,
         "query": params.query,
-        "results": []
+        "count": results_json.len(),
+        "results": results_json
     }))?)
 }
 
-async fn execute_team_status(_state: &AppState, args: Value) -> Result<String> {
-    // TODO: Implement
-    Ok(format!("Team status: {:?}", args))
+async fn execute_team_status(state: &AppState, args: Value) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Params {
+        project: String,
+        #[serde(default = "default_action")]
+        action: String,
+        username: Option<String>,
+        status: Option<String>,
+        current_task: Option<String>,
+    }
+
+    fn default_action() -> String {
+        "view".to_string()
+    }
+
+    let params: Params = serde_json::from_value(args)?;
+
+    // Get project
+    let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
+
+    match params.action.as_str() {
+        "view" => {
+            // List all team status
+            let team_status = db::list_team_status(&state.db, &project.id).await?;
+
+            let status_json: Vec<_> = team_status
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "username": s.username,
+                        "status": s.status,
+                        "current_task": s.current_task,
+                        "last_seen": s.last_seen
+                    })
+                })
+                .collect();
+
+            Ok(serde_json::to_string_pretty(&serde_json::json!({
+                "project": project.slug,
+                "team": status_json
+            }))?)
+        }
+        "update" => {
+            let username = params
+                .username
+                .ok_or_else(|| Error::InvalidInput("username is required for update".into()))?;
+
+            let status = params.status.unwrap_or_else(|| "active".to_string());
+            let status_enum = db::TeamMemberStatus::from_str(&status);
+
+            let team_status = db::upsert_team_status(
+                &state.db,
+                &project.id,
+                &username,
+                db::UpdateTeamStatus {
+                    status: status_enum,
+                    current_task: params.current_task,
+                    current_files: None,
+                },
+            )
+            .await?;
+
+            Ok(serde_json::to_string_pretty(&serde_json::json!({
+                "message": "Team status updated",
+                "username": team_status.username,
+                "status": team_status.status,
+                "current_task": team_status.current_task,
+                "last_seen": team_status.last_seen
+            }))?)
+        }
+        _ => Err(Error::InvalidInput(format!(
+            "Invalid action: {}. Use 'view' or 'update'",
+            params.action
+        ))),
+    }
 }
 
-async fn execute_file_upload(_state: &AppState, args: Value) -> Result<String> {
-    // TODO: Implement
-    Ok(format!("File uploaded: {:?}", args))
+async fn execute_file_upload(state: &AppState, args: Value) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Params {
+        project: String,
+        path: String,
+        content: String,
+        author: Option<String>,
+    }
+
+    let params: Params = serde_json::from_value(args)?;
+
+    // Get project
+    let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
+
+    // Detect language from file extension
+    let language = std::path::Path::new(&params.path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_lowercase());
+
+    // Create memory via service (handles DB + Qdrant)
+    let memory = state
+        .memory
+        .add(
+            &project.id,
+            &project.slug,
+            MemoryCreate {
+                memory_type: MemoryType::Codebase,
+                content: params.content,
+                author: params.author,
+                title: Some(params.path.clone()),
+                file_path: Some(params.path.clone()),
+                language,
+                ..Default::default()
+            },
+            true,
+        )
+        .await?;
+
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "message": "File uploaded and indexed",
+        "memory_id": memory.id,
+        "path": params.path,
+        "type": memory.memory_type
+    }))?)
 }
 
-async fn execute_files_upload(_state: &AppState, args: Value) -> Result<String> {
-    // TODO: Implement
-    Ok(format!("Files uploaded: {:?}", args))
+async fn execute_files_upload(state: &AppState, args: Value) -> Result<String> {
+    #[derive(Deserialize)]
+    struct FileItem {
+        path: String,
+        content: String,
+    }
+
+    #[derive(Deserialize)]
+    struct Params {
+        project: String,
+        files: Vec<FileItem>,
+        author: Option<String>,
+    }
+
+    let params: Params = serde_json::from_value(args)?;
+
+    // Get project
+    let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
+
+    let mut success_count = 0;
+    let mut failed_count = 0;
+    let mut memories = Vec::new();
+
+    for file in params.files {
+        // Detect language
+        let language = std::path::Path::new(&file.path)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_lowercase());
+
+        // Try to create memory
+        match state
+            .memory
+            .add(
+                &project.id,
+                &project.slug,
+                MemoryCreate {
+                    memory_type: MemoryType::Codebase,
+                    content: file.content,
+                    author: params.author.clone(),
+                    title: Some(file.path.clone()),
+                    file_path: Some(file.path.clone()),
+                    language,
+                    ..Default::default()
+                },
+                false, // Skip auto-metadata for batch operations
+            )
+            .await
+        {
+            Ok(memory) => {
+                success_count += 1;
+                memories.push(serde_json::json!({
+                    "id": memory.id,
+                    "path": file.path
+                }));
+            }
+            Err(e) => {
+                failed_count += 1;
+                tracing::warn!(path = %file.path, error = %e, "Failed to upload file");
+            }
+        }
+    }
+
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "message": "Batch upload completed",
+        "project": project.slug,
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "memories": memories
+    }))?)
 }

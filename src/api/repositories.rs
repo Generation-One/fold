@@ -17,9 +17,10 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::{AppState, Error, Result};
+use crate::{config, db, AppState, Error, Result};
 
 /// Build repository routes.
 pub fn routes() -> Router<AppState> {
@@ -67,6 +68,8 @@ pub struct ConnectRepositoryRequest {
     /// Whether to automatically index on changes
     #[serde(default = "default_auto_index")]
     pub auto_index: bool,
+    /// Access token for the repository (GitHub PAT, GitLab token, etc.)
+    pub access_token: Option<String>,
 }
 
 fn default_auto_index() -> bool {
@@ -213,15 +216,48 @@ pub struct RepositoryPath {
 /// GET /projects/:project_id/repositories
 #[axum::debug_handler]
 async fn list_repositories(
-    State(_state): State<AppState>,
-    Path(_path): Path<ProjectPath>,
+    State(state): State<AppState>,
+    Path(path): Path<ProjectPath>,
 ) -> Result<Json<ListRepositoriesResponse>> {
-    // TODO: Fetch repositories from database
+    // Get project by ID or slug
+    let project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
 
-    Ok(Json(ListRepositoriesResponse {
-        repositories: vec![],
-        total: 0,
-    }))
+    // Fetch repositories from database
+    let repos = db::list_project_repositories(&state.db, &project.id).await?;
+
+    let repositories: Vec<RepositoryResponse> = repos
+        .into_iter()
+        .map(|r| RepositoryResponse {
+            id: Uuid::parse_str(&r.id).unwrap_or_else(|_| Uuid::new_v4()),
+            project_id: Uuid::parse_str(&r.project_id).unwrap_or_else(|_| Uuid::new_v4()),
+            provider: match r.provider.as_str() {
+                "gitlab" => RepositoryProvider::GitLab,
+                _ => RepositoryProvider::GitHub,
+            },
+            owner: r.owner.clone(),
+            name: r.repo.clone(),
+            full_name: r.full_name(),
+            default_branch: r.branch,
+            status: if r.last_indexed_at.is_some() {
+                RepositoryStatus::Connected
+            } else {
+                RepositoryStatus::Syncing
+            },
+            auto_index: r.webhook_id.is_some(),
+            last_indexed_at: r.last_indexed_at.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))),
+            webhook_id: r.webhook_id,
+            created_at: DateTime::parse_from_rfc3339(&r.created_at)
+                .map(|d| d.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+            updated_at: DateTime::parse_from_rfc3339(&r.created_at)
+                .map(|d| d.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+        })
+        .collect();
+
+    let total = repositories.len() as u32;
+
+    Ok(Json(ListRepositoriesResponse { repositories, total }))
 }
 
 /// Connect a repository to the project.
@@ -236,41 +272,125 @@ async fn connect_repository(
     Path(path): Path<ProjectPath>,
     Json(request): Json<ConnectRepositoryRequest>,
 ) -> Result<Json<RepositoryResponse>> {
-    let _project_id = &path.project_id;
-
     // Validate owner and name
     if request.owner.is_empty() || request.name.is_empty() {
         return Err(Error::Validation("Owner and name are required".into()));
     }
 
-    // TODO: Verify repository exists and we have access
-    // let repo_info = match request.provider {
-    //     RepositoryProvider::GitHub => {
-    //         state.github.get_repository(&request.owner, &request.name).await?
-    //     }
-    //     RepositoryProvider::GitLab => {
-    //         state.gitlab.get_repository(&request.owner, &request.name).await?
-    //     }
-    // };
+    // Get project by ID or slug
+    let project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
 
-    // TODO: Create repository record in database
-    // TODO: Set up webhook if auto_index is enabled
+    // Convert provider
+    let db_provider = match request.provider {
+        RepositoryProvider::GitHub => db::GitProvider::GitHub,
+        RepositoryProvider::GitLab => db::GitProvider::GitLab,
+    };
+
+    let branch = request.default_branch.unwrap_or_else(|| "main".to_string());
+
+    // Check if repository already connected
+    if let Some(_existing) = db::get_repository_by_path(
+        &state.db,
+        &project.id,
+        &db_provider,
+        &request.owner,
+        &request.name,
+        &branch,
+    )
+    .await?
+    {
+        return Err(Error::AlreadyExists(format!(
+            "Repository {}/{} branch {} already connected",
+            request.owner, request.name, branch
+        )));
+    }
+
+    // Create repository record in database
+    let repo_id = crate::models::new_id();
+    let access_token = request.access_token.unwrap_or_default();
+
+    let mut repo = db::create_repository(
+        &state.db,
+        db::CreateRepository {
+            id: repo_id.clone(),
+            project_id: project.id.clone(),
+            provider: db_provider.clone(),
+            owner: request.owner.clone(),
+            repo: request.name.clone(),
+            branch: branch.clone(),
+            access_token: access_token.clone(),
+        },
+    )
+    .await?;
+
+    // Set up webhook if auto_index is enabled (GitHub only for now)
+    let mut webhook_id: Option<String> = None;
+    if request.auto_index && matches!(request.provider, RepositoryProvider::GitHub) {
+        // Generate webhook secret
+        let webhook_secret = nanoid::nanoid!(32);
+
+        // Build webhook URL
+        let config = config::config();
+        let webhook_url = format!(
+            "{}/webhooks/github/{}",
+            config.server.public_url.trim_end_matches('/'),
+            repo_id
+        );
+
+        // Register webhook with GitHub
+        match state.github.register_webhook(
+            &request.owner,
+            &request.name,
+            &webhook_url,
+            &webhook_secret,
+            vec!["push".to_string(), "pull_request".to_string()],
+            &access_token,
+        ).await {
+            Ok(webhook) => {
+                info!(
+                    repo = %repo.full_name(),
+                    webhook_id = webhook.id,
+                    "Registered GitHub webhook"
+                );
+
+                // Update repository with webhook info
+                repo = db::update_repository(
+                    &state.db,
+                    &repo_id,
+                    db::UpdateRepository {
+                        webhook_id: Some(webhook.id.to_string()),
+                        webhook_secret: Some(webhook_secret),
+                        ..Default::default()
+                    },
+                ).await?;
+
+                webhook_id = Some(webhook.id.to_string());
+            }
+            Err(e) => {
+                // Log warning but don't fail the connection
+                warn!(
+                    repo = %repo.full_name(),
+                    error = %e,
+                    "Failed to register GitHub webhook - repository connected without auto-indexing"
+                );
+            }
+        }
+    }
 
     let now = Utc::now();
+    let full_name = repo.full_name();
     Ok(Json(RepositoryResponse {
-        id: Uuid::new_v4(),
-        project_id: Uuid::new_v4(), // TODO: Parse from path
+        id: Uuid::parse_str(&repo.id).unwrap_or_else(|_| Uuid::new_v4()),
+        project_id: Uuid::parse_str(&project.id).unwrap_or_else(|_| Uuid::new_v4()),
         provider: request.provider,
-        owner: request.owner.clone(),
-        name: request.name.clone(),
-        full_name: format!("{}/{}", request.owner, request.name),
-        default_branch: request
-            .default_branch
-            .unwrap_or_else(|| "main".to_string()),
+        owner: repo.owner,
+        name: repo.repo,
+        full_name,
+        default_branch: repo.branch,
         status: RepositoryStatus::Connected,
-        auto_index: request.auto_index,
+        auto_index: webhook_id.is_some(),
         last_indexed_at: None,
-        webhook_id: None,
+        webhook_id,
         created_at: now,
         updated_at: now,
     }))
@@ -281,12 +401,41 @@ async fn connect_repository(
 /// GET /projects/:project_id/repositories/:repo_id
 #[axum::debug_handler]
 async fn get_repository(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(path): Path<RepositoryPath>,
 ) -> Result<Json<RepositoryResponse>> {
-    // TODO: Fetch repository from database
+    let repo = db::get_repository(&state.db, &path.repo_id.to_string()).await?;
 
-    Err(Error::NotFound(format!("Repository: {}", path.repo_id)))
+    Ok(Json(RepositoryResponse {
+        id: path.repo_id,
+        project_id: Uuid::parse_str(&repo.project_id).unwrap_or_else(|_| Uuid::new_v4()),
+        provider: match repo.provider.as_str() {
+            "gitlab" => RepositoryProvider::GitLab,
+            _ => RepositoryProvider::GitHub,
+        },
+        owner: repo.owner.clone(),
+        name: repo.repo.clone(),
+        full_name: repo.full_name(),
+        default_branch: repo.branch,
+        status: if repo.last_indexed_at.is_some() {
+            RepositoryStatus::Connected
+        } else {
+            RepositoryStatus::Syncing
+        },
+        auto_index: repo.webhook_id.is_some(),
+        last_indexed_at: repo.last_indexed_at.and_then(|s| {
+            DateTime::parse_from_rfc3339(&s)
+                .ok()
+                .map(|d| d.with_timezone(&Utc))
+        }),
+        webhook_id: repo.webhook_id,
+        created_at: DateTime::parse_from_rfc3339(&repo.created_at)
+            .map(|d| d.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now()),
+        updated_at: DateTime::parse_from_rfc3339(&repo.created_at)
+            .map(|d| d.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now()),
+    }))
 }
 
 /// Disconnect a repository from the project.
@@ -297,14 +446,63 @@ async fn get_repository(
 /// Does not delete indexed memories.
 #[axum::debug_handler]
 async fn disconnect_repository(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(path): Path<RepositoryPath>,
 ) -> Result<Json<serde_json::Value>> {
-    // TODO: Fetch repository from database
-    // TODO: Delete webhook if exists
-    // TODO: Mark repository as disconnected or delete
+    let repo_id = path.repo_id.to_string();
 
-    Err(Error::NotFound(format!("Repository: {}", path.repo_id)))
+    // Get repository to check it exists
+    let repo = db::get_repository(&state.db, &repo_id).await?;
+
+    // Delete webhook if exists (GitHub only for now)
+    if let Some(webhook_id) = &repo.webhook_id {
+        match repo.provider.as_str() {
+            "github" => {
+                // Parse webhook ID as i64
+                if let Ok(wh_id) = webhook_id.parse::<i64>() {
+                    match state.github.delete_webhook(
+                        &repo.owner,
+                        &repo.repo,
+                        wh_id,
+                        &repo.access_token,
+                    ).await {
+                        Ok(_) => {
+                            info!(
+                                repo = %repo.full_name(),
+                                webhook_id = %webhook_id,
+                                "Deleted GitHub webhook"
+                            );
+                        }
+                        Err(e) => {
+                            // Log warning but don't fail the disconnection
+                            warn!(
+                                repo = %repo.full_name(),
+                                error = %e,
+                                "Failed to delete GitHub webhook - proceeding with disconnect"
+                            );
+                        }
+                    }
+                }
+            }
+            "gitlab" => {
+                // GitLab webhook deletion not implemented yet
+                warn!(
+                    repo = %repo.full_name(),
+                    "GitLab webhook deletion not implemented - proceeding with disconnect"
+                );
+            }
+            _ => {}
+        }
+    }
+
+    // Delete the repository record
+    db::delete_repository(&state.db, &repo_id).await?;
+
+    Ok(Json(serde_json::json!({
+        "message": "Repository disconnected",
+        "id": repo_id,
+        "full_name": repo.full_name()
+    })))
 }
 
 /// Trigger a reindex of the repository.
@@ -314,18 +512,33 @@ async fn disconnect_repository(
 /// Starts a background job to re-index all files in the repository.
 #[axum::debug_handler]
 async fn reindex_repository(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(path): Path<RepositoryPath>,
 ) -> Result<Json<ReindexResponse>> {
-    // TODO: Verify repository exists
-    // TODO: Create background job for reindexing
+    let repo_id = path.repo_id.to_string();
 
-    let job_id = Uuid::new_v4();
+    // Verify repository exists
+    let repo = db::get_repository(&state.db, &repo_id).await?;
+    let full_name = repo.full_name();
+
+    // Create background job for reindexing
+    let job_id = crate::models::new_id();
+    let job = db::create_job(
+        &state.db,
+        db::CreateJob {
+            id: job_id.clone(),
+            job_type: db::JobType::ReindexRepo,
+            project_id: Some(repo.project_id),
+            repository_id: Some(repo_id.clone()),
+            total_items: None,
+        },
+    )
+    .await?;
 
     Ok(Json(ReindexResponse {
-        job_id,
-        status: "queued".into(),
-        message: format!("Reindex job {} queued for repository {}", job_id, path.repo_id),
+        job_id: Uuid::parse_str(&job.id).unwrap_or_else(|_| Uuid::new_v4()),
+        status: job.status,
+        message: format!("Reindex job queued for repository {}", full_name),
     }))
 }
 
@@ -338,17 +551,43 @@ async fn list_commits(
     Path(path): Path<RepositoryPath>,
     Query(query): Query<ListCommitsQuery>,
 ) -> Result<Json<ListCommitsResponse>> {
-    // TODO: Fetch repository from database to get provider info
-    // For now, assume GitHub
+    let repo_id = path.repo_id.to_string();
+    let repo = db::get_repository(&state.db, &repo_id).await?;
 
-    // TODO: Implement list_commits via GitHub service
-    // let _commits = state.github.list_commits(...).await?;
+    let page = query.page.max(1);
+    let per_page = query.per_page.min(100);
+    let offset = ((page - 1) * per_page) as i64;
+
+    // Fetch commits from database (already indexed)
+    let db_commits = db::list_repository_commits(&state.db, &repo_id, per_page as i64 + 1, offset).await?;
+
+    let has_more = db_commits.len() > per_page as usize;
+    let commits: Vec<CommitInfo> = db_commits
+        .into_iter()
+        .take(per_page as usize)
+        .map(|c| {
+            let url = match repo.provider.as_str() {
+                "gitlab" => format!("https://gitlab.com/{}/{}/-/commit/{}", repo.owner, repo.repo, c.sha),
+                _ => format!("https://github.com/{}/{}/commit/{}", repo.owner, repo.repo, c.sha),
+            };
+            CommitInfo {
+                sha: c.sha,
+                message: c.message,
+                author_name: c.author_name.unwrap_or_default(),
+                author_email: c.author_email.unwrap_or_default(),
+                committed_at: DateTime::parse_from_rfc3339(&c.committed_at)
+                    .map(|d| d.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now()),
+                url,
+            }
+        })
+        .collect();
 
     Ok(Json(ListCommitsResponse {
-        commits: vec![],
-        page: query.page,
-        per_page: query.per_page,
-        has_more: false,
+        commits,
+        page,
+        per_page,
+        has_more,
     }))
 }
 
@@ -361,16 +600,62 @@ async fn list_pull_requests(
     Path(path): Path<RepositoryPath>,
     Query(query): Query<ListPullsQuery>,
 ) -> Result<Json<ListPullsResponse>> {
-    // TODO: Fetch repository from database to get provider info
-    // For now, assume GitHub
+    let repo_id = path.repo_id.to_string();
+    let repo = db::get_repository(&state.db, &repo_id).await?;
 
-    // TODO: Implement list_pull_requests via GitHub service
-    // let _pulls = state.github.list_pull_requests(...).await?;
+    let page = query.page.max(1);
+    let per_page = query.per_page.min(100);
+    let offset = ((page - 1) * per_page) as i64;
+
+    // Fetch PRs from database (already indexed)
+    let db_prs = db::list_repository_pull_requests(&state.db, &repo_id, per_page as i64 + 1, offset).await?;
+
+    let has_more = db_prs.len() > per_page as usize;
+    let pull_requests: Vec<PullRequestInfo> = db_prs
+        .into_iter()
+        .take(per_page as usize)
+        .filter(|pr| match query.state {
+            PullRequestState::All => true,
+            PullRequestState::Open => pr.state == "open",
+            PullRequestState::Closed => pr.state == "closed",
+            PullRequestState::Merged => pr.state == "merged",
+        })
+        .map(|pr| {
+            let url = match repo.provider.as_str() {
+                "gitlab" => format!("https://gitlab.com/{}/{}/-/merge_requests/{}", repo.owner, repo.repo, pr.number),
+                _ => format!("https://github.com/{}/{}/pull/{}", repo.owner, repo.repo, pr.number),
+            };
+            PullRequestInfo {
+                number: pr.number as u32,
+                title: pr.title,
+                state: match pr.state.as_str() {
+                    "closed" => PullRequestState::Closed,
+                    "merged" => PullRequestState::Merged,
+                    _ => PullRequestState::Open,
+                },
+                author: pr.author.unwrap_or_default(),
+                head_branch: pr.source_branch.unwrap_or_default(),
+                base_branch: pr.target_branch.unwrap_or_default(),
+                created_at: DateTime::parse_from_rfc3339(&pr.created_at)
+                    .map(|d| d.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now()),
+                updated_at: DateTime::parse_from_rfc3339(&pr.indexed_at)
+                    .map(|d| d.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now()),
+                merged_at: pr.merged_at.and_then(|s| {
+                    DateTime::parse_from_rfc3339(&s)
+                        .ok()
+                        .map(|d| d.with_timezone(&Utc))
+                }),
+                url,
+            }
+        })
+        .collect();
 
     Ok(Json(ListPullsResponse {
-        pull_requests: vec![],
-        page: query.page,
-        per_page: query.per_page,
-        has_more: false,
+        pull_requests,
+        page,
+        per_page,
+        has_more,
     }))
 }

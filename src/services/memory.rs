@@ -151,8 +151,12 @@ impl MemoryService {
         payload.insert("created_at".to_string(), json!(memory.created_at.to_rfc3339()));
 
         self.qdrant
-            .upsert(project_slug, &memory.id, embedding, payload)
+            .upsert(project_slug, &memory.id, embedding.clone(), payload)
             .await?;
+
+        // Auto-link to similar memories using vector similarity
+        self.auto_link_similar(&memory.id, project_id, project_slug, &embedding)
+            .await;
 
         info!(id = %memory.id, memory_type = %memory.memory_type, "Added memory");
 
@@ -504,6 +508,86 @@ impl MemoryService {
         .await?;
 
         Ok(rows.into_iter().collect())
+    }
+
+    /// Auto-link memory to similar existing memories using vector similarity.
+    ///
+    /// Searches Qdrant for the top-k most similar memories and creates
+    /// "related" links for any that exceed the similarity threshold.
+    /// This runs asynchronously and doesn't fail the memory creation if linking fails.
+    async fn auto_link_similar(
+        &self,
+        memory_id: &str,
+        project_id: &str,
+        project_slug: &str,
+        embedding: &[f32],
+    ) {
+        const SIMILARITY_THRESHOLD: f32 = 0.75;
+        const MAX_LINKS: usize = 5;
+
+        // Search for similar memories
+        let similar = match self
+            .qdrant
+            .search(project_slug, embedding.to_vec(), MAX_LINKS + 1, None)
+            .await
+        {
+            Ok(results) => results,
+            Err(e) => {
+                warn!(error = %e, "Failed to search for similar memories during auto-linking");
+                return;
+            }
+        };
+
+        let mut links_created = 0;
+        for result in similar {
+            // Skip self and low-similarity matches
+            if result.id == memory_id || result.score < SIMILARITY_THRESHOLD {
+                continue;
+            }
+
+            // Create bidirectional "related" link
+            let link_result = sqlx::query(
+                r#"
+                INSERT OR IGNORE INTO memory_links (
+                    id, project_id, source_id, target_id, link_type,
+                    created_by, confidence, context, created_at
+                ) VALUES (?, ?, ?, ?, 'related', 'system', ?, 'Auto-linked by vector similarity', datetime('now'))
+                "#,
+            )
+            .bind(crate::models::new_id())
+            .bind(project_id)
+            .bind(memory_id)
+            .bind(&result.id)
+            .bind(result.score)
+            .execute(&self.db)
+            .await;
+
+            match link_result {
+                Ok(r) if r.rows_affected() > 0 => {
+                    links_created += 1;
+                    debug!(
+                        source = %memory_id,
+                        target = %result.id,
+                        score = %result.score,
+                        "Auto-linked similar memory"
+                    );
+                }
+                Ok(_) => {
+                    // Link already exists, that's fine
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to create auto-link");
+                }
+            }
+        }
+
+        if links_created > 0 {
+            info!(
+                memory_id = %memory_id,
+                links_created = %links_created,
+                "Auto-linked to similar memories"
+            );
+        }
     }
 
     /// Insert memory into SQLite

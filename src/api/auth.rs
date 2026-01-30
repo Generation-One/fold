@@ -18,6 +18,7 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::middleware::require_session;
 use crate::{AppState, Error, Result};
@@ -287,11 +288,11 @@ async fn get_current_user(State(_state): State<AppState>) -> Result<Json<UserInf
 /// POST /auth/bootstrap
 ///
 /// Creates the initial admin user using a bootstrap token. This endpoint
-/// only works when no users exist in the system and a valid bootstrap
+/// only works when no admin users exist in the system and a valid bootstrap
 /// token is provided.
 #[axum::debug_handler]
 async fn bootstrap(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(request): Json<BootstrapRequest>,
 ) -> Result<Json<BootstrapResponse>> {
     let config = crate::config();
@@ -307,17 +308,59 @@ async fn bootstrap(
         return Err(Error::InvalidCredentials);
     }
 
-    // TODO: Check if any users exist - only allow bootstrap if empty
+    // Check if any admin users exist - only allow bootstrap if no admins
+    let admin_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE role = 'admin'")
+        .fetch_one(&state.db)
+        .await?;
 
-    // TODO: Create admin user in database
+    if admin_count.0 > 0 {
+        return Err(Error::InvalidInput(
+            "Bootstrap not allowed: admin user already exists".into(),
+        ));
+    }
 
-    // Generate API token
-    let api_token = nanoid::nanoid!(48);
+    // Create admin user in database
+    let user_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        r#"
+        INSERT INTO users (id, provider, subject, email, display_name, role, created_at)
+        VALUES (?, 'bootstrap', ?, ?, ?, 'admin', datetime('now'))
+        "#,
+    )
+    .bind(&user_id)
+    .bind(&request.email) // Use email as subject for bootstrap users
+    .bind(&request.email)
+    .bind(&request.name)
+    .execute(&state.db)
+    .await?;
 
-    // TODO: Store API token hash in database
+    // Generate API token in format: fold_{prefix}_{secret}
+    let prefix = nanoid::nanoid!(8);
+    let secret = nanoid::nanoid!(32);
+    let api_token = format!("fold_{}_{}", prefix, secret);
+
+    // Hash the full token for storage
+    let mut hasher = Sha256::new();
+    hasher.update(api_token.as_bytes());
+    let token_hash = hex::encode(hasher.finalize());
+
+    // Store API token in database
+    let token_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        r#"
+        INSERT INTO api_tokens (id, user_id, name, token_hash, token_prefix, project_ids, created_at)
+        VALUES (?, ?, 'Bootstrap Token', ?, ?, '[]', datetime('now'))
+        "#,
+    )
+    .bind(&token_id)
+    .bind(&user_id)
+    .bind(&token_hash)
+    .bind(&prefix)
+    .execute(&state.db)
+    .await?;
 
     Ok(Json(BootstrapResponse {
-        user_id: uuid::Uuid::new_v4().to_string(),
+        user_id,
         api_token,
         message: "Admin user created successfully".into(),
     }))

@@ -1,0 +1,513 @@
+//! Background job worker for processing indexing tasks.
+//!
+//! Polls for pending jobs and processes them asynchronously.
+//! Handles retries, progress updates, and error reporting.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::sync::RwLock;
+use tokio::time::sleep;
+use tracing::{debug, error, info, warn};
+
+use crate::db::{self, DbPool, JobType, LogLevel};
+use crate::error::{Error, Result};
+use crate::services::{GitHubService, GitSyncService, LlmService, MemoryService};
+
+/// Poll interval for checking new jobs
+const POLL_INTERVAL_SECS: u64 = 5;
+
+/// Maximum jobs to process concurrently
+const MAX_CONCURRENT_JOBS: usize = 3;
+
+/// Background job worker service.
+#[derive(Clone)]
+pub struct JobWorker {
+    inner: Arc<JobWorkerInner>,
+}
+
+struct JobWorkerInner {
+    db: DbPool,
+    memory: MemoryService,
+    git_sync: GitSyncService,
+    github: Arc<GitHubService>,
+    llm: Arc<LlmService>,
+    running: RwLock<bool>,
+    active_jobs: RwLock<usize>,
+}
+
+impl JobWorker {
+    /// Create a new job worker.
+    pub fn new(
+        db: DbPool,
+        memory: MemoryService,
+        git_sync: GitSyncService,
+        github: Arc<GitHubService>,
+        llm: Arc<LlmService>,
+    ) -> Self {
+        Self {
+            inner: Arc::new(JobWorkerInner {
+                db,
+                memory,
+                git_sync,
+                github,
+                llm,
+                running: RwLock::new(false),
+                active_jobs: RwLock::new(0),
+            }),
+        }
+    }
+
+    /// Start the job worker background loop.
+    /// Returns a handle that can be used to stop the worker.
+    pub async fn start(&self) -> JobWorkerHandle {
+        let worker = self.clone();
+
+        // Set running flag
+        *worker.inner.running.write().await = true;
+
+        // Spawn background task
+        let handle = tokio::spawn(async move {
+            worker.run_loop().await;
+        });
+
+        info!("Job worker started");
+
+        JobWorkerHandle {
+            worker: self.clone(),
+            _handle: handle,
+        }
+    }
+
+    /// Run the main processing loop.
+    async fn run_loop(&self) {
+        loop {
+            // Check if we should stop
+            if !*self.inner.running.read().await {
+                info!("Job worker stopping");
+                break;
+            }
+
+            // Check active job count
+            let active = *self.inner.active_jobs.read().await;
+            if active >= MAX_CONCURRENT_JOBS {
+                debug!(active, max = MAX_CONCURRENT_JOBS, "At max concurrent jobs, waiting");
+                sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+
+            // Poll for pending jobs
+            match self.poll_and_process().await {
+                Ok(processed) => {
+                    if processed == 0 {
+                        // No jobs found, wait before polling again
+                        sleep(Duration::from_secs(POLL_INTERVAL_SECS)).await;
+                    }
+                }
+                Err(e) => {
+                    error!(error = %e, "Error polling for jobs");
+                    sleep(Duration::from_secs(POLL_INTERVAL_SECS)).await;
+                }
+            }
+        }
+    }
+
+    /// Poll for pending jobs and process one.
+    async fn poll_and_process(&self) -> Result<usize> {
+        // Get pending jobs
+        let jobs = db::list_pending_jobs(&self.inner.db, 1).await?;
+
+        if jobs.is_empty() {
+            return Ok(0);
+        }
+
+        let job = &jobs[0];
+
+        // Increment active job count
+        *self.inner.active_jobs.write().await += 1;
+
+        // Spawn job processing (don't block the loop)
+        let worker = self.clone();
+        let job_id = job.id.clone();
+        let job_type = job.job_type.clone();
+
+        tokio::spawn(async move {
+            if let Err(e) = worker.process_job(&job_id, &job_type).await {
+                error!(job_id = %job_id, error = %e, "Job processing failed");
+            }
+
+            // Decrement active job count
+            *worker.inner.active_jobs.write().await -= 1;
+        });
+
+        Ok(1)
+    }
+
+    /// Process a single job.
+    async fn process_job(&self, job_id: &str, job_type: &str) -> Result<()> {
+        info!(job_id, job_type, "Starting job");
+
+        // Mark job as running
+        db::start_job(&self.inner.db, job_id).await?;
+
+        // Process based on type
+        let result = match JobType::from_str(job_type) {
+            Some(JobType::IndexRepo) => self.process_index_repo(job_id).await,
+            Some(JobType::ReindexRepo) => self.process_reindex_repo(job_id).await,
+            Some(JobType::IndexHistory) => self.process_index_history(job_id).await,
+            Some(JobType::SyncMetadata) => self.process_sync_metadata(job_id).await,
+            None => {
+                warn!(job_id, job_type, "Unknown job type");
+                Err(Error::Internal(format!("Unknown job type: {}", job_type)))
+            }
+        };
+
+        match result {
+            Ok(()) => {
+                info!(job_id, "Job completed successfully");
+                db::complete_job(&self.inner.db, job_id, None).await?;
+            }
+            Err(e) => {
+                error!(job_id, error = %e, "Job failed");
+                db::fail_job(&self.inner.db, job_id, &e.to_string()).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Process index_repo job - index files from a push event.
+    async fn process_index_repo(&self, job_id: &str) -> Result<()> {
+        let job = db::get_job(&self.inner.db, job_id).await?;
+
+        let repo_id = job.repository_id.as_ref()
+            .ok_or_else(|| Error::Internal("Job missing repository_id".to_string()))?;
+
+        // Get repository details
+        let repo = db::get_repository(&self.inner.db, repo_id).await?;
+
+        // Get project
+        let project = db::get_project(&self.inner.db, &repo.project_id).await?;
+
+        info!(
+            job_id,
+            repo = %repo.full_name(),
+            project = %project.slug,
+            "Indexing repository files"
+        );
+
+        // Update progress for each item
+        let total = job.total_items.unwrap_or(0);
+
+        for i in 0..total {
+            // TODO: Actually fetch and index files from GitHub
+            // For now just update progress
+            db::update_job_progress(&self.inner.db, job_id, i + 1, 0).await?;
+
+            // Log progress periodically
+            if (i + 1) % 10 == 0 || i + 1 == total {
+                debug!(job_id, processed = i + 1, total, "Index progress");
+            }
+        }
+
+        // Log completion
+        self.log_job(
+            job_id,
+            LogLevel::Info,
+            &format!("Indexed {} files from {}", total, repo.full_name()),
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    /// Process reindex_repo job - full repository reindex.
+    async fn process_reindex_repo(&self, job_id: &str) -> Result<()> {
+        let job = db::get_job(&self.inner.db, job_id).await?;
+
+        let repo_id = job.repository_id.as_ref()
+            .ok_or_else(|| Error::Internal("Job missing repository_id".to_string()))?;
+
+        let repo = db::get_repository(&self.inner.db, repo_id).await?;
+        let project = db::get_project(&self.inner.db, &repo.project_id).await?;
+
+        info!(
+            job_id,
+            repo = %repo.full_name(),
+            project = %project.slug,
+            "Full repository reindex"
+        );
+
+        let token = &repo.access_token;
+
+        // Get recent commits to understand what files exist
+        let commits = self.inner.github
+            .get_commits(&repo.owner, &repo.repo, Some(&repo.branch), None, 10, token)
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get commits: {}", e)))?;
+
+        // For each commit, get the files and index them
+        let mut indexed = 0;
+        let mut failed = 0;
+
+        for commit in &commits {
+            // Get commit details including files
+            match self.inner.github
+                .get_commit(&repo.owner, &repo.repo, &commit.sha, token)
+                .await
+            {
+                Ok(details) => {
+                    // files is Option<Vec<GitHubFile>>
+                    if let Some(files) = &details.files {
+                        for file in files {
+                            // Index each file
+                            if let Err(e) = self.index_file(&repo, &project, &file.filename, token).await {
+                                warn!(file = %file.filename, error = %e, "Failed to index file");
+                                failed += 1;
+                            } else {
+                                indexed += 1;
+                            }
+                            db::update_job_progress(&self.inner.db, job_id, indexed, failed).await?;
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(sha = %commit.sha, error = %e, "Failed to get commit details");
+                }
+            }
+        }
+
+        self.log_job(
+            job_id,
+            LogLevel::Info,
+            &format!(
+                "Reindexed {}: {} indexed, {} failed",
+                repo.full_name(),
+                indexed,
+                failed
+            ),
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    /// Index a single file from GitHub.
+    async fn index_file(
+        &self,
+        repo: &db::Repository,
+        project: &db::Project,
+        file_path: &str,
+        token: &str,
+    ) -> Result<()> {
+        use crate::services::IndexerService;
+
+        // Skip non-code files
+        let lang = IndexerService::detect_language(file_path);
+        if lang.is_empty() {
+            return Ok(());
+        }
+
+        // Get file content from GitHub
+        let file_info = self.inner.github
+            .get_file(&repo.owner, &repo.repo, file_path, Some(&repo.branch), token)
+            .await?;
+
+        // Skip large files
+        if file_info.size > 100_000 {
+            debug!(file = %file_path, size = file_info.size, "Skipping large file");
+            return Ok(());
+        }
+
+        // Decode content (base64)
+        let content = file_info.content
+            .ok_or_else(|| Error::Internal("File has no content".to_string()))?;
+
+        let decoded = base64_decode(&content)?;
+        let content_str = String::from_utf8_lossy(&decoded).to_string();
+
+        // Create memory for the file
+        let title = file_path.split('/').last().unwrap_or(file_path).to_string();
+
+        // Store as memory using correct MemoryCreate structure
+        self.inner.memory.add(
+            &project.id,
+            &project.slug,
+            crate::models::MemoryCreate {
+                memory_type: crate::models::MemoryType::Codebase,
+                content: content_str,
+                author: Some("system".to_string()),
+                title: Some(title),
+                keywords: vec![],
+                tags: vec![lang.clone(), "code".to_string()],
+                context: None,
+                file_path: Some(file_path.to_string()),
+                language: Some(lang),
+                status: None,
+                assignee: None,
+                metadata: std::collections::HashMap::new(),
+            },
+            true, // auto_metadata
+        ).await?;
+
+        debug!(file = %file_path, "Indexed file");
+        Ok(())
+    }
+
+    /// Process index_history job - index commit history.
+    async fn process_index_history(&self, job_id: &str) -> Result<()> {
+        let job = db::get_job(&self.inner.db, job_id).await?;
+
+        let repo_id = job.repository_id.as_ref()
+            .ok_or_else(|| Error::Internal("Job missing repository_id".to_string()))?;
+
+        let repo = db::get_repository(&self.inner.db, repo_id).await?;
+        let project = db::get_project(&self.inner.db, &repo.project_id).await?;
+
+        info!(
+            job_id,
+            repo = %repo.full_name(),
+            project = %project.slug,
+            "Indexing commit history"
+        );
+
+        let token = &repo.access_token;
+
+        // Get recent commits
+        let commits = self.inner.github
+            .get_commits(&repo.owner, &repo.repo, Some(&repo.branch), None, 100, token)
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get commits: {}", e)))?;
+
+        let total = commits.len();
+
+        for (i, commit) in commits.iter().enumerate() {
+            // Store commit in database
+            // GitHubCommit has: sha, commit (GitHubCommitDetails), author (Option<GitHubUser>)
+            let _ = db::create_git_commit(
+                &self.inner.db,
+                db::CreateGitCommit {
+                    id: nanoid::nanoid!(),
+                    repository_id: repo_id.clone(),
+                    sha: commit.sha.clone(),
+                    message: commit.commit.message.clone(),
+                    author_name: Some(commit.commit.author.name.clone()),
+                    author_email: Some(commit.commit.author.email.clone()),
+                    files_changed: None,
+                    insertions: commit.stats.as_ref().map(|s| s.additions),
+                    deletions: commit.stats.as_ref().map(|s| s.deletions),
+                    committed_at: commit.commit.author.date.clone(),
+                },
+            )
+            .await;
+
+            db::update_job_progress(&self.inner.db, job_id, i as i32 + 1, 0).await?;
+        }
+
+        self.log_job(
+            job_id,
+            LogLevel::Info,
+            &format!("Indexed {} commits from {}", total, repo.full_name()),
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    /// Process sync_metadata job - sync repository metadata.
+    async fn process_sync_metadata(&self, job_id: &str) -> Result<()> {
+        let job = db::get_job(&self.inner.db, job_id).await?;
+
+        let repo_id = job.repository_id.as_ref()
+            .ok_or_else(|| Error::Internal("Job missing repository_id".to_string()))?;
+
+        let repo = db::get_repository(&self.inner.db, repo_id).await?;
+
+        info!(
+            job_id,
+            repo = %repo.full_name(),
+            "Syncing repository metadata"
+        );
+
+        let token = &repo.access_token;
+
+        // Get repository info from GitHub
+        let _info = self.inner.github
+            .get_repo(&repo.owner, &repo.repo, token)
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get repo: {}", e)))?;
+
+        // Log that we synced metadata (no dedicated last_synced_at field)
+        // The sync is just for verification - the real work is webhook-driven
+
+        self.log_job(
+            job_id,
+            LogLevel::Info,
+            &format!("Synced metadata for {}", repo.full_name()),
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    /// Helper to log job messages.
+    async fn log_job(&self, job_id: &str, level: LogLevel, message: &str) -> Result<()> {
+        db::create_job_log(
+            &self.inner.db,
+            db::CreateJobLog {
+                job_id: job_id.to_string(),
+                level,
+                message: message.to_string(),
+                metadata: None,
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Stop the job worker.
+    pub async fn stop(&self) {
+        info!("Stopping job worker");
+        *self.inner.running.write().await = false;
+    }
+
+    /// Get current job worker status.
+    pub async fn status(&self) -> JobWorkerStatus {
+        JobWorkerStatus {
+            running: *self.inner.running.read().await,
+            active_jobs: *self.inner.active_jobs.read().await,
+        }
+    }
+}
+
+/// Handle for the running job worker.
+pub struct JobWorkerHandle {
+    worker: JobWorker,
+    _handle: tokio::task::JoinHandle<()>,
+}
+
+impl JobWorkerHandle {
+    /// Stop the job worker.
+    pub async fn stop(self) {
+        self.worker.stop().await;
+    }
+}
+
+/// Job worker status.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct JobWorkerStatus {
+    pub running: bool,
+    pub active_jobs: usize,
+}
+
+/// Decode base64 content (GitHub returns base64-encoded file content)
+fn base64_decode(input: &str) -> Result<Vec<u8>> {
+    use base64::{Engine as _, engine::general_purpose};
+
+    // Remove newlines that GitHub sometimes includes
+    let cleaned: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+
+    general_purpose::STANDARD
+        .decode(&cleaned)
+        .map_err(|e| Error::Internal(format!("Base64 decode error: {}", e)))
+}

@@ -47,6 +47,17 @@ async fn main() -> Result<()> {
     let state = AppState::new().await?;
     tracing::info!("Application state initialized");
 
+    // Start background job worker
+    let job_worker = services::JobWorker::new(
+        state.db.clone(),
+        state.memory.clone(),
+        state.git_sync.clone(),
+        state.github.clone(),
+        state.llm.clone(),
+    );
+    let _job_worker_handle = job_worker.start().await;
+    tracing::info!("Background job worker started");
+
     // Build router
     let app = Router::new()
         .merge(api::routes(state.clone()))

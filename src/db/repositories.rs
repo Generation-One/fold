@@ -404,6 +404,32 @@ pub async fn list_repositories(pool: &DbPool) -> Result<Vec<Repository>> {
     .map_err(Error::Database)
 }
 
+/// Get a repository by its webhook ID.
+/// Used for routing incoming webhook events to the correct repository.
+pub async fn get_repository_by_webhook_id(pool: &DbPool, webhook_id: &str) -> Result<Option<Repository>> {
+    sqlx::query_as::<_, Repository>(
+        "SELECT * FROM repositories WHERE webhook_id = ?",
+    )
+    .bind(webhook_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(Error::Database)
+}
+
+/// Get the webhook secret for a repository.
+/// Used for verifying webhook signature on incoming events.
+pub async fn get_webhook_secret(pool: &DbPool, repo_id: &str) -> Result<Option<String>> {
+    let result = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT webhook_secret FROM repositories WHERE id = ?",
+    )
+    .bind(repo_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(Error::Database)?;
+
+    Ok(result.flatten())
+}
+
 // ============================================================================
 // Git Commit Queries
 // ============================================================================

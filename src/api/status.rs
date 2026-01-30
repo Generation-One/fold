@@ -484,13 +484,21 @@ async fn get_qdrant_status(_state: &AppState) -> Result<QdrantStatus> {
 }
 
 /// Get embedding model status.
-fn get_embedding_status(_state: &AppState) -> Result<EmbeddingStatus> {
+fn get_embedding_status(state: &AppState) -> Result<EmbeddingStatus> {
     let config = crate::config();
 
+    // Get model name from first provider, or indicate placeholder mode
+    let model = config
+        .embedding
+        .providers
+        .first()
+        .map(|p| format!("{}/{}", p.name, p.model))
+        .unwrap_or_else(|| "hash-placeholder".to_string());
+
     Ok(EmbeddingStatus {
-        model: config.embedding.model.clone(),
+        model,
         loaded: true,
-        dimension: 384, // MiniLM-L6-v2 dimension
+        dimension: state.embeddings.dimension() as u32,
     })
 }
 

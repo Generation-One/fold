@@ -27,8 +27,7 @@ services:
       - fold-data:/data
       - fastembed-cache:/root/.cache/fastembed
     depends_on:
-      qdrant:
-        condition: service_healthy
+      - qdrant
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
       interval: 10s

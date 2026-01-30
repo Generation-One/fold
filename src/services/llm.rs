@@ -367,7 +367,7 @@ impl LlmService {
         None
     }
 
-    /// Summarize source code and extract metadata.
+    /// Summarize source code and extract detailed metadata.
     pub async fn summarize_code(
         &self,
         content: &str,
@@ -375,30 +375,42 @@ impl LlmService {
         language: &str,
     ) -> Result<CodeSummary> {
         let prompt = format!(
-            r#"Analyze this source code and generate a summary.
+            r#"Perform a comprehensive analysis of this source code file.
 
 File: {path}
 Language: {language}
+Lines of code: {lines}
 
 ```
 {content}
 ```
 
-Generate a JSON object with:
-- "title": Short description of what this file does (max 80 chars)
-- "summary": 1-2 sentence summary of the code's purpose
-- "keywords": Array of important function/class/variable names (max 10)
-- "tags": Array of category tags like "api", "utility", "model", "test", etc. (max 4)
-- "exports": Array of exported/public functions, classes, or constants
-- "dependencies": Array of imported modules/packages
+Generate a detailed JSON object with:
+- "title": Clear, concise description of this file's primary purpose (max 100 chars)
+- "summary": Comprehensive 2-4 sentence description covering:
+  * What this file does
+  * Its role in the broader system
+  * Key responsibilities and functionality
+  * Notable patterns or architectural approach used
+- "keywords": Array of important function names, class names, constants, and key variable names (max 15)
+- "tags": Array of descriptive category tags like:
+  * Functional role: "api", "service", "model", "controller", "utility", "middleware", "test"
+  * Tech patterns: "async", "database", "http", "validation", "auth", "caching"
+  * Domain: "user-management", "payments", "analytics", etc.
+  (max 6 tags)
+- "exports": Complete array of all exported/public functions, classes, types, or constants with their names
+- "dependencies": Array of imported modules/packages with package names
+- "architecture_notes": Brief note about architectural patterns used (e.g., "Uses repository pattern", "Implements Observer pattern", "RESTful API endpoint")
+- "key_functions": Array of the 3-5 most important function/method names in this file
 
 Respond with ONLY a valid JSON object, no markdown or explanation."#,
             path = path,
             language = if language.is_empty() { "unknown" } else { language },
-            content = &content[..content.len().min(3000)]
+            lines = content.lines().count(),
+            content = &content[..content.len().min(4000)]
         );
 
-        let response = self.complete(&prompt, 500).await?;
+        let response = self.complete(&prompt, 800).await?;
 
         let json = self.extract_json(&response).unwrap_or_else(|| json!({}));
 
@@ -429,42 +441,83 @@ Respond with ONLY a valid JSON object, no markdown or explanation."#,
         })
     }
 
-    /// Summarize a git commit.
+    /// Summarize a git commit with detailed analysis.
     pub async fn summarize_commit(&self, commit: &CommitInfo) -> Result<String> {
         let files_summary = commit
             .files
             .iter()
-            .take(20)
+            .take(30)
             .map(|f| format!("  - {} ({})", f.path, f.status))
             .collect::<Vec<_>>()
             .join("\n");
 
         let prompt = format!(
-            r#"Summarize this git commit in 2-3 sentences for a development team.
+            r#"Provide a comprehensive technical summary of this git commit for a development team.
 
 Commit: {sha}
 Author: {author}
 Message: {message}
 
-Stats: +{insertions} -{deletions}
+Statistics: +{insertions} lines, -{deletions} lines
+Files changed: {file_count}
 
-Files changed:
+Detailed file changes:
 {files}
 
-Provide a concise summary that explains:
-1. What was changed
-2. Why it might have been changed (if apparent from the commit message or file names)
+Generate a detailed summary with the following sections:
 
-Keep it brief and technical. Do not include any markdown formatting."#,
+## Overview
+Brief description of what this commit accomplishes (2-3 sentences).
+
+## Changes Made
+Detailed breakdown of specific changes:
+- List key modifications by file or functional area
+- Include technical details about what was added, removed, or modified
+- Note any important algorithmic or architectural changes
+
+## Impact Analysis
+- Which parts of the system are affected?
+- Are there any breaking changes or API modifications?
+- What functionality is newly enabled or deprecated?
+
+## Context
+- Why were these changes made? (based on commit message and file patterns)
+- Any notable patterns in the changes?
+- Relationship to broader features or refactoring efforts
+
+Provide detailed, technical analysis suitable for code review and project history. Use plain text without markdown formatting."#,
             sha = &commit.sha[..7.min(commit.sha.len())],
             author = commit.author.as_deref().unwrap_or("unknown"),
             message = commit.message,
             insertions = commit.insertions,
             deletions = commit.deletions,
+            file_count = commit.files.len(),
             files = files_summary
         );
 
-        self.complete(&prompt, 200).await
+        self.complete(&prompt, 800).await
+    }
+
+    /// Summarize a development session from notes.
+    pub async fn summarize_session(&self, notes: &str) -> Result<String> {
+        let prompt = format!(
+            r#"Summarize this development session based on the notes recorded during the session.
+
+## Session Notes
+{notes}
+
+## Instructions
+Create a concise summary that captures:
+1. What was accomplished during the session
+2. Key decisions made
+3. Problems encountered and solutions found
+4. Next steps or remaining work
+
+Write in past tense, 2-3 paragraphs. Be specific about technical details."#,
+            notes = notes
+        );
+
+        self.complete(&prompt, 400).await
     }
 
     /// Suggest links between a memory and candidate memories.

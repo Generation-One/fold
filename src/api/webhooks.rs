@@ -14,12 +14,13 @@ use axum::{
     routing::post,
     Json, Router,
 };
+use chrono::Utc;
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use uuid::Uuid;
 
-use crate::{AppState, Error, Result};
+use crate::{db, AppState, Error, Result};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -324,9 +325,9 @@ async fn handle_gitlab_webhook(
 // ============================================================================
 
 /// Get GitHub webhook secret for a repository.
-async fn get_github_webhook_secret(_state: &AppState, _repo_id: Uuid) -> Result<String> {
-    // TODO: Fetch from database
-    Ok(String::new())
+async fn get_github_webhook_secret(state: &AppState, repo_id: Uuid) -> Result<String> {
+    let secret = db::get_webhook_secret(&state.db, &repo_id.to_string()).await?;
+    Ok(secret.unwrap_or_default())
 }
 
 /// Verify GitHub webhook signature.
@@ -349,9 +350,10 @@ fn verify_github_signature(body: &[u8], secret: &str, signature: &str) -> Result
 }
 
 /// Get GitLab webhook token for a repository.
-async fn get_gitlab_webhook_token(_state: &AppState, _repo_id: Uuid) -> Result<String> {
-    // TODO: Fetch from database
-    Ok(String::new())
+async fn get_gitlab_webhook_token(state: &AppState, repo_id: Uuid) -> Result<String> {
+    // GitLab uses the same secret field as GitHub
+    let secret = db::get_webhook_secret(&state.db, &repo_id.to_string()).await?;
+    Ok(secret.unwrap_or_default())
 }
 
 // ============================================================================
@@ -360,7 +362,7 @@ async fn get_gitlab_webhook_token(_state: &AppState, _repo_id: Uuid) -> Result<S
 
 /// Process GitHub push event.
 async fn process_github_push(
-    _state: &AppState,
+    state: &AppState,
     repo_id: Uuid,
     payload: &GitHubWebhookPayload,
 ) -> Result<Option<Uuid>> {
@@ -374,8 +376,20 @@ async fn process_github_push(
         "Processing GitHub push"
     );
 
-    // Only process pushes to default branch
-    // TODO: Check if this is the default branch
+    // Get repository from database
+    let repo_id_str = repo_id.to_string();
+    let repo = db::get_repository(&state.db, &repo_id_str).await?;
+
+    // Only process pushes to the tracked branch
+    let branch = git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref);
+    if branch != repo.branch {
+        tracing::debug!(
+            branch = %branch,
+            tracked = %repo.branch,
+            "Ignoring push to non-tracked branch"
+        );
+        return Ok(None);
+    }
 
     // Collect changed files
     let mut changed_files: Vec<String> = Vec::new();
@@ -390,21 +404,32 @@ async fn process_github_push(
         }
     }
 
-    // TODO: Queue indexing job for changed files
-    let job_id = Uuid::new_v4();
+    // Create indexing job in database
+    let job_id = crate::models::new_id();
+    let job = db::create_job(
+        &state.db,
+        db::CreateJob {
+            id: job_id.clone(),
+            job_type: db::JobType::IndexRepo,
+            project_id: Some(repo.project_id),
+            repository_id: Some(repo_id_str),
+            total_items: Some(changed_files.len() as i32),
+        },
+    )
+    .await?;
 
     tracing::info!(
-        job_id = %job_id,
+        job_id = %job.id,
         files = changed_files.len(),
-        "Queued indexing job"
+        "Created indexing job"
     );
 
-    Ok(Some(job_id))
+    Ok(Some(Uuid::parse_str(&job.id).unwrap_or_else(|_| Uuid::new_v4())))
 }
 
 /// Process GitHub pull request event.
 async fn process_github_pull_request(
-    _state: &AppState,
+    state: &AppState,
     repo_id: Uuid,
     payload: &GitHubWebhookPayload,
 ) -> Result<Option<Uuid>> {
@@ -420,14 +445,57 @@ async fn process_github_pull_request(
             "Processing GitHub pull request"
         );
 
+        let repo_id_str = repo_id.to_string();
+
+        // Determine PR state
+        let pr_state = if pr.merged.unwrap_or(false) {
+            db::PrState::Merged
+        } else {
+            match pr.state.as_str() {
+                "closed" => db::PrState::Closed,
+                _ => db::PrState::Open,
+            }
+        };
+
+        // Upsert PR record in database
+        let pr_record = db::upsert_git_pull_request(
+            &state.db,
+            db::CreateGitPullRequest {
+                id: crate::models::new_id(),
+                repository_id: repo_id_str.clone(),
+                number: pr.number as i32,
+                title: pr.title.clone(),
+                description: None, // GitHub webhook doesn't include body in simplified payload
+                state: pr_state,
+                author: Some(pr.user.login.clone()),
+                source_branch: Some(pr.head.branch.clone()),
+                target_branch: Some(pr.base.branch.clone()),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                merged_at: if pr.merged.unwrap_or(false) {
+                    Some(chrono::Utc::now().to_rfc3339())
+                } else {
+                    None
+                },
+            },
+        ).await?;
+
+        tracing::debug!(
+            pr_id = %pr_record.id,
+            pr_number = pr.number,
+            state = %pr_record.state,
+            "Stored pull request"
+        );
+
         // Process based on action
         match action {
             "opened" | "synchronize" => {
-                // TODO: Index PR changes
+                // Could trigger indexing job for PR changes in the future
+                tracing::debug!(action = %action, "PR action recorded");
             }
             "closed" => {
                 if pr.merged.unwrap_or(false) {
-                    // TODO: Create merge memory
+                    tracing::info!(pr_number = pr.number, "Pull request merged");
+                    // Could create a merge memory in the future
                 }
             }
             _ => {}
@@ -439,7 +507,7 @@ async fn process_github_pull_request(
 
 /// Process GitLab push event.
 async fn process_gitlab_push(
-    _state: &AppState,
+    state: &AppState,
     repo_id: Uuid,
     payload: &GitLabWebhookPayload,
 ) -> Result<Option<Uuid>> {
@@ -452,6 +520,21 @@ async fn process_gitlab_push(
         commits = commits,
         "Processing GitLab push"
     );
+
+    // Get repository from database
+    let repo_id_str = repo_id.to_string();
+    let repo = db::get_repository(&state.db, &repo_id_str).await?;
+
+    // Only process pushes to the tracked branch
+    let branch = git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref);
+    if branch != repo.branch {
+        tracing::debug!(
+            branch = %branch,
+            tracked = %repo.branch,
+            "Ignoring push to non-tracked branch"
+        );
+        return Ok(None);
+    }
 
     // Collect changed files
     let mut changed_files: Vec<String> = Vec::new();
@@ -466,15 +549,26 @@ async fn process_gitlab_push(
         }
     }
 
-    // TODO: Queue indexing job
-    let job_id = Uuid::new_v4();
+    // Create indexing job in database
+    let job_id = crate::models::new_id();
+    let job = db::create_job(
+        &state.db,
+        db::CreateJob {
+            id: job_id.clone(),
+            job_type: db::JobType::IndexRepo,
+            project_id: Some(repo.project_id),
+            repository_id: Some(repo_id_str),
+            total_items: Some(changed_files.len() as i32),
+        },
+    )
+    .await?;
 
-    Ok(Some(job_id))
+    Ok(Some(Uuid::parse_str(&job.id).unwrap_or_else(|_| Uuid::new_v4())))
 }
 
 /// Process GitLab merge request event.
 async fn process_gitlab_merge_request(
-    _state: &AppState,
+    state: &AppState,
     repo_id: Uuid,
     payload: &GitLabWebhookPayload,
 ) -> Result<Option<Uuid>> {
@@ -491,13 +585,54 @@ async fn process_gitlab_merge_request(
             "Processing GitLab merge request"
         );
 
+        let repo_id_str = repo_id.to_string();
+
+        // Determine MR state
+        let mr_state = match mr.state.as_str() {
+            "merged" => db::PrState::Merged,
+            "closed" => db::PrState::Closed,
+            _ => db::PrState::Open,
+        };
+
+        // Get author from user payload if available
+        let author = payload.user.as_ref().map(|u| u.username.clone());
+
+        // Upsert MR record in database (GitLab MRs use the same table as GitHub PRs)
+        let mr_record = db::upsert_git_pull_request(
+            &state.db,
+            db::CreateGitPullRequest {
+                id: crate::models::new_id(),
+                repository_id: repo_id_str.clone(),
+                number: mr.iid as i32,
+                title: mr.title.clone(),
+                description: None,
+                state: mr_state,
+                author,
+                source_branch: Some(mr.source_branch.clone()),
+                target_branch: Some(mr.target_branch.clone()),
+                created_at: Utc::now().to_rfc3339(),
+                merged_at: if mr.state == "merged" {
+                    Some(Utc::now().to_rfc3339())
+                } else {
+                    None
+                },
+            },
+        ).await?;
+
+        tracing::debug!(
+            mr_id = %mr_record.id,
+            mr_iid = mr.iid,
+            state = %mr_record.state,
+            "Stored merge request"
+        );
+
         // Process based on action
         match action {
             "open" | "update" => {
-                // TODO: Index MR changes
+                tracing::debug!(action = %action, "MR action recorded");
             }
             "merge" => {
-                // TODO: Create merge memory
+                tracing::info!(mr_iid = mr.iid, "Merge request merged");
             }
             _ => {}
         }
