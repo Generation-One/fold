@@ -12,11 +12,13 @@
 
 mod github;
 mod google_drive;
+mod local;
 mod registry;
 mod types;
 
 pub use github::GitHubFileSource;
 pub use google_drive::GoogleDriveFileSource;
+pub use local::LocalFileSource;
 pub use registry::ProviderRegistry;
 pub use types::*;
 
@@ -127,4 +129,44 @@ pub trait FileSourceProvider: Send + Sync {
         cursor: Option<&str>,
         token: &str,
     ) -> Result<ChangeDetectionResult>;
+
+    /// Write file content to the source.
+    ///
+    /// - `source`: The connected source info
+    /// - `path`: File path relative to the source root
+    /// - `content`: File content as bytes
+    /// - `token`: Access token
+    ///
+    /// Returns Ok(()) on success. Not all providers support writing.
+    async fn write_file(
+        &self,
+        source: &SourceInfo,
+        path: &str,
+        content: &[u8],
+        token: &str,
+    ) -> Result<()> {
+        let _ = (source, path, content, token);
+        Err(crate::error::Error::Validation(
+            "Write not supported by this provider".to_string(),
+        ))
+    }
+
+    /// Delete a file from the source.
+    ///
+    /// - `source`: The connected source info
+    /// - `path`: File path relative to the source root
+    /// - `token`: Access token
+    ///
+    /// Returns Ok(()) on success. Not all providers support deletion.
+    async fn delete_file(
+        &self,
+        source: &SourceInfo,
+        path: &str,
+        token: &str,
+    ) -> Result<()> {
+        let _ = (source, path, token);
+        Err(crate::error::Error::Validation(
+            "Delete not supported by this provider".to_string(),
+        ))
+    }
 }

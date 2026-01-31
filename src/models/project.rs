@@ -112,6 +112,38 @@ impl GitProvider {
     }
 }
 
+// ============================================================================
+// Meta Storage Type
+// ============================================================================
+
+/// Meta storage location type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MetaStorageType {
+    /// Store in path within main repository
+    #[default]
+    Internal,
+    /// Store in separate repository/drive
+    External,
+}
+
+impl MetaStorageType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MetaStorageType::Internal => "internal",
+            MetaStorageType::External => "external",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "internal" => Some(MetaStorageType::Internal),
+            "external" => Some(MetaStorageType::External),
+            _ => None,
+        }
+    }
+}
+
 /// Request model for creating a project
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -135,6 +167,13 @@ pub struct ProjectCreate {
     // Custom metadata
     #[serde(default)]
     pub metadata: HashMap<String, serde_json::Value>,
+
+    // Meta storage configuration
+    #[serde(default)]
+    pub meta_storage_type: MetaStorageType,
+    pub meta_path: Option<String>,
+    pub meta_source_id: Option<String>,
+    pub meta_source_config: Option<serde_json::Value>,
 }
 
 fn default_index_patterns() -> Vec<String> {
@@ -189,6 +228,10 @@ impl Default for ProjectCreate {
             ignore_patterns: default_ignore_patterns(),
             team_members: Vec::new(),
             metadata: HashMap::new(),
+            meta_storage_type: MetaStorageType::default(),
+            meta_path: None,
+            meta_source_id: None,
+            meta_source_config: None,
         }
     }
 }
@@ -233,6 +276,26 @@ pub struct Project {
     // Custom metadata as JSON
     pub metadata: Option<String>,
 
+    // Meta storage configuration (uses existing schema fields)
+    /// Whether metadata repo sync is enabled
+    pub metadata_repo_enabled: bool,
+    /// 'separate' (external repo) or 'in_repo' (path in main repo)
+    pub metadata_repo_mode: Option<String>,
+    /// Provider type: 'github', 'gitlab', 'google-drive', etc.
+    pub metadata_repo_provider: Option<String>,
+    /// For separate mode: repo owner
+    pub metadata_repo_owner: Option<String>,
+    /// For separate mode: repo name
+    pub metadata_repo_name: Option<String>,
+    /// For separate mode: branch
+    pub metadata_repo_branch: Option<String>,
+    /// Encrypted access token
+    pub metadata_repo_token: Option<String>,
+    /// For in_repo mode: source ID reference
+    pub metadata_repo_source_id: Option<String>,
+    /// Path prefix within repo (default: '.fold/')
+    pub metadata_repo_path_prefix: Option<String>,
+
     // Timestamps
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -254,6 +317,15 @@ impl Project {
             team_members: None,
             owner: None,
             metadata: None,
+            metadata_repo_enabled: false,
+            metadata_repo_mode: Some("in_repo".to_string()),
+            metadata_repo_provider: None,
+            metadata_repo_owner: None,
+            metadata_repo_name: None,
+            metadata_repo_branch: None,
+            metadata_repo_token: None,
+            metadata_repo_source_id: None,
+            metadata_repo_path_prefix: Some(".fold/".to_string()),
             created_at: now,
             updated_at: now,
         }
@@ -262,6 +334,10 @@ impl Project {
     /// Create from ProjectCreate request
     pub fn from_create(data: ProjectCreate, owner: Option<String>) -> Self {
         let now = Utc::now();
+        let mode = match data.meta_storage_type {
+            MetaStorageType::Internal => "in_repo",
+            MetaStorageType::External => "separate",
+        };
         Self {
             id: super::new_id(),
             slug: slugify(&data.name),
@@ -282,6 +358,19 @@ impl Project {
             } else {
                 Some(serde_json::to_string(&data.metadata).unwrap())
             },
+            metadata_repo_enabled: data.meta_storage_type != MetaStorageType::Internal || data.meta_path.is_some(),
+            metadata_repo_mode: Some(mode.to_string()),
+            metadata_repo_provider: data.meta_source_config.as_ref()
+                .and_then(|c| c.get("provider").and_then(|v| v.as_str().map(|s| s.to_string()))),
+            metadata_repo_owner: data.meta_source_config.as_ref()
+                .and_then(|c| c.get("owner").and_then(|v| v.as_str().map(|s| s.to_string()))),
+            metadata_repo_name: data.meta_source_config.as_ref()
+                .and_then(|c| c.get("repo").and_then(|v| v.as_str().map(|s| s.to_string()))),
+            metadata_repo_branch: data.meta_source_config.as_ref()
+                .and_then(|c| c.get("branch").and_then(|v| v.as_str().map(|s| s.to_string()))),
+            metadata_repo_token: None, // Set separately for security
+            metadata_repo_source_id: data.meta_source_id,
+            metadata_repo_path_prefix: data.meta_path.or_else(|| Some(".fold/".to_string())),
             created_at: now,
             updated_at: now,
         }
@@ -322,6 +411,55 @@ impl Project {
     /// Get the collection name for this project in Qdrant
     pub fn collection_name(&self, prefix: &str) -> String {
         format!("{}{}", prefix, self.slug)
+    }
+
+    /// Get the typed meta storage type
+    pub fn get_meta_storage_type(&self) -> MetaStorageType {
+        match self.metadata_repo_mode.as_deref() {
+            Some("separate") => MetaStorageType::External,
+            _ => MetaStorageType::Internal,
+        }
+    }
+
+    /// Get meta source config as JSON (reconstructed from fields)
+    pub fn meta_source_config_value(&self) -> Option<serde_json::Value> {
+        if self.metadata_repo_provider.is_none() {
+            return None;
+        }
+        let mut config = serde_json::Map::new();
+        if let Some(ref provider) = self.metadata_repo_provider {
+            config.insert("provider".to_string(), serde_json::json!(provider));
+        }
+        if let Some(ref owner) = self.metadata_repo_owner {
+            config.insert("owner".to_string(), serde_json::json!(owner));
+        }
+        if let Some(ref repo) = self.metadata_repo_name {
+            config.insert("repo".to_string(), serde_json::json!(repo));
+        }
+        if let Some(ref branch) = self.metadata_repo_branch {
+            config.insert("branch".to_string(), serde_json::json!(branch));
+        }
+        Some(serde_json::Value::Object(config))
+    }
+
+    /// Check if using internal meta storage (in_repo mode)
+    pub fn uses_internal_meta(&self) -> bool {
+        self.metadata_repo_mode.as_deref() != Some("separate")
+    }
+
+    /// Get the meta storage base path
+    pub fn meta_base_path(&self) -> String {
+        self.metadata_repo_path_prefix.clone().unwrap_or_else(|| ".fold/".to_string())
+    }
+
+    /// Check if metadata repo sync is enabled
+    pub fn is_meta_enabled(&self) -> bool {
+        self.metadata_repo_enabled
+    }
+
+    /// Get the metadata repo provider type
+    pub fn meta_provider(&self) -> Option<&str> {
+        self.metadata_repo_provider.as_deref()
     }
 }
 

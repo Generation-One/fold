@@ -378,6 +378,9 @@ impl MemoryService {
     }
 
     /// Search memories using semantic similarity.
+    ///
+    /// This is a convenience method that uses default decay parameters.
+    /// For full control, use `search_with_params`.
     pub async fn search(
         &self,
         project_id: &str,
@@ -386,30 +389,127 @@ impl MemoryService {
         memory_type: Option<MemoryType>,
         limit: usize,
     ) -> Result<Vec<MemorySearchResult>> {
+        let params = crate::models::SearchParams {
+            query: query.to_string(),
+            memory_type,
+            limit,
+            ..Default::default()
+        };
+        self.search_with_params(project_id, project_slug, params).await
+    }
+
+    /// Search memories with full control over decay parameters.
+    ///
+    /// Returns results ranked by a combination of semantic similarity
+    /// and retrieval strength (recency decay + access frequency).
+    pub async fn search_with_params(
+        &self,
+        project_id: &str,
+        project_slug: &str,
+        params: crate::models::SearchParams,
+    ) -> Result<Vec<MemorySearchResult>> {
+        use super::decay::{blend_scores, calculate_strength};
+
         // Generate query embedding
-        let embedding = self.embeddings.embed_single(query).await?;
+        let embedding = self.embeddings.embed_single(&params.query).await?;
 
         // Build filter
-        let filter = memory_type.map(|mt| SearchFilter::new().with_type(mt.as_str()));
+        let filter = params.memory_type.map(|mt| SearchFilter::new().with_type(mt.as_str()));
+
+        // Request more results than needed to account for re-ranking
+        // (strength-based re-ranking might push some results up)
+        let fetch_limit = (params.limit * 2).max(20);
 
         // Search in Qdrant
-        let vector_results = self.qdrant.search(project_slug, embedding, limit, filter).await?;
+        let vector_results = self.qdrant.search(project_slug, embedding, fetch_limit, filter).await?;
 
-        // Fetch full memories from SQLite
+        // Fetch full memories and compute combined scores
         let mut results = Vec::with_capacity(vector_results.len());
         for vr in vector_results {
-            if let Some(memory) = self.get(project_id, &vr.id).await? {
-                results.push(MemorySearchResult {
-                    memory,
-                    score: vr.score,
-                });
-            }
+            // Fetch memory without updating access count (we'll batch update later)
+            let memory = match self.get_without_tracking(project_id, &vr.id).await? {
+                Some(m) => m,
+                None => continue,
+            };
+
+            // Calculate retrieval strength based on recency and access count
+            let strength = calculate_strength(
+                memory.updated_at,
+                memory.last_accessed,
+                memory.retrieval_count,
+                params.decay_half_life_days,
+            );
+
+            // Blend semantic relevance with retrieval strength
+            let relevance = vr.score as f64;
+            let combined = blend_scores(relevance, strength, params.strength_weight);
+
+            results.push(MemorySearchResult::with_decay(
+                memory,
+                vr.score,
+                strength as f32,
+                combined as f32,
+            ));
         }
+
+        // Re-rank by combined score
+        results.sort_by(|a, b| {
+            b.combined_score
+                .partial_cmp(&a.combined_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // Trim to requested limit
+        results.truncate(params.limit);
+
+        // Update access tracking for returned results
+        self.track_search_access(&results).await;
 
         Ok(results)
     }
 
+    /// Get a memory without updating access tracking (for internal use during search).
+    async fn get_without_tracking(&self, project_id: &str, memory_id: &str) -> Result<Option<Memory>> {
+        let memory = sqlx::query_as::<_, Memory>(
+            r#"
+            SELECT * FROM memories
+            WHERE id = ? AND project_id = ?
+            "#,
+        )
+        .bind(memory_id)
+        .bind(project_id)
+        .fetch_optional(&self.db)
+        .await?;
+
+        Ok(memory)
+    }
+
+    /// Update access tracking for memories returned in search results.
+    async fn track_search_access(&self, results: &[MemorySearchResult]) {
+        if results.is_empty() {
+            return;
+        }
+
+        // Batch update retrieval counts and last_accessed for all results
+        for result in results {
+            let _ = sqlx::query(
+                r#"
+                UPDATE memories
+                SET retrieval_count = retrieval_count + 1,
+                    last_accessed = datetime('now')
+                WHERE id = ?
+                "#,
+            )
+            .bind(&result.memory.id)
+            .execute(&self.db)
+            .await;
+        }
+    }
+
     /// Get relevant context for a task.
+    ///
+    /// This is a convenience method that uses default decay parameters.
+    /// For full control, use `get_context_with_params`.
     pub async fn get_context(
         &self,
         project_id: &str,
@@ -417,6 +517,29 @@ impl MemoryService {
         task: &str,
         types: Option<Vec<MemoryType>>,
         limit: usize,
+    ) -> Result<ContextResult> {
+        self.get_context_with_params(
+            project_id,
+            project_slug,
+            task,
+            types,
+            limit,
+            super::decay::DEFAULT_STRENGTH_WEIGHT,
+            super::decay::DEFAULT_HALF_LIFE_DAYS,
+        )
+        .await
+    }
+
+    /// Get relevant context for a task with decay parameters.
+    pub async fn get_context_with_params(
+        &self,
+        project_id: &str,
+        project_slug: &str,
+        task: &str,
+        types: Option<Vec<MemoryType>>,
+        limit: usize,
+        strength_weight: f64,
+        decay_half_life_days: f64,
     ) -> Result<ContextResult> {
         let types = types.unwrap_or_else(|| {
             vec![
@@ -439,8 +562,17 @@ impl MemoryService {
         };
 
         for memory_type in types {
+            let search_params = crate::models::SearchParams {
+                query: task.to_string(),
+                memory_type: Some(memory_type),
+                limit: per_type_limit,
+                strength_weight,
+                decay_half_life_days,
+                ..Default::default()
+            };
+
             let results = self
-                .search(project_id, project_slug, task, Some(memory_type), per_type_limit)
+                .search_with_params(project_id, project_slug, search_params)
                 .await?;
 
             for result in results {
@@ -448,7 +580,7 @@ impl MemoryService {
                     id: result.memory.id.clone(),
                     title: result.memory.title.clone(),
                     content: result.memory.content.chars().take(500).collect(),
-                    score: result.score,
+                    score: result.combined_score, // Use combined score
                     file_path: result.memory.file_path.clone(),
                     author: result.memory.author.clone(),
                 };

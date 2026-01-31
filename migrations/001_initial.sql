@@ -502,3 +502,22 @@ CREATE TABLE IF NOT EXISTS provider_tokens (
 
 CREATE INDEX IF NOT EXISTS idx_provider_tokens_user ON provider_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_provider_tokens_provider ON provider_tokens(provider_type);
+
+-- ============================================================================
+-- Attachment References (for content-addressed storage)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS attachment_refs (
+    id TEXT PRIMARY KEY,
+    memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    hash TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_attachment_refs_hash ON attachment_refs(hash);
+CREATE INDEX IF NOT EXISTS idx_attachment_refs_memory ON attachment_refs(memory_id);
+
+-- Storage path index for memory files
+CREATE INDEX IF NOT EXISTS idx_memories_storage_path ON memories(project_id, metadata_repo_file_path);

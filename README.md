@@ -115,10 +115,39 @@ See [Getting Started](https://github.com/Generation-One/fold/wiki/Getting-Starte
 ## Tech Stack
 
 - **Rust** + Axum (web framework)
-- **SQLite** (metadata storage)
+- **Markdown files** (source of truth with YAML frontmatter)
+- **SQLite** (rebuild-able index, not primary storage)
 - **Qdrant** (vector database)
 - **fastembed** (local embeddings) or cloud LLM APIs
 - **Docker** for deployment
+
+## Storage Architecture
+
+Fold uses a **filesystem-centric storage model**:
+
+- **Markdown files** are the source of truth for all memories
+- **YAML frontmatter** stores metadata (id, type, author, tags, links)
+- **SQLite** is an index that can be rebuilt from markdown files at any time
+- **Content-addressed attachments** use SHA-256 hashing for deduplication
+- **Flexible meta storage**: store memories in your main repo or a separate repository
+
+### Directory Structure
+
+```
+{meta_root}/
+├── session/26/01/31-001.md    # Session memories
+├── decision/26/01/20-001.md   # Architectural decisions
+├── spec/26/01/15-001.md       # Feature specifications
+├── task/26/02/01-001.md       # Current work items
+└── codebase/26/01/31-001.md   # Indexed source code
+```
+
+### Meta Storage Options
+
+Per-project choice of where to store memories:
+
+1. **Internal** (default): Path within your main repository (e.g., `.fold/memories/`)
+2. **External**: Separate repository or storage provider (GitHub, GitLab, Google Drive)
 
 ## Key Features
 

@@ -240,7 +240,7 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
         },
         ToolDefinition {
             name: "memory_search".into(),
-            description: "Search memories using semantic similarity".into(),
+            description: "Search memories using semantic similarity with recency/frequency weighting".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -251,7 +251,20 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
                         "enum": ["codebase", "session", "spec", "decision", "task", "general"],
                         "description": "Filter by memory type"
                     },
-                    "limit": { "type": "integer", "default": 10, "description": "Max results" }
+                    "limit": { "type": "integer", "default": 10, "description": "Max results" },
+                    "strength_weight": {
+                        "type": "number",
+                        "default": 0.3,
+                        "minimum": 0.0,
+                        "maximum": 1.0,
+                        "description": "Weight for recency/frequency vs semantic similarity (0=pure semantic, 1=pure recency)"
+                    },
+                    "decay_half_life_days": {
+                        "type": "number",
+                        "default": 30,
+                        "minimum": 1,
+                        "description": "Half-life in days for memory decay (shorter=favour recent, longer=equal weight)"
+                    }
                 },
                 "required": ["project", "query"]
             }),
@@ -272,13 +285,26 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
         },
         ToolDefinition {
             name: "context_get".into(),
-            description: "Get relevant context for a task (searches code, specs, decisions, sessions)".into(),
+            description: "Get relevant context for a task (searches code, specs, decisions, sessions) with recency weighting".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "project": { "type": "string", "description": "Project ID or slug" },
                     "task": { "type": "string", "description": "Task or question to get context for" },
-                    "limit": { "type": "integer", "default": 10 }
+                    "limit": { "type": "integer", "default": 10 },
+                    "strength_weight": {
+                        "type": "number",
+                        "default": 0.3,
+                        "minimum": 0.0,
+                        "maximum": 1.0,
+                        "description": "Weight for recency/frequency vs semantic similarity"
+                    },
+                    "decay_half_life_days": {
+                        "type": "number",
+                        "default": 30,
+                        "minimum": 1,
+                        "description": "Half-life in days for memory decay"
+                    }
                 },
                 "required": ["project", "task"]
             }),
@@ -298,13 +324,26 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
         },
         ToolDefinition {
             name: "codebase_search".into(),
-            description: "Search indexed codebase".into(),
+            description: "Search indexed codebase with recency/frequency weighting".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "project": { "type": "string", "description": "Project ID or slug" },
                     "query": { "type": "string", "description": "Search query" },
-                    "limit": { "type": "integer", "default": 10 }
+                    "limit": { "type": "integer", "default": 10 },
+                    "strength_weight": {
+                        "type": "number",
+                        "default": 0.3,
+                        "minimum": 0.0,
+                        "maximum": 1.0,
+                        "description": "Weight for recency/frequency vs semantic similarity"
+                    },
+                    "decay_half_life_days": {
+                        "type": "number",
+                        "default": 30,
+                        "minimum": 1,
+                        "description": "Half-life in days for memory decay"
+                    }
                 },
                 "required": ["project", "query"]
             }),
@@ -574,6 +613,8 @@ async fn execute_memory_add(state: &AppState, args: Value) -> Result<String> {
 }
 
 async fn execute_memory_search(state: &AppState, args: Value) -> Result<String> {
+    use crate::models::SearchParams;
+
     #[derive(Deserialize)]
     struct Params {
         project: String,
@@ -581,11 +622,23 @@ async fn execute_memory_search(state: &AppState, args: Value) -> Result<String> 
         #[serde(rename = "type")]
         memory_type: Option<String>,
         #[serde(default = "default_limit")]
-        limit: u32,
+        limit: usize,
+        #[serde(default = "default_strength_weight")]
+        strength_weight: f64,
+        #[serde(default = "default_half_life")]
+        decay_half_life_days: f64,
     }
 
-    fn default_limit() -> u32 {
+    fn default_limit() -> usize {
         10
+    }
+
+    fn default_strength_weight() -> f64 {
+        0.3
+    }
+
+    fn default_half_life() -> f64 {
+        30.0
     }
 
     let params: Params = serde_json::from_value(args)?;
@@ -596,16 +649,20 @@ async fn execute_memory_search(state: &AppState, args: Value) -> Result<String> 
     // Parse memory type filter
     let memory_type = params.memory_type.as_deref().and_then(MemoryType::from_str);
 
-    // Search via memory service (handles embedding + Qdrant + DB lookup)
+    // Build search params with decay configuration
+    let search_params = SearchParams {
+        query: params.query.clone(),
+        memory_type,
+        limit: params.limit,
+        strength_weight: params.strength_weight,
+        decay_half_life_days: params.decay_half_life_days,
+        ..Default::default()
+    };
+
+    // Search via memory service with decay-aware ranking
     let results = state
         .memory
-        .search(
-            &project.id,
-            &project.slug,
-            &params.query,
-            memory_type,
-            params.limit as usize,
-        )
+        .search_with_params(&project.id, &project.slug, search_params)
         .await?;
 
     let results_json: Vec<_> = results
@@ -617,7 +674,9 @@ async fn execute_memory_search(state: &AppState, args: Value) -> Result<String> 
                 "title": r.memory.title,
                 "content": r.memory.content.chars().take(300).collect::<String>(),
                 "author": r.memory.author,
-                "score": r.score,
+                "relevance": r.score,
+                "strength": r.strength,
+                "combined_score": r.combined_score,
                 "file_path": r.memory.file_path,
                 "created_at": r.memory.created_at.to_rfc3339()
             })
@@ -627,6 +686,10 @@ async fn execute_memory_search(state: &AppState, args: Value) -> Result<String> 
     Ok(serde_json::to_string_pretty(&serde_json::json!({
         "project": project.slug,
         "query": params.query,
+        "decay_config": {
+            "strength_weight": params.strength_weight,
+            "half_life_days": params.decay_half_life_days
+        },
         "count": results_json.len(),
         "results": results_json
     }))?)
@@ -694,11 +757,23 @@ async fn execute_context_get(state: &AppState, args: Value) -> Result<String> {
         project: String,
         task: String,
         #[serde(default = "default_limit")]
-        limit: u32,
+        limit: usize,
+        #[serde(default = "default_strength_weight")]
+        strength_weight: f64,
+        #[serde(default = "default_half_life")]
+        decay_half_life_days: f64,
     }
 
-    fn default_limit() -> u32 {
+    fn default_limit() -> usize {
         10
+    }
+
+    fn default_strength_weight() -> f64 {
+        0.3
+    }
+
+    fn default_half_life() -> f64 {
+        30.0
     }
 
     let params: Params = serde_json::from_value(args)?;
@@ -706,10 +781,18 @@ async fn execute_context_get(state: &AppState, args: Value) -> Result<String> {
     // Get project
     let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
 
-    // Get context via memory service (searches all relevant types)
+    // Get context via memory service with decay-aware ranking
     let context = state
         .memory
-        .get_context(&project.id, &project.slug, &params.task, None, params.limit as usize)
+        .get_context_with_params(
+            &project.id,
+            &project.slug,
+            &params.task,
+            None,
+            params.limit,
+            params.strength_weight,
+            params.decay_half_life_days,
+        )
         .await?;
 
     // Collect all memory IDs from the search results
@@ -819,16 +902,30 @@ async fn execute_codebase_index(state: &AppState, args: Value) -> Result<String>
 }
 
 async fn execute_codebase_search(state: &AppState, args: Value) -> Result<String> {
+    use crate::models::SearchParams;
+
     #[derive(Deserialize)]
     struct Params {
         project: String,
         query: String,
         #[serde(default = "default_limit")]
-        limit: u32,
+        limit: usize,
+        #[serde(default = "default_strength_weight")]
+        strength_weight: f64,
+        #[serde(default = "default_half_life")]
+        decay_half_life_days: f64,
     }
 
-    fn default_limit() -> u32 {
+    fn default_limit() -> usize {
         10
+    }
+
+    fn default_strength_weight() -> f64 {
+        0.3
+    }
+
+    fn default_half_life() -> f64 {
+        30.0
     }
 
     let params: Params = serde_json::from_value(args)?;
@@ -836,16 +933,20 @@ async fn execute_codebase_search(state: &AppState, args: Value) -> Result<String
     // Get project
     let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
 
-    // Search for codebase memories specifically
+    // Build search params with decay configuration
+    let search_params = SearchParams {
+        query: params.query.clone(),
+        memory_type: Some(MemoryType::Codebase),
+        limit: params.limit,
+        strength_weight: params.strength_weight,
+        decay_half_life_days: params.decay_half_life_days,
+        ..Default::default()
+    };
+
+    // Search for codebase memories with decay-aware ranking
     let results = state
         .memory
-        .search(
-            &project.id,
-            &project.slug,
-            &params.query,
-            Some(MemoryType::Codebase),
-            params.limit as usize,
-        )
+        .search_with_params(&project.id, &project.slug, search_params)
         .await?;
 
     let results_json: Vec<_> = results
@@ -857,7 +958,9 @@ async fn execute_codebase_search(state: &AppState, args: Value) -> Result<String
                 "language": r.memory.language,
                 "title": r.memory.title,
                 "content": r.memory.content.chars().take(500).collect::<String>(),
-                "score": r.score
+                "relevance": r.score,
+                "strength": r.strength,
+                "combined_score": r.combined_score
             })
         })
         .collect();
@@ -865,6 +968,10 @@ async fn execute_codebase_search(state: &AppState, args: Value) -> Result<String
     Ok(serde_json::to_string_pretty(&serde_json::json!({
         "project": project.slug,
         "query": params.query,
+        "decay_config": {
+            "strength_weight": params.strength_weight,
+            "half_life_days": params.decay_half_life_days
+        },
         "count": results_json.len(),
         "results": results_json
     }))?)

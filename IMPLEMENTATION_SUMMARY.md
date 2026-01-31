@@ -77,6 +77,52 @@ match state.qdrant.create_collection(
   - Stores in Qdrant
   - Progress tracking per file
 
+### Phase 4: Filesystem-Centric Storage Architecture
+All services implemented for markdown-based storage with rebuild capability.
+
+#### MarkdownService
+**File:** `src/services/markdown.rs`
+- Parse markdown files with YAML frontmatter
+- Generate markdown from Memory objects
+- Update frontmatter while preserving content
+- Structures: `MemoryFrontmatter`, `FrontmatterLink`, `FrontmatterAttachment`
+
+#### MetaStorageService
+**File:** `src/services/meta_storage.rs`
+- Abstracts meta storage using FileSourceProvider trait
+- Supports internal (in_repo) and external (separate) meta storage
+- Path format: `{type}/{yy}/{mm}/{dd}-{nnn}.md`
+- Methods: `write_memory()`, `read_memory()`, `list_memories()`, `delete_memory()`
+
+#### AttachmentStorageService
+**File:** `src/services/attachment_storage.rs`
+- Content-addressed storage using SHA-256 hashing
+- Path structure: `{base}/{first_hex}/{second_hex}/{full_hash}`
+- Automatic deduplication via hash-based paths
+- Methods: `store()`, `retrieve()`, `exists()`, `delete()`, `verify()`
+
+#### IndexService
+**File:** `src/services/index.rs`
+- SQLite index management with rebuild capability
+- Can rebuild entire index from markdown files
+- Methods: `rebuild_all()`, `rebuild_type()`, `sync_file()`, `cleanup_orphans()`
+- Structures: `RebuildStats`, `IndexHealth`
+
+#### LocalFileSource Updates
+**File:** `src/services/file_source/local.rs`
+- Added `write_file()` and `delete_file()` methods
+- Full FileSourceProvider implementation for local filesystem
+
+#### Project Model Updates
+**File:** `src/models/project.rs`
+- Added `MetaStorageType` enum (Internal/External)
+- Helper methods: `get_meta_storage_type()`, `meta_base_path()`, `uses_internal_meta()`
+
+#### Database Schema Updates
+**File:** `migrations/001_initial.sql`
+- Added `attachment_refs` table for content-addressed storage tracking
+- Added `idx_memories_storage_path` index for file path lookups
+
 ### Phase 3: Health Checks & Status (8 Tasks + 1 Field Wiring)
 All tasks completed with comprehensive health monitoring.
 

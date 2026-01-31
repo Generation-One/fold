@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::{FileSourceProvider, GitHubFileSource, GoogleDriveFileSource};
+use super::{FileSourceProvider, GitHubFileSource, GoogleDriveFileSource, LocalFileSource};
 
 /// Registry of available file source providers.
 ///
@@ -32,6 +32,9 @@ impl ProviderRegistry {
 
         // Register Google Drive provider
         registry.register(Arc::new(GoogleDriveFileSource::new()));
+
+        // Register Local filesystem provider
+        registry.register(Arc::new(LocalFileSource::new()));
 
         // Future: register GitLab, OneDrive, etc.
 

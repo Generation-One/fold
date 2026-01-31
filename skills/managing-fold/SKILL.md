@@ -51,11 +51,30 @@ See [Configuration](https://github.com/Generation-One/fold/wiki/Configuration) f
 ## 1. Project Management
 
 ```bash
-# Create project via API
+# Create project with internal meta storage (default)
 curl -X POST http://localhost:8765/api/projects \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name": "My Project", "slug": "my-project"}'
+  -d '{
+    "name": "My Project",
+    "meta_storage_type": "internal",
+    "meta_path": ".fold/memories"
+  }'
+
+# Create project with external meta storage (separate repo)
+curl -X POST http://localhost:8765/api/projects \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "My Project",
+    "meta_storage_type": "external",
+    "meta_source_config": {
+      "provider": "github",
+      "owner": "myorg",
+      "repo": "project-memories",
+      "branch": "main"
+    }
+  }'
 
 # List projects
 curl http://localhost:8765/api/projects \
@@ -86,18 +105,60 @@ Configure webhooks for automatic sync on push events.
 # Check service health
 curl http://localhost:8765/health
 
+# Check readiness (all dependencies)
+curl http://localhost:8765/health/ready
+
+# Get full system status
+curl http://localhost:8765/status
+
 # Check Qdrant status
 curl http://localhost:6333/health
 ```
 
-## 4. Backup and Restore
+## 4. Index Management
+
+Fold stores memories as markdown files. SQLite is a rebuild-able index.
 
 ```bash
-# Backup SQLite database
+# Rebuild entire index from markdown files
+curl -X POST http://localhost:8765/api/projects/my-project/index/rebuild \
+  -H "Authorization: Bearer $TOKEN"
+
+# Rebuild specific memory type
+curl -X POST http://localhost:8765/api/projects/my-project/index/rebuild/session \
+  -H "Authorization: Bearer $TOKEN"
+
+# Check index health
+curl http://localhost:8765/api/projects/my-project/index/status \
+  -H "Authorization: Bearer $TOKEN"
+
+# Sync a single file to index
+curl -X POST http://localhost:8765/api/projects/my-project/memories/sync \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"path": "session/26/01/31-001.md"}'
+```
+
+## 5. Backup and Restore
+
+Memories are stored as markdown files (source of truth). SQLite can be rebuilt.
+
+```bash
+# Backup markdown files (primary data)
+tar -czf /backups/memories-$(date +%Y%m%d).tar.gz /data/memories/
+
+# Backup attachments (content-addressed)
+tar -czf /backups/attachments-$(date +%Y%m%d).tar.gz /data/attachments/
+
+# Backup SQLite database (index, can be rebuilt)
 cp /data/fold.db /backups/fold-$(date +%Y%m%d).db
 
-# Backup Qdrant snapshots
+# Backup Qdrant snapshots (vectors, can be regenerated)
 curl -X POST http://localhost:6333/collections/fold_memories/snapshots
+
+# Restore: copy files back and rebuild index
+curl -X POST http://localhost:8765/api/projects/my-project/index/rebuild \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 # Production Configuration
@@ -169,5 +230,7 @@ See [Troubleshooting & FAQ](https://github.com/Generation-One/fold/wiki/Troubles
 - [ ] Admin user created
 - [ ] Repositories connected
 - [ ] Webhooks configured
-- [ ] Backups scheduled
+- [ ] Meta storage configured (internal or external)
+- [ ] Index rebuilt from markdown files
+- [ ] Backups scheduled (markdown files are source of truth)
 - [ ] Monitoring enabled
