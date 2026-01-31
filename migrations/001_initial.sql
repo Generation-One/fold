@@ -10,6 +10,10 @@ CREATE TABLE IF NOT EXISTS projects (
     name TEXT NOT NULL,
     description TEXT,
 
+    -- Project paths
+    root_path TEXT,
+    repo_url TEXT,
+
     -- Metadata repo sync config
     metadata_repo_enabled INTEGER DEFAULT 0,
     metadata_repo_mode TEXT,                    -- 'separate' | 'in_repo'
@@ -72,6 +76,23 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+
+-- ============================================================================
+-- OAuth State (for CSRF protection during OAuth flow)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS oauth_states (
+    id TEXT PRIMARY KEY,
+    state TEXT UNIQUE NOT NULL,
+    provider TEXT NOT NULL,
+    pkce_verifier TEXT,
+    nonce TEXT,
+    redirect_uri TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_states_state ON oauth_states(state);
+CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
 
 -- ============================================================================
 -- API Tokens (for MCP/programmatic access)

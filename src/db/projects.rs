@@ -72,6 +72,10 @@ pub struct Project {
     pub name: String,
     pub description: Option<String>,
 
+    // Project paths
+    pub root_path: Option<String>,
+    pub repo_url: Option<String>,
+
     // Metadata repo sync config
     pub metadata_repo_enabled: i32,
     pub metadata_repo_mode: Option<String>,

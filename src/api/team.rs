@@ -221,13 +221,12 @@ async fn view_team_status(
 async fn update_status(
     State(state): State<AppState>,
     Path(path): Path<ProjectPath>,
+    axum::Extension(auth): axum::Extension<crate::middleware::AuthContext>,
     Json(request): Json<UpdateStatusRequest>,
 ) -> Result<Json<StatusUpdateResponse>> {
     let project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
 
-    // TODO: Get current user from auth context - for now use a placeholder
-    // In production, this would come from the auth middleware
-    let username = "anonymous";
+    let username = &auth.user_id;
 
     // Map API status to database status
     let db_status = match request.status {

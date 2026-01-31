@@ -440,6 +440,7 @@ async fn list_members(
 async fn add_member(
     State(state): State<AppState>,
     Path(project_id): Path<String>,
+    axum::Extension(auth): axum::Extension<crate::middleware::AuthContext>,
     Json(request): Json<AddMemberRequest>,
 ) -> Result<Json<MemberResponse>> {
     // Verify project exists
@@ -452,8 +453,7 @@ async fn add_member(
         ));
     }
 
-    // TODO: Get current user from auth context to set added_by
-    let added_by: Option<&str> = None;
+    let added_by = Some(auth.user_id.as_str());
 
     let member = crate::db::add_project_member(
         &state.db,

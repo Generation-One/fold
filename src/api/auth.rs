@@ -11,7 +11,7 @@
 //! - POST /auth/bootstrap - Create initial admin user with bootstrap token
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query, State, Extension},
     middleware,
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
@@ -19,6 +19,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use axum_extra::extract::CookieJar;
+use axum_extra::extract::cookie::{Cookie, SameSite};
+use chrono::Utc;
+use time;
 
 use crate::middleware::require_session;
 use crate::{AppState, Error, Result};
@@ -97,6 +101,16 @@ pub struct UserInfo {
     pub provider: String,
     pub roles: Vec<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// OAuth state for CSRF protection
+#[derive(Debug, sqlx::FromRow)]
+struct OAuthState {
+    id: String,
+    state: String,
+    provider: String,
+    created_at: String,
+    expires_at: String,
 }
 
 // ============================================================================
@@ -195,7 +209,24 @@ async fn login_redirect(
         }
     };
 
-    // TODO: Store state in session for verification on callback
+    // Store state in database for CSRF verification
+    let state_id = uuid::Uuid::new_v4().to_string();
+    let now = Utc::now();
+    let expires = now + chrono::Duration::minutes(10);
+
+    sqlx::query(
+        r#"
+        INSERT INTO oauth_states (id, state, provider, created_at, expires_at)
+        VALUES (?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(&state_id)
+    .bind(&state)
+    .bind(&provider)
+    .bind(now.to_rfc3339())
+    .bind(expires.to_rfc3339())
+    .execute(&_state.db)
+    .await?;
 
     Ok(Redirect::temporary(&auth_url).into_response())
 }
@@ -209,6 +240,7 @@ async fn login_redirect(
 #[axum::debug_handler]
 async fn oauth_callback(
     State(state): State<AppState>,
+    jar: CookieJar,
     Path(provider): Path<String>,
     Query(query): Query<OAuthCallbackQuery>,
 ) -> Result<Response> {
@@ -226,7 +258,34 @@ async fn oauth_callback(
         .state
         .ok_or_else(|| Error::InvalidInput("Missing state parameter".into()))?;
 
-    // TODO: Verify state matches stored session state
+    // Verify state from database
+    let oauth_state: Option<OAuthState> = sqlx::query_as(
+        "SELECT * FROM oauth_states WHERE state = ?"
+    )
+    .bind(&_state_param)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let oauth_state = oauth_state
+        .ok_or_else(|| Error::InvalidInput("Invalid or expired state".into()))?;
+
+    // Check expiry
+    let expires = chrono::DateTime::parse_from_rfc3339(&oauth_state.expires_at)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|_| Error::Internal("Invalid timestamp".into()))?;
+
+    if expires < Utc::now() {
+        sqlx::query("DELETE FROM oauth_states WHERE id = ?")
+            .bind(&oauth_state.id)
+            .execute(&state.db)
+            .await?;
+        return Err(Error::InvalidInput("State expired".into()));
+    }
+
+    // Verify provider matches
+    if oauth_state.provider != provider {
+        return Err(Error::InvalidInput("Provider mismatch".into()));
+    }
 
     let config = crate::config();
     let provider_config = config
@@ -250,11 +309,41 @@ async fn oauth_callback(
     let user_id = upsert_user(&state, &provider, &user_info).await?;
 
     // Create session
-    // TODO: Create session and set cookie
+    let session_id = nanoid::nanoid!(32);
+    let session_expires = Utc::now() + chrono::Duration::days(7);
+
+    sqlx::query(
+        r#"
+        INSERT INTO sessions (id, user_id, expires_at)
+        VALUES (?, ?, ?)
+        "#,
+    )
+    .bind(&session_id)
+    .bind(&user_id)
+    .bind(session_expires.to_rfc3339())
+    .execute(&state.db)
+    .await?;
+
+    // Set session cookie
+    let cookie = Cookie::build(("fold_session", session_id))
+        .path("/")
+        .http_only(true)
+        .secure(config.server.public_url.starts_with("https"))
+        .same_site(SameSite::Lax)
+        .max_age(time::Duration::days(7))
+        .build();
+
+    let jar = jar.add(cookie);
+
+    // Clean up OAuth state
+    sqlx::query("DELETE FROM oauth_states WHERE id = ?")
+        .bind(&oauth_state.id)
+        .execute(&state.db)
+        .await?;
 
     // Redirect to frontend
     let redirect_url = format!("{}/?login=success", config.server.public_url);
-    Ok(Redirect::temporary(&redirect_url).into_response())
+    Ok((jar, Redirect::temporary(&redirect_url)).into_response())
 }
 
 /// End the current session.
@@ -263,12 +352,35 @@ async fn oauth_callback(
 ///
 /// Clears the session cookie and invalidates the session server-side.
 #[axum::debug_handler]
-async fn logout(State(_state): State<AppState>) -> Result<impl IntoResponse> {
-    // TODO: Clear session from database and cookie
+async fn logout(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<impl IntoResponse> {
+    // Get session ID from cookie
+    if let Some(cookie) = jar.get("fold_session") {
+        let session_id = cookie.value();
 
-    Ok(Json(serde_json::json!({
-        "message": "Logged out successfully"
-    })))
+        // Delete from database
+        sqlx::query("DELETE FROM sessions WHERE id = ?")
+            .bind(session_id)
+            .execute(&state.db)
+            .await?;
+    }
+
+    // Clear cookie
+    let cookie = Cookie::build(("fold_session", ""))
+        .path("/")
+        .max_age(time::Duration::seconds(0))
+        .build();
+
+    let jar = jar.add(cookie);
+
+    Ok((
+        jar,
+        Json(serde_json::json!({
+            "message": "Logged out successfully"
+        }))
+    ))
 }
 
 /// Get current authenticated user information.
@@ -277,10 +389,31 @@ async fn logout(State(_state): State<AppState>) -> Result<impl IntoResponse> {
 ///
 /// Returns the profile information for the currently authenticated user.
 #[axum::debug_handler]
-async fn get_current_user(State(_state): State<AppState>) -> Result<Json<UserInfo>> {
-    // TODO: Extract user from session/token and fetch full profile
+async fn get_current_user(
+    State(state): State<AppState>,
+    Extension(user): Extension<crate::middleware::SessionUser>,
+) -> Result<Json<UserInfo>> {
+    // Fetch full user details from database
+    let db_user: (String, Option<String>, Option<String>, String) = sqlx::query_as(
+        r#"
+        SELECT email, display_name, avatar_url, provider
+        FROM users
+        WHERE id = ?
+        "#,
+    )
+    .bind(&user.user_id)
+    .fetch_one(&state.db)
+    .await?;
 
-    Err(Error::NotImplemented("get_current_user".into()))
+    Ok(Json(UserInfo {
+        id: user.user_id.clone(),
+        email: db_user.0,
+        name: db_user.1.unwrap_or_else(|| user.name.clone().unwrap_or_default()),
+        avatar_url: db_user.2,
+        provider: db_user.3,
+        roles: vec![user.role.clone()],
+        created_at: Utc::now(),
+    }))
 }
 
 /// Bootstrap initial admin user.
@@ -533,10 +666,57 @@ struct OAuthUserInfo {
 
 /// Create or update user in database.
 async fn upsert_user(
-    _state: &AppState,
-    _provider: &str,
-    _user_info: &OAuthUserInfo,
+    state: &AppState,
+    provider: &str,
+    user_info: &OAuthUserInfo,
 ) -> Result<String> {
-    // TODO: Implement user upsert in database
-    Ok(uuid::Uuid::new_v4().to_string())
+    // Check if user exists by provider + subject
+    let existing: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM users WHERE provider = ? AND subject = ?"
+    )
+    .bind(provider)
+    .bind(&user_info.provider_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    if let Some((user_id,)) = existing {
+        // Update existing user
+        sqlx::query(
+            r#"
+            UPDATE users
+            SET email = ?, display_name = ?, avatar_url = ?, last_login = datetime('now')
+            WHERE id = ?
+            "#,
+        )
+        .bind(&user_info.email)
+        .bind(&user_info.name)
+        .bind(&user_info.avatar_url)
+        .bind(&user_id)
+        .execute(&state.db)
+        .await?;
+
+        return Ok(user_id);
+    }
+
+    // Create new user
+    let user_id = uuid::Uuid::new_v4().to_string();
+    let role = "member";  // Default role
+
+    sqlx::query(
+        r#"
+        INSERT INTO users (id, provider, subject, email, display_name, avatar_url, role, created_at, last_login)
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        "#,
+    )
+    .bind(&user_id)
+    .bind(provider)
+    .bind(&user_info.provider_id)
+    .bind(&user_info.email)
+    .bind(&user_info.name)
+    .bind(&user_info.avatar_url)
+    .bind(role)
+    .execute(&state.db)
+    .await?;
+
+    Ok(user_id)
 }
