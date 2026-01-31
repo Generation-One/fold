@@ -4,11 +4,11 @@ Complete documentation for Fold, a holographic memory system for development tea
 
 ## 📖 Documentation Map
 
-**Start here:** [[Overview-&-Concepts|Overview & Concepts]] — Understand what Fold is and why it matters
+**Start here:** [[Overview & Concepts|Overview & Concepts]] — Understand what Fold is and why it matters
 
 ### For Everyone
 
-1. **[[Overview-&-Concepts|Overview & Concepts]]** (45 min read)
+1. **[[Overview & Concepts|Overview & Concepts]]** (45 min read)
    - What is Fold?
    - Why "holographic"?
    - **AI benefits** (huge focus)
@@ -37,7 +37,7 @@ Complete documentation for Fold, a holographic memory system for development tea
    - Advanced configuration
    - Provider-specific setup guides
 
-4. **[[Deployment-&-Operations|Deployment & Operations]]** (45 min)
+4. **[[Deployment-Operations|Deployment & Operations]]** (45 min)
    - Production architecture
    - Docker Compose (production-grade)
    - Nginx reverse proxy
@@ -104,7 +104,7 @@ Complete documentation for Fold, a holographic memory system for development tea
    - Multi-tenant setup
    - Custom authentication
 
-9. **[[Troubleshooting-&-FAQ|Troubleshooting & FAQ]]** (reference)
+9. **[[Troubleshooting-FAQ|Troubleshooting & FAQ]]** (reference)
    - Installation issues
    - Authentication problems
    - Git integration issues
@@ -124,7 +124,7 @@ Complete documentation for Fold, a holographic memory system for development tea
 
 1. Read: [[Getting-Started|Getting Started]] → Option 1 (Docker)
 2. Follow the steps → You're running in 5 minutes
-3. Read: [[Overview-&-Concepts|Overview]] to understand what you have
+3. Read: [[Overview-Concepts|Overview]] to understand what you have
 
 ### I want to use Fold with Claude Code
 
@@ -135,17 +135,17 @@ Complete documentation for Fold, a holographic memory system for development tea
 
 ### I'm setting up Fold for my team
 
-1. Read: [[Overview-&-Concepts|Overview]] — understand the benefits
+1. Read: [[Overview-Concepts|Overview]] — understand the benefits
 2. Setup: [[Getting-Started|Getting Started]] + [[Configuration|Configuration]]
-3. Deploy: [[Deployment-&-Operations|Deployment & Operations]]
+3. Deploy: [[Deployment-Operations|Deployment & Operations]]
 4. Integrate: [[MCP-Tools-Reference|MCP Tools]] for your team's AI agents
 
 ### I'm operating Fold in production
 
-1. Review: [[Deployment-&-Operations|Deployment & Operations]]
+1. Review: [[Deployment-Operations|Deployment & Operations]]
 2. Reference: [[Configuration|Configuration]] for all settings
 3. Monitor: Refer to Deployment section on observability
-4. Troubleshoot: [[Troubleshooting-&-FAQ|Troubleshooting]]
+4. Troubleshoot: [[Troubleshooting-FAQ|Troubleshooting]]
 5. Scale: [[Advanced-Topics|Advanced Topics]] for sharding/clustering
 
 ### I'm building something with Fold's API
@@ -161,13 +161,13 @@ Complete documentation for Fold, a holographic memory system for development tea
 
 ### Product Managers / Team Leads
 
-- [[Overview-&-Concepts|Overview]] — Understand the value
+- [[Overview-Concepts|Overview]] — Understand the value
 - [[Getting-Started|Getting Started]] — See it working
 - [[MCP-Tools-Reference|MCP Tools]] — Understand AI integration
 
 ### Backend Developers / Architects
 
-- [[Overview-&-Concepts|Overview]] — Full picture
+- [[Overview-Concepts|Overview]] — Full picture
 - [[Core-Concepts|Core Concepts]] — Deep understanding
 - [[API-Reference|API Reference]] — Implementation details
 - [[Advanced-Topics|Advanced Topics]] — Complex features
@@ -176,12 +176,12 @@ Complete documentation for Fold, a holographic memory system for development tea
 
 - [[Getting-Started|Getting Started]] — Quick setup
 - [[Configuration|Configuration]] — All settings
-- [[Deployment-&-Operations|Deployment & Operations]] — Production guide
-- [[Troubleshooting-&-FAQ|Troubleshooting]] — Common issues
+- [[Deployment-Operations|Deployment & Operations]] — Production guide
+- [[Troubleshooting-FAQ|Troubleshooting]] — Common issues
 
 ### AI / ML Engineers
 
-- [[Overview-&-Concepts|Overview]] — AI benefits section
+- [[Overview-Concepts|Overview]] — AI benefits section
 - [[Core-Concepts|Core Concepts]] — How embeddings work
 - [[MCP-Tools-Reference|MCP Tools]] — Integration patterns
 - [[Advanced-Topics|Advanced Topics]] — Custom models
@@ -192,7 +192,7 @@ Complete documentation for Fold, a holographic memory system for development tea
 - [[Core-Concepts|Core Concepts]] — Understand the system
 - [[API-Reference|API Reference]] — Use the API
 - [[MCP-Tools-Reference|MCP Tools]] — Use with Claude Code
-- [[Troubleshooting-&-FAQ|Troubleshooting]] — Fix issues
+- [[Troubleshooting-FAQ|Troubleshooting]] — Fix issues
 
 ---
 
@@ -211,7 +211,7 @@ Complete documentation for Fold, a holographic memory system for development tea
 → [[Configuration|Configuration]] → Auth Providers
 
 ### "How do I set up for production?"
-→ [[Deployment-&-Operations|Deployment & Operations]]
+→ [[Deployment-Operations|Deployment & Operations]]
 
 ### "How does semantic search work?"
 → [[Core-Concepts|Core Concepts]] → Search & Retrieval
@@ -223,38 +223,38 @@ Complete documentation for Fold, a holographic memory system for development tea
 → [[Advanced-Topics|Advanced Topics]] → Multi-Tenant Setup
 
 ### "Something's broken, help!"
-→ [[Troubleshooting-&-FAQ|Troubleshooting & FAQ]]
+→ [[Troubleshooting-FAQ|Troubleshooting & FAQ]]
 
 ### "How do I scale Fold?"
-→ [[Deployment-&-Operations|Deployment & Operations]] → Scaling
+→ [[Deployment-Operations|Deployment & Operations]] → Scaling
 
 ---
 
 ## 📖 Reading Order Recommendations
 
 **First time with Fold (30 min):**
-1. [[Overview-&-Concepts|Overview]] — 15 min
+1. [[Overview-Concepts|Overview]] — 15 min
 2. [[Getting-Started|Getting Started]] — 15 min
 
 **Getting productive (2 hours):**
-1. [[Overview-&-Concepts|Overview]]
+1. [[Overview-Concepts|Overview]]
 2. [[Getting-Started|Getting Started]]
 3. [[Configuration|Configuration]] (skim)
 4. [[MCP-Tools-Reference|MCP Tools]] (if using with Claude)
 
 **Deep dive (4+ hours):**
-1. [[Overview-&-Concepts|Overview]]
+1. [[Overview-Concepts|Overview]]
 2. [[Core-Concepts|Core Concepts]]
 3. [[API-Reference|API Reference]]
 4. [[MCP-Tools-Reference|MCP Tools]]
 5. [[Configuration|Configuration]]
-6. [[Deployment-&-Operations|Deployment]]
+6. [[Deployment-Operations|Deployment]]
 
 **Ops setup (3 hours):**
 1. [[Getting-Started|Getting Started]]
 2. [[Configuration|Configuration]]
-3. [[Deployment-&-Operations|Deployment]]
-4. [[Troubleshooting-&-FAQ|Troubleshooting]] (bookmark)
+3. [[Deployment-Operations|Deployment]]
+4. [[Troubleshooting-FAQ|Troubleshooting]] (bookmark)
 
 ---
 
