@@ -1,10 +1,10 @@
 # Fold
 
-<img src="./docs/assets/illustration.png" align="right" width="340" alt="Fold: holographic memory for teams and agents" />
+Ever wanted to share memory so your agents and clients **stay in sync**? Share it as a team, or just for yourself? Keep a record of decisions, a knowledge base, anything worth remembering?
 
-Ever wanted to share memory so your agents and clients stay in sync? Share it as a team, or just for yourself? Keep a record of decisions, a knowledge base, anything worth remembering?
+That is what Fold does. It **consumes knowledge**, information, text, files, code and creates a vector-based holographic memory store. Your agents and clients access it via MCP, REST APIs, or directly as files on the filesystem. 
 
-That is what Fold does. It consumes knowledge, information, text, files, code and creates a vector-based holographic memory store. Your agents and clients access it via MCP, REST APIs, or directly as files on the filesystem. Fold keeps everything synchronised and listens for changes in your repositories to update automatically in the background.
+Fold keeps everything synchronised and **listens for changes** in your repositories to update automatically in the background.
 
 **A semantic memory layer for teams and AI agents.**
 
