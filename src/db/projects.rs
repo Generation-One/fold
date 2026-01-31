@@ -387,6 +387,235 @@ pub async fn list_projects_with_metadata_sync(pool: &DbPool) -> Result<Vec<Proje
     .map_err(Error::Database)
 }
 
+// ============================================================================
+// Project Members
+// ============================================================================
+
+/// Project member record from the database.
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct ProjectMember {
+    pub user_id: String,
+    pub project_id: String,
+    pub role: String,
+    pub added_by: Option<String>,
+    pub created_at: String,
+}
+
+impl ProjectMember {
+    /// Check if this member can write (create/update/delete).
+    pub fn can_write(&self) -> bool {
+        self.role == "member"
+    }
+
+    /// Check if this member can read.
+    pub fn can_read(&self) -> bool {
+        true // Both member and viewer can read
+    }
+}
+
+/// Add a user to a project with a specific role.
+pub async fn add_project_member(
+    pool: &DbPool,
+    project_id: &str,
+    user_id: &str,
+    role: &str,
+    added_by: Option<&str>,
+) -> Result<ProjectMember> {
+    sqlx::query_as::<_, ProjectMember>(
+        r#"
+        INSERT INTO project_members (user_id, project_id, role, added_by)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT (user_id, project_id) DO UPDATE SET
+            role = excluded.role,
+            added_by = excluded.added_by
+        RETURNING *
+        "#,
+    )
+    .bind(user_id)
+    .bind(project_id)
+    .bind(role)
+    .bind(added_by)
+    .fetch_one(pool)
+    .await
+    .map_err(Error::Database)
+}
+
+/// Remove a user from a project.
+pub async fn remove_project_member(
+    pool: &DbPool,
+    project_id: &str,
+    user_id: &str,
+) -> Result<bool> {
+    let result = sqlx::query(
+        "DELETE FROM project_members WHERE project_id = ? AND user_id = ?",
+    )
+    .bind(project_id)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+/// Get a user's membership in a project.
+pub async fn get_project_member(
+    pool: &DbPool,
+    project_id: &str,
+    user_id: &str,
+) -> Result<Option<ProjectMember>> {
+    sqlx::query_as::<_, ProjectMember>(
+        "SELECT * FROM project_members WHERE project_id = ? AND user_id = ?",
+    )
+    .bind(project_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(Error::Database)
+}
+
+/// List all members of a project.
+pub async fn list_project_members(pool: &DbPool, project_id: &str) -> Result<Vec<ProjectMember>> {
+    sqlx::query_as::<_, ProjectMember>(
+        r#"
+        SELECT * FROM project_members
+        WHERE project_id = ?
+        ORDER BY created_at ASC
+        "#,
+    )
+    .bind(project_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Error::Database)
+}
+
+/// List all projects a user has access to.
+pub async fn list_user_projects(pool: &DbPool, user_id: &str) -> Result<Vec<Project>> {
+    sqlx::query_as::<_, Project>(
+        r#"
+        SELECT p.* FROM projects p
+        INNER JOIN project_members pm ON p.id = pm.project_id
+        WHERE pm.user_id = ?
+        ORDER BY p.name ASC
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Error::Database)
+}
+
+/// List projects a user can write to (member role).
+pub async fn list_user_writable_projects(pool: &DbPool, user_id: &str) -> Result<Vec<Project>> {
+    sqlx::query_as::<_, Project>(
+        r#"
+        SELECT p.* FROM projects p
+        INNER JOIN project_members pm ON p.id = pm.project_id
+        WHERE pm.user_id = ? AND pm.role = 'member'
+        ORDER BY p.name ASC
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Error::Database)
+}
+
+/// Check if a user can access a project.
+pub async fn can_user_access_project(
+    pool: &DbPool,
+    user_id: &str,
+    project_id: &str,
+) -> Result<bool> {
+    let member = get_project_member(pool, project_id, user_id).await?;
+    Ok(member.is_some())
+}
+
+/// Check if a user can write to a project.
+pub async fn can_user_write_project(
+    pool: &DbPool,
+    user_id: &str,
+    project_id: &str,
+) -> Result<bool> {
+    let member = get_project_member(pool, project_id, user_id).await?;
+    Ok(member.map(|m| m.can_write()).unwrap_or(false))
+}
+
+/// Update a member's role.
+pub async fn update_project_member_role(
+    pool: &DbPool,
+    project_id: &str,
+    user_id: &str,
+    role: &str,
+) -> Result<Option<ProjectMember>> {
+    sqlx::query_as::<_, ProjectMember>(
+        r#"
+        UPDATE project_members
+        SET role = ?
+        WHERE project_id = ? AND user_id = ?
+        RETURNING *
+        "#,
+    )
+    .bind(role)
+    .bind(project_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(Error::Database)
+}
+
+/// Count members in a project.
+pub async fn count_project_members(pool: &DbPool, project_id: &str) -> Result<i64> {
+    let (count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM project_members WHERE project_id = ?",
+    )
+    .bind(project_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
+}
+
+/// Extended project member info with user details.
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct ProjectMemberWithUser {
+    pub user_id: String,
+    pub project_id: String,
+    pub role: String,
+    pub added_by: Option<String>,
+    pub created_at: String,
+    // User fields
+    pub email: Option<String>,
+    pub display_name: Option<String>,
+    pub avatar_url: Option<String>,
+}
+
+/// List project members with user details.
+pub async fn list_project_members_with_users(
+    pool: &DbPool,
+    project_id: &str,
+) -> Result<Vec<ProjectMemberWithUser>> {
+    sqlx::query_as::<_, ProjectMemberWithUser>(
+        r#"
+        SELECT
+            pm.user_id,
+            pm.project_id,
+            pm.role,
+            pm.added_by,
+            pm.created_at,
+            u.email,
+            u.display_name,
+            u.avatar_url
+        FROM project_members pm
+        INNER JOIN users u ON pm.user_id = u.id
+        WHERE pm.project_id = ?
+        ORDER BY pm.created_at ASC
+        "#,
+    )
+    .bind(project_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Error::Database)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

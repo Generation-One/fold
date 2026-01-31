@@ -49,6 +49,7 @@ fn protected_routes(state: AppState) -> Router<AppState> {
         // Project CRUD
         .merge(projects::routes())
         // Nested project resources
+        .nest("/:project_id/members", projects::members_routes())
         .nest("/:project_id/memories", memories::routes())
         .nest("/:project_id/repositories", repositories::routes())
         .nest("/:project_id/sessions", sessions::routes())

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::memories::MemoryType;
-use crate::{AppState, Error, Result};
+use crate::{db, AppState, Error, Result};
 
 /// Build search routes.
 pub fn routes() -> Router<AppState> {
@@ -235,15 +235,15 @@ pub struct ProjectPath {
 ///
 /// POST /projects/:project_id/search
 ///
-/// Searches across memories, code, commits, and pull requests
-/// using semantic similarity.
+/// Searches across memories, code, commits, and pull requests.
+/// Currently uses text-based search; Qdrant vector search can be added later.
 #[axum::debug_handler]
 async fn search(
     State(state): State<AppState>,
     Path(path): Path<ProjectPath>,
     Json(request): Json<SearchRequest>,
 ) -> Result<Json<SearchResponse>> {
-    let _project_id = &path.project_id;
+    let project_id = &path.project_id;
     let start = std::time::Instant::now();
 
     // Validate query
@@ -251,30 +251,102 @@ async fn search(
         return Err(Error::Validation("Query cannot be empty".into()));
     }
 
-    // Generate embedding for query
-    let query_embedding = state
-        .embeddings
-        .embed_single(&request.query)
-        .await
-        .map_err(|e| Error::Embedding(e.to_string()))?;
-
     let mut results = Vec::new();
 
-    // Search memories
+    // Search memories using database text search
     if request.include_memories {
-        // TODO: Search Qdrant memories collection
-        // TODO: Apply type/tag/author/date filters
+        // Convert API memory types to DB memory types
+        let db_types: Option<Vec<db::MemoryType>> = if request.types.is_empty() {
+            None
+        } else {
+            Some(
+                request
+                    .types
+                    .iter()
+                    .filter_map(|t| api_to_db_memory_type(*t))
+                    .collect(),
+            )
+        };
+
+        let filter = db::MemoryFilter {
+            project_id: Some(project_id.clone()),
+            memory_types: db_types,
+            author: request.author.clone(),
+            tag: request.tags.first().cloned(),
+            search_query: Some(request.query.clone()),
+            limit: Some(request.limit as i64),
+            ..Default::default()
+        };
+
+        let memories = db::list_memories(&state.db, filter).await?;
+
+        for memory in memories {
+            let memory_type = db::MemoryType::from_str(&memory.memory_type);
+
+            results.push(SearchResultItem {
+                id: Uuid::parse_str(&memory.id).unwrap_or_else(|_| Uuid::new_v4()),
+                result_type: SearchResultType::Memory,
+                title: memory.title.clone(),
+                content: memory.content.clone(),
+                snippet: create_snippet(&memory.content, 200),
+                score: 1.0, // Text search doesn't have scores; Qdrant will provide real scores
+                metadata: SearchResultMetadata {
+                    memory_type: memory_type.and_then(|t| db_to_api_memory_type(t)),
+                    file_path: memory.file_path.clone(),
+                    author: memory.author.clone(),
+                    tags: memory.tags_vec(),
+                    language: memory.language.clone(),
+                    repository: memory.repository_id.clone(),
+                },
+                created_at: parse_datetime(&memory.created_at),
+            });
+        }
     }
 
-    // Search code
+    // Search code (codebase type memories)
     if request.include_code {
-        // TODO: Search Qdrant code collection
-        // TODO: Apply file pattern filter
+        let filter = db::MemoryFilter {
+            project_id: Some(project_id.clone()),
+            memory_type: Some(db::MemoryType::Codebase),
+            file_path_prefix: request.file_pattern.clone(),
+            search_query: Some(request.query.clone()),
+            limit: Some(request.limit as i64),
+            ..Default::default()
+        };
+
+        let code_memories = db::list_memories(&state.db, filter).await?;
+
+        for memory in code_memories {
+            // Skip if already in results
+            if results.iter().any(|r| r.id.to_string() == memory.id) {
+                continue;
+            }
+
+            results.push(SearchResultItem {
+                id: Uuid::parse_str(&memory.id).unwrap_or_else(|_| Uuid::new_v4()),
+                result_type: SearchResultType::Code,
+                title: memory.title.clone(),
+                content: memory.content.clone(),
+                snippet: create_snippet(&memory.content, 200),
+                score: 1.0,
+                metadata: SearchResultMetadata {
+                    memory_type: Some(MemoryType::Codebase),
+                    file_path: memory.file_path.clone(),
+                    author: memory.author.clone(),
+                    tags: memory.tags_vec(),
+                    language: memory.language.clone(),
+                    repository: memory.repository_id.clone(),
+                },
+                created_at: parse_datetime(&memory.created_at),
+            });
+        }
     }
 
-    // Sort by score
+    // Sort by score (once we have Qdrant, this will be meaningful)
     results.sort_by(|a: &SearchResultItem, b: &SearchResultItem| {
-        b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     // Apply limit
@@ -303,48 +375,130 @@ async fn get_context(
     Path(path): Path<ProjectPath>,
     Json(request): Json<ContextRequest>,
 ) -> Result<Json<ContextResponse>> {
-    let _project_id = &path.project_id;
+    let project_id = &path.project_id;
 
     // Validate task
     if request.task.trim().is_empty() {
         return Err(Error::Validation("Task cannot be empty".into()));
     }
 
-    // Generate embedding for task
-    let _task_embedding = state
-        .embeddings
-        .embed_single(&request.task)
-        .await
-        .map_err(|e| Error::Embedding(e.to_string()))?;
-
     let mut context = Vec::new();
+    let per_type_limit = (request.limit / 4).max(5) as i64;
 
     // Search for relevant code
     if request.include_code {
-        // TODO: Search Qdrant for relevant code
+        let filter = db::MemoryFilter {
+            project_id: Some(project_id.clone()),
+            memory_type: Some(db::MemoryType::Codebase),
+            search_query: Some(request.task.clone()),
+            limit: Some(per_type_limit),
+            ..Default::default()
+        };
+
+        let code_memories = db::list_memories(&state.db, filter).await?;
+
+        for memory in code_memories {
+            context.push(ContextItem {
+                id: Uuid::parse_str(&memory.id).unwrap_or_else(|_| Uuid::new_v4()),
+                context_type: ContextType::Code,
+                title: memory.title.clone(),
+                content: memory.content.clone(),
+                relevance: 1.0, // Placeholder until Qdrant provides real scores
+                metadata: ContextItemMetadata {
+                    file_path: memory.file_path.clone(),
+                    author: memory.author.clone(),
+                    tags: memory.tags_vec(),
+                    related_to: None,
+                },
+            });
+        }
     }
 
     // Search for relevant memories by type
-    for context_type in &request.types {
-        let memory_type = match context_type {
+    let types_to_search: Vec<ContextType> = if request.types.is_empty() {
+        // Default to all non-code types
+        vec![
+            ContextType::Spec,
+            ContextType::Decision,
+            ContextType::Session,
+            ContextType::Task,
+            ContextType::General,
+        ]
+    } else {
+        request.types.clone()
+    };
+
+    for context_type in &types_to_search {
+        let db_memory_type = match context_type {
             ContextType::Code => continue, // Already handled above
-            ContextType::Spec => MemoryType::Spec,
-            ContextType::Decision => MemoryType::Decision,
-            ContextType::Session => MemoryType::Session,
-            ContextType::Task => MemoryType::Task,
-            ContextType::General => MemoryType::General,
+            ContextType::Spec => db::MemoryType::Spec,
+            ContextType::Decision => db::MemoryType::Decision,
+            ContextType::Session => db::MemoryType::Session,
+            ContextType::Task => db::MemoryType::Task,
+            ContextType::General => db::MemoryType::General,
         };
-        // TODO: Search Qdrant with type filter
+
+        let filter = db::MemoryFilter {
+            project_id: Some(project_id.clone()),
+            memory_type: Some(db_memory_type),
+            search_query: Some(request.task.clone()),
+            limit: Some(per_type_limit),
+            ..Default::default()
+        };
+
+        let memories = db::list_memories(&state.db, filter).await?;
+
+        for memory in memories {
+            context.push(ContextItem {
+                id: Uuid::parse_str(&memory.id).unwrap_or_else(|_| Uuid::new_v4()),
+                context_type: *context_type,
+                title: memory.title.clone(),
+                content: memory.content.clone(),
+                relevance: 1.0,
+                metadata: ContextItemMetadata {
+                    file_path: memory.file_path.clone(),
+                    author: memory.author.clone(),
+                    tags: memory.tags_vec(),
+                    related_to: None,
+                },
+            });
+        }
     }
 
     // Include recent session context
     if request.include_sessions {
-        // TODO: Fetch recent session memories
-    }
+        let session_memories = db::list_project_memories_by_type(
+            &state.db,
+            project_id,
+            db::MemoryType::Session,
+            per_type_limit,
+            0,
+        )
+        .await?;
 
-    // Follow related memory links
-    if request.include_related {
-        // TODO: Fetch related memories based on graph edges
+        for memory in session_memories {
+            // Skip if already in context
+            if context
+                .iter()
+                .any(|c| c.id.to_string() == memory.id)
+            {
+                continue;
+            }
+
+            context.push(ContextItem {
+                id: Uuid::parse_str(&memory.id).unwrap_or_else(|_| Uuid::new_v4()),
+                context_type: ContextType::Session,
+                title: memory.title.clone(),
+                content: memory.content.clone(),
+                relevance: 0.8, // Slightly lower relevance for recent sessions
+                metadata: ContextItemMetadata {
+                    file_path: memory.file_path.clone(),
+                    author: memory.author.clone(),
+                    tags: memory.tags_vec(),
+                    related_to: None,
+                },
+            });
+        }
     }
 
     // Sort by relevance and truncate
@@ -355,7 +509,7 @@ async fn get_context(
     });
     context.truncate(request.limit as usize);
 
-    // Generate summary using LLM
+    // Generate summary using LLM (only if we have context and LLM is available)
     let summary = if !context.is_empty() {
         match generate_context_summary(&state, &request.task, &context).await {
             Ok(s) => Some(s),
@@ -441,7 +595,6 @@ fn generate_suggestions(task: &str, context: &[ContextItem]) -> Vec<String> {
 }
 
 /// Create a text snippet from content.
-#[allow(dead_code)]
 fn create_snippet(content: &str, max_length: usize) -> String {
     if content.len() <= max_length {
         content.to_string()
@@ -453,4 +606,41 @@ fn create_snippet(content: &str, max_length: usize) -> String {
             format!("{}...", truncated)
         }
     }
+}
+
+/// Convert API MemoryType to DB MemoryType.
+fn api_to_db_memory_type(api_type: MemoryType) -> Option<db::MemoryType> {
+    match api_type {
+        MemoryType::Codebase => Some(db::MemoryType::Codebase),
+        MemoryType::Session => Some(db::MemoryType::Session),
+        MemoryType::Spec => Some(db::MemoryType::Spec),
+        MemoryType::Decision => Some(db::MemoryType::Decision),
+        MemoryType::Task => Some(db::MemoryType::Task),
+        MemoryType::General => Some(db::MemoryType::General),
+    }
+}
+
+/// Convert DB MemoryType to API MemoryType.
+fn db_to_api_memory_type(db_type: db::MemoryType) -> Option<MemoryType> {
+    match db_type {
+        db::MemoryType::Codebase => Some(MemoryType::Codebase),
+        db::MemoryType::Session => Some(MemoryType::Session),
+        db::MemoryType::Spec => Some(MemoryType::Spec),
+        db::MemoryType::Decision => Some(MemoryType::Decision),
+        db::MemoryType::Task => Some(MemoryType::Task),
+        db::MemoryType::General => Some(MemoryType::General),
+        db::MemoryType::Commit => None, // No direct API equivalent
+        db::MemoryType::Pr => None,     // No direct API equivalent
+    }
+}
+
+/// Parse a datetime string to DateTime<Utc>.
+fn parse_datetime(s: &str) -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .or_else(|_| {
+            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+                .map(|ndt| ndt.and_utc())
+        })
+        .unwrap_or_else(|_| Utc::now())
 }

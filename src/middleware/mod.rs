@@ -10,4 +10,7 @@ mod token_auth;
 pub use session_auth::{
     optional_session, require_admin, require_session, SessionUser, SESSION_COOKIE_NAME,
 };
-pub use token_auth::{require_project_access, require_token, AuthContext};
+pub use token_auth::{
+    require_project_access, require_project_member, require_project_write, require_token,
+    AuthContext, ProjectAccess,
+};

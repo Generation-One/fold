@@ -46,6 +46,21 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 
 -- ============================================================================
+-- Project Members (per-project access control)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS project_members (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'viewer',         -- 'member' (read/write) | 'viewer' (read-only)
+    added_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, project_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_members_project ON project_members(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_members_user ON project_members(user_id);
+
+-- ============================================================================
 -- Sessions (for web UI)
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS sessions (

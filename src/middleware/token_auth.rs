@@ -267,6 +267,97 @@ fn parse_project_ids(s: &str) -> Vec<String> {
         .collect()
 }
 
+/// Project access context with role information.
+/// Injected into request extensions after project access check.
+#[derive(Clone, Debug)]
+pub struct ProjectAccess {
+    /// Project ID
+    pub project_id: String,
+    /// User's role on this project: "member" (read/write) or "viewer" (read-only)
+    pub role: String,
+    /// Whether user can write (create/update/delete)
+    pub can_write: bool,
+}
+
+/// Middleware that checks if user can access a project and loads their role.
+///
+/// Must be used AFTER `require_token` middleware. Checks that the authenticated
+/// user is a member of the project and injects `ProjectAccess` into extensions.
+///
+/// This is a more comprehensive check than `require_project_access` as it also
+/// verifies membership in the project_members table and loads the user's role.
+///
+/// # Errors
+///
+/// Returns 403 Forbidden if the user is not a member of the project.
+pub async fn require_project_member(
+    State(state): State<AppState>,
+    Path(params): Path<std::collections::HashMap<String, String>>,
+    mut req: Request<Body>,
+    next: Next,
+) -> Result<Response, Error> {
+    // Get the project from path params
+    let project_id_or_slug = params
+        .get("project")
+        .or_else(|| params.get("project_id"))
+        .ok_or_else(|| Error::Internal("Missing project path parameter".into()))?;
+
+    // Get AuthContext from extensions (set by require_token)
+    let auth_context = req
+        .extensions()
+        .get::<AuthContext>()
+        .ok_or(Error::Unauthenticated)?
+        .clone();
+
+    // Resolve project ID/slug to actual project
+    let project = crate::db::get_project_by_id_or_slug(&state.db, project_id_or_slug).await?;
+
+    // Check membership in project_members table
+    let member = crate::db::get_project_member(&state.db, &project.id, &auth_context.user_id).await?;
+
+    let project_access = match member {
+        Some(m) => ProjectAccess {
+            project_id: project.id,
+            role: m.role.clone(),
+            can_write: m.can_write(),
+        },
+        None => {
+            // User is not a member of this project
+            return Err(Error::Forbidden);
+        }
+    };
+
+    // Inject ProjectAccess into request extensions
+    req.extensions_mut().insert(project_access);
+
+    Ok(next.run(req).await)
+}
+
+/// Middleware that requires write access to a project.
+///
+/// Must be used AFTER `require_project_member` middleware.
+/// Checks that the user has a "member" role (not "viewer").
+///
+/// # Errors
+///
+/// Returns 403 Forbidden if the user only has read access (viewer role).
+pub async fn require_project_write(
+    req: Request<Body>,
+    next: Next,
+) -> Result<Response, Error> {
+    // Get ProjectAccess from extensions (set by require_project_member)
+    let project_access = req
+        .extensions()
+        .get::<ProjectAccess>()
+        .ok_or_else(|| Error::Internal("require_project_write must be used after require_project_member".into()))?;
+
+    if !project_access.can_write {
+        return Err(Error::Forbidden);
+    }
+
+    Ok(next.run(req).await)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

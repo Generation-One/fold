@@ -5,6 +5,88 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use std::collections::HashMap;
 
+// ============================================================================
+// Project Member Access Control
+// ============================================================================
+
+/// Role for project-level access control.
+/// - Owner: Full access (set via project.owner field, not this table)
+/// - Member: Read + Write access
+/// - Viewer: Read-only access
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectRole {
+    Member,
+    #[default]
+    Viewer,
+}
+
+impl ProjectRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ProjectRole::Member => "member",
+            ProjectRole::Viewer => "viewer",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "member" => Some(ProjectRole::Member),
+            "viewer" => Some(ProjectRole::Viewer),
+            _ => None,
+        }
+    }
+
+    /// Check if this role can write (create/update/delete memories)
+    pub fn can_write(&self) -> bool {
+        matches!(self, ProjectRole::Member)
+    }
+
+    /// Check if this role can read
+    pub fn can_read(&self) -> bool {
+        true // Both roles can read
+    }
+}
+
+/// A user's membership in a project with their role.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "snake_case")]
+pub struct ProjectMember {
+    pub user_id: String,
+    pub project_id: String,
+    pub role: String,
+    pub added_by: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl ProjectMember {
+    pub fn new(user_id: String, project_id: String, role: ProjectRole, added_by: Option<String>) -> Self {
+        Self {
+            user_id,
+            project_id,
+            role: role.as_str().to_string(),
+            added_by,
+            created_at: Utc::now(),
+        }
+    }
+
+    pub fn get_role(&self) -> Option<ProjectRole> {
+        ProjectRole::from_str(&self.role)
+    }
+
+    pub fn can_write(&self) -> bool {
+        self.get_role().map(|r| r.can_write()).unwrap_or(false)
+    }
+
+    pub fn can_read(&self) -> bool {
+        true
+    }
+}
+
+// ============================================================================
+// Git Provider
+// ============================================================================
+
 /// Git provider type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
