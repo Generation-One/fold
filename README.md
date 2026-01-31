@@ -1,138 +1,291 @@
-# Fold
+# Fold Documentation
 
-**A semantic memory layer for teams and AI agents.**
+Complete documentation for Fold, a holographic memory system for development teams and AI agents.
 
-Fold is a **holographic memory system** that captures, organizes, and retrieves project knowledge across your entire codebase and team. Think of it as a long-term memory for development — storing decisions, sessions, code patterns, and team context so you (and AI agents) can always find the right information at the right time.
+## 📖 Documentation Map
 
-Built on the principles of **holographic memory** from neuroscience, Fold lets you reconstruct full context from fragments. Ask a natural language question and get relevant code, decisions, past solutions, and team insights back instantly.
-
-## Quick Links
-
-**📖 Complete Documentation**: See [`../docs/`](../docs/README.md) for comprehensive guides
-
-- **[Overview & Concepts](../docs/01-overview.md)** — What Fold is and why it matters
-- **[Getting Started](../docs/02-getting-started.md)** — Install and run Fold in 5 minutes
-- **[Configuration](../docs/03-configuration.md)** — Set up auth, LLM providers, git integration
-- **[API Reference](../docs/05-api-reference.md)** — Complete REST API documentation
-- **[MCP Tools](../docs/06-mcp-tools.md)** — Use Fold with Claude Code and other AI agents
-- **[Deployment & Operations](../docs/07-deployment.md)** — Production setup and scaling
-- **[Troubleshooting](../docs/09-troubleshooting.md)** — Common issues and solutions
-
-## What is Fold?
-
-```
-Your Codebase + Team Activity + AI Context
-              ↓
-       Semantic Indexing (LLM-powered)
-              ↓
-      Vector Database + Knowledge Graph
-              ↓
-    Natural Language Search & Retrieval
-              ↓
-   Claude / Cursor / Your AI Assistant
-```
-
-Fold stores:
-- **Codebase memories** — Auto-indexed source files
-- **Session notes** — "We fixed the login bug and here's how"
-- **Decisions** — "We chose Redis for caching because..."
-- **Specs** — Feature requirements and technical specs
-- **Commit summaries** — AI-generated summaries of git activity
-- **Team insights** — Who changed what, when, and why
-
-All memories are **semantically indexed** and **linked together** in a knowledge graph. This enables powerful features:
-
-- **Holographic retrieval** — Any fragment reconstructs full context
-- **Semantic search** — Find meaning, not keywords
-- **AI-ready** — Claude, Cursor, and other AI agents query Fold via MCP
-- **Zero friction** — Works with your existing git repos; no workflow changes
-- **Automatic** — Git integration indexes your repos on push
-
-## Use Cases
-
-### For Developers
-- "How does authentication work?" → Get code + decisions + sessions
-- "Show me export patterns" → Find similar implementations across projects
-- "What changed in the payment service?" → See all commits + decisions + related code
-
-### For AI Agents (Claude, Cursor, Windsurf)
-- Claude understands your architecture without reading raw files
-- Implements features matching your exact patterns and conventions
-- Respects architectural decisions automatically
-- Makes informed cross-service changes
-
-### For Teams
-- Institutional memory survives team turnover
-- Decisions are discoverable, not scattered in Slack
-- Junior devs onboard faster with full context
-- Multiple projects stay synchronized
-
-## 2-Minute Setup
-
-```bash
-# Clone
-git clone https://github.com/Generation-One/fold.git
-cd fold
-
-# Start (requires Docker)
-docker-compose up -d
-
-# Create admin
-curl -X POST http://localhost:8765/auth/bootstrap \
-  -H "Content-Type: application/json" \
-  -d '{"token": "your-token"}'
-
-# Done! Access at http://localhost:8765
-```
-
-See [Getting Started](../docs/02-getting-started.md) for detailed instructions.
-
-## Tech Stack
-
-- **Rust** + Axum (web framework)
-- **SQLite** (metadata storage)
-- **Qdrant** (vector database)
-- **fastembed** (local embeddings) or cloud LLM APIs
-- **Docker** for easy deployment
-
-## Key Features
-
-| Feature | What It Does |
-|---------|---|
-| **Holographic Retrieval** | Any fragment of knowledge reconstructs full context |
-| **Semantic Search** | Find meaning, not keywords |
-| **Knowledge Graph** | Memories are linked by relationships (modifies, implements, decides, etc.) |
-| **Git Integration** | Auto-index GitHub/GitLab; webhooks keep memories in sync |
-| **AI-Ready (MCP)** | Works with Claude Code, Cursor, Windsurf, and other AI agents |
-| **Multi-Provider LLM** | Gemini (free) → OpenRouter → OpenAI with automatic fallback |
-| **Zero Friction** | No workflow changes; works with existing repos |
-| **Self-Hosted** | Full control; no external APIs required (embeddings run locally) |
-
-## Documentation
-
-The complete documentation is in [`../docs/`](../docs/README.md):
-
-### For Operators
-- [Getting Started](../docs/02-getting-started.md)
-- [Configuration](../docs/03-configuration.md)
-- [Deployment & Operations](../docs/07-deployment.md)
-- [Troubleshooting](../docs/09-troubleshooting.md)
-
-### For Developers
-- [Core Concepts](../docs/04-core-concepts.md)
-- [API Reference](../docs/05-api-reference.md)
-- [Advanced Topics](../docs/08-advanced-topics.md)
-
-### For AI Integration
-- [MCP Tools Reference](../docs/06-mcp-tools.md)
+**Start here:** [[01-overview.md|Overview & Concepts]] — Understand what Fold is and why it matters
 
 ### For Everyone
-- [Overview & Concepts](../docs/01-overview.md) — Start here!
 
-## Why "Fold"?
+1. **[[01-overview.md|Overview & Concepts]]** (45 min read)
+   - What is Fold?
+   - Why "holographic"?
+   - **AI benefits** (huge focus)
+   - How it works
+   - Key features
+   - Architecture overview
+   - Memory types
+   - Fold vs. traditional approaches
 
-Like a fold in spacetime, Fold brings distant but related knowledge close together. Any fragment of your project knowledge can reconstruct the whole picture — just like a hologram.
+2. **[[02-getting-started.md|Getting Started]]** (15 min)
+   - Install with Docker (recommended)
+   - Install for local development
+   - First steps: connect a repo
+   - Connect Claude Code
+   - Troubleshooting setup issues
 
-## License
+### For DevOps & Operators
 
-MIT
+3. **[[03-configuration.md|Configuration]]** (30 min)
+   - Environment variables (all required & optional)
+   - LLM provider setup (Gemini, OpenRouter, OpenAI)
+   - Auth providers (Google, GitHub, corporate OIDC)
+   - Git integration (GitHub/GitLab webhooks)
+   - Database & storage setup
+   - Embedding models
+   - Advanced configuration
+   - Provider-specific setup guides
+
+4. **[[07-deployment.md|Deployment & Operations]]** (45 min)
+   - Production architecture
+   - Docker Compose (production-grade)
+   - Nginx reverse proxy
+   - Database management (PostgreSQL migration)
+   - Qdrant scaling
+   - Monitoring & observability (Prometheus, Grafana)
+   - Performance tuning
+   - Backup & disaster recovery
+   - Security hardening
+   - Scaling strategies
+   - Operational checklists
+
+### For Developers & Architects
+
+5. **[[04-core-concepts.md|Core Concepts]]** (40 min)
+   - What is a memory?
+   - Memory types deep dive
+   - How embeddings & vectors work
+   - The knowledge graph
+   - Link types and relationships
+   - How semantic search works
+   - File attachments
+   - Content hashing
+   - AI-suggested links
+
+6. **[[05-api-reference.md|API Reference]]** (30 min reference)
+   - REST API for all endpoints
+   - Authentication endpoints
+   - Project management
+   - Memory CRUD operations
+   - Search & context queries
+   - Knowledge graph traversal
+   - Repositories & webhooks
+   - File attachments
+   - AI sessions
+   - Health & monitoring
+   - Complete curl examples
+
+### For AI Integration (Claude, Cursor, Windsurf)
+
+7. **[[06-mcp-tools.md|MCP Tools Reference]]** (25 min)
+   - What is MCP and why it matters
+   - Setup instructions (Claude Code, Cursor, Windsurf)
+   - 30+ MCP tools reference
+   - Tool descriptions & examples
+   - Common workflows
+   - Tool integration patterns
+   - Best practices
+   - Error handling
+   - Debugging tips
+
+### Advanced & Specialized Topics
+
+8. **[[08-advanced-topics.md|Advanced Topics]]** (20 min)
+   - Metadata repository sync (bidirectional)
+   - Knowledge graph traversal deep dive
+   - AI-suggested links
+   - Batch operations
+   - Workspace mapping for AI agents
+   - Custom embedding models
+   - Custom LLM models
+   - Database sharding (large scale)
+   - Webhook reliability
+   - Multi-tenant setup
+   - Custom authentication
+
+9. **[[09-troubleshooting.md|Troubleshooting & FAQ]]** (reference)
+   - Installation issues
+   - Authentication problems
+   - Git integration issues
+   - Search problems
+   - AI & Claude integration troubleshooting
+   - Performance optimization
+   - Webhook issues
+   - LLM & embedding errors
+   - FAQ (common questions)
+   - Getting help & bug reports
+
+---
+
+## 🚀 Quick Start Paths
+
+### I just want to try Fold locally
+
+1. Read: [[02-getting-started.md|Getting Started]] → Option 1 (Docker)
+2. Follow the steps → You're running in 5 minutes
+3. Read: [[01-overview.md|Overview]] to understand what you have
+
+### I want to use Fold with Claude Code
+
+1. Get running: [[02-getting-started.md|Getting Started]]
+2. Connect a repo
+3. Read: [[06-mcp-tools.md|MCP Tools Reference]]
+4. Use Fold from Claude Code
+
+### I'm setting up Fold for my team
+
+1. Read: [[01-overview.md|Overview]] — understand the benefits
+2. Setup: [[02-getting-started.md|Getting Started]] + [[03-configuration.md|Configuration]]
+3. Deploy: [[07-deployment.md|Deployment & Operations]]
+4. Integrate: [[06-mcp-tools.md|MCP Tools]] for your team's AI agents
+
+### I'm operating Fold in production
+
+1. Review: [[07-deployment.md|Deployment & Operations]]
+2. Reference: [[03-configuration.md|Configuration]] for all settings
+3. Monitor: Refer to Deployment section on observability
+4. Troubleshoot: [[09-troubleshooting.md|Troubleshooting]]
+5. Scale: [[08-advanced-topics.md|Advanced Topics]] for sharding/clustering
+
+### I'm building something with Fold's API
+
+1. Understand: [[04-core-concepts.md|Core Concepts]]
+2. Reference: [[05-api-reference.md|API Reference]]
+3. Integrate: [[06-mcp-tools.md|MCP Tools]] if building AI features
+4. Advanced: [[08-advanced-topics.md|Advanced Topics]] for complex queries
+
+---
+
+## 📚 Documentation by Role
+
+### Product Managers / Team Leads
+
+- [[01-overview.md|Overview]] — Understand the value
+- [[02-getting-started.md|Getting Started]] — See it working
+- [[06-mcp-tools.md|MCP Tools]] — Understand AI integration
+
+### Backend Developers / Architects
+
+- [[01-overview.md|Overview]] — Full picture
+- [[04-core-concepts.md|Core Concepts]] — Deep understanding
+- [[05-api-reference.md|API Reference]] — Implementation details
+- [[08-advanced-topics.md|Advanced Topics]] — Complex features
+
+### DevOps / Infrastructure Engineers
+
+- [[02-getting-started.md|Getting Started]] — Quick setup
+- [[03-configuration.md|Configuration]] — All settings
+- [[07-deployment.md|Deployment & Operations]] — Production guide
+- [[09-troubleshooting.md|Troubleshooting]] — Common issues
+
+### AI / ML Engineers
+
+- [[01-overview.md|Overview]] — AI benefits section
+- [[04-core-concepts.md|Core Concepts]] — How embeddings work
+- [[06-mcp-tools.md|MCP Tools]] — Integration patterns
+- [[08-advanced-topics.md|Advanced Topics]] — Custom models
+
+### Full-Stack Developers Using Fold
+
+- [[02-getting-started.md|Getting Started]] — Get it running
+- [[04-core-concepts.md|Core Concepts]] — Understand the system
+- [[05-api-reference.md|API Reference]] — Use the API
+- [[06-mcp-tools.md|MCP Tools]] — Use with Claude Code
+- [[09-troubleshooting.md|Troubleshooting]] — Fix issues
+
+---
+
+## 🎯 Common Tasks
+
+### "How do I start Fold?"
+→ [[02-getting-started.md|Getting Started]]
+
+### "How do I connect Claude Code to Fold?"
+→ [[06-mcp-tools.md|MCP Tools Reference]] → Setup Instructions
+
+### "How do I index a new GitHub repository?"
+→ [[02-getting-started.md|Getting Started]] → First Steps
+
+### "What are the authentication options?"
+→ [[03-configuration.md|Configuration]] → Auth Providers
+
+### "How do I set up for production?"
+→ [[07-deployment.md|Deployment & Operations]]
+
+### "How does semantic search work?"
+→ [[04-core-concepts.md|Core Concepts]] → Search & Retrieval
+
+### "What's the difference between memories?"
+→ [[04-core-concepts.md|Core Concepts]] → Memory Types
+
+### "Can I use Fold for multiple teams?"
+→ [[08-advanced-topics.md|Advanced Topics]] → Multi-Tenant Setup
+
+### "Something's broken, help!"
+→ [[09-troubleshooting.md|Troubleshooting & FAQ]]
+
+### "How do I scale Fold?"
+→ [[07-deployment.md|Deployment & Operations]] → Scaling
+
+---
+
+## 📖 Reading Order Recommendations
+
+**First time with Fold (30 min):**
+1. [[01-overview.md|Overview]] — 15 min
+2. [[02-getting-started.md|Getting Started]] — 15 min
+
+**Getting productive (2 hours):**
+1. [[01-overview.md|Overview]]
+2. [[02-getting-started.md|Getting Started]]
+3. [[03-configuration.md|Configuration]] (skim)
+4. [[06-mcp-tools.md|MCP Tools]] (if using with Claude)
+
+**Deep dive (4+ hours):**
+1. [[01-overview.md|Overview]]
+2. [[04-core-concepts.md|Core Concepts]]
+3. [[05-api-reference.md|API Reference]]
+4. [[06-mcp-tools.md|MCP Tools]]
+5. [[03-configuration.md|Configuration]]
+6. [[07-deployment.md|Deployment]]
+
+**Ops setup (3 hours):**
+1. [[02-getting-started.md|Getting Started]]
+2. [[03-configuration.md|Configuration]]
+3. [[07-deployment.md|Deployment]]
+4. [[09-troubleshooting.md|Troubleshooting]] (bookmark)
+
+---
+
+## 💡 Key Concepts to Understand
+
+- **Holographic Memory**: Any fragment can reconstruct full context
+- **Memories**: Building blocks of knowledge (code, decisions, sessions, specs)
+- **Knowledge Graph**: Memories are linked by type (modifies, implements, causes, etc.)
+- **Semantic Search**: Find meaning, not keywords
+- **Embeddings**: Vector representations of text for similarity matching
+- **MCP**: Protocol for AI agents to access Fold
+- **Git Integration**: Auto-index repos, webhooks keep memories in sync
+
+---
+
+## 🔗 External Resources
+
+- **GitHub**: https://github.com/Generation-One/fold
+- **Web UI**: https://github.com/Generation-One/fold-ui
+- **MCP Protocol**: https://modelcontextprotocol.io/
+- **Qdrant**: https://qdrant.tech/
+- **Claude Code**: https://claude.com/claude-code
+
+---
+
+## 📝 Document Updates
+
+These docs are maintained alongside the codebase. If you find:
+- **Inaccuracies**: Please open an issue
+- **Missing information**: Please suggest additions
+- **Confusing explanations**: Please let us know
+- **Examples that don't work**: Please report them
+
+GitHub Issues: https://github.com/Generation-One/fold/issues
