@@ -1,6 +1,10 @@
 # Fold
 
-A semantic memory layer for teams and AI agents.
+Ever wanted to share memory so your agents and clients stay in sync? Share it as a team, or just for yourself? Keep a record of decisions, a knowledge base, anything worth remembering?
+
+That is what Fold does. It consumes knowledge, information, text, files, code and creates a vector-based holographic memory store. Your agents and clients access it via MCP, REST APIs, or directly as files on the filesystem. Fold keeps everything synchronised and listens for changes in your repositories to update automatically in the background.
+
+**A semantic memory layer for teams and AI agents.**
 
 Fold captures, organises and retrieves project knowledge across your codebase. It stores decisions, sessions, code patterns and team context so you (and AI agents) can find the right information when you need it.
 
