@@ -6,6 +6,27 @@ Fold captures, organises and retrieves project knowledge across your codebase. I
 
 Built on principles from neuroscience, Fold reconstructs full context from fragments. Ask a natural language question and receive relevant code, decisions, past solutions and team insights.
 
+## Information for Agents
+
+Claude Code skills for working with Fold:
+
+- **[using-fold](./skills/using-fold/SKILL.md)**: Query memories, store context, search codebases
+- **[managing-fold](./skills/managing-fold/SKILL.md)**: Deploy, configure and operate Fold instances
+
+**Install skills** (copy to `~/.claude/skills/`):
+
+```bash
+# Download using-fold skill
+curl -o ~/.claude/skills/using-fold/SKILL.md --create-dirs \
+  https://raw.githubusercontent.com/Generation-One/fold/main/skills/using-fold/SKILL.md
+
+# Download managing-fold skill
+curl -o ~/.claude/skills/managing-fold/SKILL.md --create-dirs \
+  https://raw.githubusercontent.com/Generation-One/fold/main/skills/managing-fold/SKILL.md
+```
+
+**Latest docs**: Always check the [Fold Wiki](https://github.com/Generation-One/fold/wiki) for current API references and configuration options.
+
 ## Quick Links
 
 **Documentation**: [Fold Wiki](https://github.com/Generation-One/fold/wiki)
