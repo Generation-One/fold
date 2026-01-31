@@ -289,7 +289,7 @@ async fn handle_gitlab_webhook(
         "Received GitLab webhook"
     );
 
-    // TODO: Fetch repository from database to get webhook token
+    // Fetch repository webhook token from database
     let webhook_token = get_gitlab_webhook_token(&state, repo_id).await?;
 
     // Verify token

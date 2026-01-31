@@ -16,6 +16,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{AppState, Error, Result};
@@ -159,8 +160,8 @@ async fn list_projects(
             slug: p.slug,
             name: p.name,
             description: p.description,
-            root_path: None,
-            repo_url: None,
+            root_path: p.root_path,
+            repo_url: p.repo_url,
             memory_count: 0,
             created_at: p.created_at.parse().unwrap_or_else(|_| Utc::now()),
             updated_at: p.updated_at.parse().unwrap_or_else(|_| Utc::now()),
@@ -202,15 +203,22 @@ async fn create_project(
 
     let project = crate::db::create_project(&state.db, input).await?;
 
-    // TODO: Initialize Qdrant collection for project
+    // Initialize Qdrant collection for project (non-blocking)
+    match state.qdrant.create_collection(
+        &project.slug,
+        state.embeddings.dimension(),
+    ).await {
+        Ok(()) => info!(slug = %project.slug, "Created Qdrant collection"),
+        Err(e) => warn!(error = %e, slug = %project.slug, "Failed to create Qdrant collection, search unavailable"),
+    }
 
     Ok(Json(ProjectResponse {
         id: project.id.parse().unwrap_or_default(),
         slug: project.slug,
         name: project.name,
         description: project.description,
-        root_path: None, // TODO: Add to DB schema
-        repo_url: None,  // TODO: Add to DB schema
+        root_path: project.root_path,
+        repo_url: project.repo_url,
         memory_count: 0,
         created_at: project.created_at.parse().unwrap_or_else(|_| Utc::now()),
         updated_at: project.updated_at.parse().unwrap_or_else(|_| Utc::now()),
@@ -234,8 +242,8 @@ async fn get_project(
         slug: project.slug,
         name: project.name,
         description: project.description,
-        root_path: None,
-        repo_url: None,
+        root_path: project.root_path,
+        repo_url: project.repo_url,
         memory_count: 0,
         created_at: project.created_at.parse().unwrap_or_else(|_| Utc::now()),
         updated_at: project.updated_at.parse().unwrap_or_else(|_| Utc::now()),
@@ -269,8 +277,8 @@ async fn update_project(
         slug: project.slug,
         name: project.name,
         description: project.description,
-        root_path: None,
-        repo_url: None,
+        root_path: project.root_path,
+        repo_url: project.repo_url,
         memory_count: 0,
         created_at: project.created_at.parse().unwrap_or_else(|_| Utc::now()),
         updated_at: project.updated_at.parse().unwrap_or_else(|_| Utc::now()),
@@ -294,7 +302,11 @@ async fn delete_project(
     // Delete project and all associated data (cascade handled by DB)
     crate::db::delete_project(&state.db, &existing.id).await?;
 
-    // TODO: Delete Qdrant collection
+    // Delete Qdrant collection (non-blocking cleanup)
+    match state.qdrant.delete_collection(&existing.slug).await {
+        Ok(()) => info!(slug = %existing.slug, "Deleted Qdrant collection"),
+        Err(e) => warn!(error = %e, slug = %existing.slug, "Failed to delete Qdrant collection"),
+    }
 
     Ok(Json(serde_json::json!({
         "deleted": true,

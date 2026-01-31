@@ -586,4 +586,82 @@ impl GitSyncService {
 
         Ok(repo)
     }
+
+    /// Process a push webhook from job queue payload.
+    /// Extracts repository info from payload and dispatches to provider-specific handler.
+    pub async fn process_push_webhook(&self, payload: &serde_json::Value) -> Result<WebhookResult> {
+        // Extract repository ID from payload
+        let repo_id = payload.get("repository_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| Error::Validation("Missing repository_id in webhook payload".to_string()))?;
+
+        // Get repository
+        let repo = self.get_repository(repo_id).await?
+            .ok_or_else(|| Error::NotFound(format!("Repository not found: {}", repo_id)))?;
+
+        // Get project
+        let project: Project = sqlx::query_as(
+            "SELECT * FROM projects WHERE id = ?"
+        )
+        .bind(&repo.project_id)
+        .fetch_one(&self.db)
+        .await?;
+
+        // Dispatch based on provider
+        match repo.provider.as_str() {
+            "github" => {
+                // Parse GitHub push payload
+                let push_payload: GitHubPushPayload = serde_json::from_value(
+                    payload.get("data").cloned().unwrap_or_default()
+                ).map_err(|e| Error::Validation(format!("Invalid GitHub push payload: {}", e)))?;
+
+                self.process_github_push(push_payload, &repo, &project).await
+            }
+            "gitlab" => {
+                // Parse GitLab push payload
+                let push_payload: GitLabPushPayload = serde_json::from_value(
+                    payload.get("data").cloned().unwrap_or_default()
+                ).map_err(|e| Error::Validation(format!("Invalid GitLab push payload: {}", e)))?;
+
+                self.process_gitlab_push(push_payload, &repo, &project).await
+            }
+            provider => {
+                Err(Error::Validation(format!("Unknown provider: {}", provider)))
+            }
+        }
+    }
+
+    /// Process a PR/MR webhook from job queue payload.
+    /// For now, logs the event and returns success. Full implementation can be added later.
+    pub async fn process_pr_webhook(&self, payload: &serde_json::Value) -> Result<WebhookResult> {
+        // Extract repository ID from payload
+        let repo_id = payload.get("repository_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| Error::Validation("Missing repository_id in webhook payload".to_string()))?;
+
+        // Get repository
+        let repo = self.get_repository(repo_id).await?
+            .ok_or_else(|| Error::NotFound(format!("Repository not found: {}", repo_id)))?;
+
+        // Extract PR action and number for logging
+        let action = payload.get("action").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let pr_number = payload.get("number").and_then(|v| v.as_i64()).unwrap_or(0);
+
+        info!(
+            repository = %repo.full_name(),
+            action = action,
+            pr_number = pr_number,
+            "Processed PR webhook"
+        );
+
+        // Return success with no processing for now
+        // Full PR processing (creating memories for PR descriptions, comments, etc.)
+        // can be implemented in a future phase
+        Ok(WebhookResult {
+            repository_id: repo.id,
+            commits_processed: 0,
+            memories_created: 0,
+            links_created: 0,
+        })
+    }
 }

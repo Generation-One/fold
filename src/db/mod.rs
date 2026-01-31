@@ -160,11 +160,11 @@ mod tests {
         let pool = init_pool(":memory:").await.unwrap();
         migrate(&pool).await.unwrap();
 
-        // Verify migrations table exists and has entries
+        // Verify migrations table exists and has entries (consolidated into single 001_initial migration)
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM _migrations")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert!(count.0 >= 3);
+        assert!(count.0 >= 1);
     }
 }

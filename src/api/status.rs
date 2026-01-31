@@ -12,6 +12,7 @@
 //! - GET /metrics - Prometheus metrics endpoint
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use axum::{
@@ -30,6 +31,17 @@ use crate::{AppState, Error, Result};
 // Global metrics (simple counters)
 static REQUEST_COUNT: AtomicU64 = AtomicU64::new(0);
 static ERROR_COUNT: AtomicU64 = AtomicU64::new(0);
+static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
+
+/// Initialize startup time. Call this once at server start.
+pub fn init_startup_time() {
+    let _ = STARTUP_TIME.get_or_init(Instant::now);
+}
+
+/// Get uptime in seconds since server start.
+fn get_uptime_seconds() -> u64 {
+    STARTUP_TIME.get().map(|start| start.elapsed().as_secs()).unwrap_or(0)
+}
 
 /// Increment request counter.
 pub fn inc_request_count() {
@@ -278,8 +290,8 @@ async fn liveness_check() -> StatusCode {
 /// database stats, queue status, and metrics.
 #[axum::debug_handler]
 async fn system_status(State(state): State<AppState>) -> Result<Json<SystemStatusResponse>> {
-    // TODO: Calculate actual uptime
-    let uptime_seconds = 0u64;
+    // Calculate actual uptime from startup time
+    let uptime_seconds = get_uptime_seconds();
 
     // Get database status
     let database = get_database_status(&state).await?;
@@ -469,10 +481,16 @@ fold_up 1
 async fn check_database(state: &AppState) -> DependencyCheck {
     let start = Instant::now();
 
-    // TODO: Run a simple query to check connectivity
-    let connected = true; // Placeholder
+    // Run a simple query to check connectivity
+    let result = sqlx::query_as::<_, (i64,)>("SELECT 1")
+        .fetch_one(&state.db)
+        .await;
 
     let latency_ms = start.elapsed().as_millis() as u64;
+    let (connected, message) = match result {
+        Ok(_) => (true, None),
+        Err(e) => (false, Some(format!("Database error: {}", e))),
+    };
 
     DependencyCheck {
         name: "database".into(),
@@ -482,7 +500,7 @@ async fn check_database(state: &AppState) -> DependencyCheck {
             HealthStatus::Unhealthy
         },
         latency_ms: Some(latency_ms),
-        message: None,
+        message,
     }
 }
 
@@ -490,20 +508,29 @@ async fn check_database(state: &AppState) -> DependencyCheck {
 async fn check_qdrant(state: &AppState) -> DependencyCheck {
     let start = Instant::now();
 
-    // TODO: Check Qdrant connection
-    let connected = true; // Placeholder
-
+    // Check Qdrant connection by trying to get collection info
+    let result = state.qdrant.collection_info("_health_check").await;
     let latency_ms = start.elapsed().as_millis() as u64;
+
+    // Connection is healthy if we get any response (including "not found")
+    let (status, message) = match result {
+        Ok(_) => (HealthStatus::Healthy, None),
+        Err(e) => {
+            let err_str = e.to_string();
+            // "Not found" errors mean Qdrant is connected but collection doesn't exist
+            if err_str.contains("Not found") || err_str.contains("doesn't exist") {
+                (HealthStatus::Healthy, None)
+            } else {
+                (HealthStatus::Unhealthy, Some(format!("Qdrant error: {}", e)))
+            }
+        }
+    };
 
     DependencyCheck {
         name: "qdrant".into(),
-        status: if connected {
-            HealthStatus::Healthy
-        } else {
-            HealthStatus::Unhealthy
-        },
+        status,
         latency_ms: Some(latency_ms),
-        message: None,
+        message,
     }
 }
 
@@ -511,40 +538,83 @@ async fn check_qdrant(state: &AppState) -> DependencyCheck {
 async fn check_embeddings(state: &AppState) -> DependencyCheck {
     let start = Instant::now();
 
-    // TODO: Check if model is loaded
-    let loaded = true; // Placeholder
-
+    // Check if embeddings service has providers configured
+    let has_providers = state.embeddings.has_providers();
     let latency_ms = start.elapsed().as_millis() as u64;
+
+    // Embeddings are healthy if providers are configured OR if we're in fallback mode
+    let (status, message) = if has_providers {
+        (HealthStatus::Healthy, None)
+    } else {
+        // Degraded - will use hash-based fallback
+        (HealthStatus::Degraded, Some("No embedding providers configured, using fallback".to_string()))
+    };
 
     DependencyCheck {
         name: "embeddings".into(),
-        status: if loaded {
-            HealthStatus::Healthy
-        } else {
-            HealthStatus::Unhealthy
-        },
+        status,
         latency_ms: Some(latency_ms),
-        message: None,
+        message,
     }
 }
 
 /// Get database status.
-async fn get_database_status(_state: &AppState) -> Result<DatabaseStatus> {
-    // TODO: Get actual stats from connection pool
+async fn get_database_status(state: &AppState) -> Result<DatabaseStatus> {
+    // Get actual stats from connection pool
+    let pool_options = state.db.options();
+    let pool_size = pool_options.get_max_connections();
+
+    // Check connectivity with a simple query
+    let connected = sqlx::query_as::<_, (i64,)>("SELECT 1")
+        .fetch_one(&state.db)
+        .await
+        .is_ok();
+
     Ok(DatabaseStatus {
-        connected: true,
-        pool_size: 10,
-        active_connections: 0,
+        connected,
+        pool_size,
+        active_connections: state.db.size(),
     })
 }
 
 /// Get Qdrant status.
-async fn get_qdrant_status(_state: &AppState) -> Result<QdrantStatus> {
-    // TODO: Get actual stats from Qdrant
+async fn get_qdrant_status(state: &AppState) -> Result<QdrantStatus> {
+    // Get list of projects to count collections and total points
+    let projects = crate::db::list_projects(&state.db).await.unwrap_or_default();
+
+    let mut collections = 0u32;
+    let mut total_points = 0u64;
+    let mut connected = false;
+
+    // Try to get info for each project's collection
+    for project in &projects {
+        match state.qdrant.collection_info(&project.slug).await {
+            Ok(info) => {
+                connected = true;
+                collections += 1;
+                total_points += info.points_count;
+            }
+            Err(e) => {
+                let err_str = e.to_string();
+                // "Not found" just means collection doesn't exist yet
+                if err_str.contains("Not found") || err_str.contains("doesn't exist") {
+                    connected = true; // Qdrant is up, just no collection
+                }
+            }
+        }
+    }
+
+    // If no projects exist, try a health check on a dummy collection
+    if projects.is_empty() {
+        connected = state.qdrant.collection_info("_health_check").await
+            .map(|_| true)
+            .unwrap_or_else(|e| e.to_string().contains("Not found"));
+    }
+
     Ok(QdrantStatus {
-        connected: true,
-        collections: 0,
-        total_points: 0,
+        connected,
+        collections,
+        total_points,
     })
 }
 

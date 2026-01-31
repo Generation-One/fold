@@ -47,6 +47,9 @@ async fn main() -> Result<()> {
     let state = AppState::new().await?;
     tracing::info!("Application state initialized");
 
+    // Initialize startup time for uptime tracking
+    api::status::init_startup_time();
+
     // Start background job worker
     let job_worker = services::JobWorker::new(
         state.db.clone(),

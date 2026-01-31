@@ -11,6 +11,8 @@
 //! - POST /projects/:project_id/memories/search - Semantic search
 //! - POST /projects/:project_id/memories/bulk - Bulk create memories
 
+use std::collections::HashMap;
+
 use axum::{
     extract::{Path, Query, State},
     routing::{get, post},
@@ -18,6 +20,8 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use tracing::warn;
 use uuid::Uuid;
 
 use super::attachments;
@@ -430,7 +434,27 @@ async fn create_memory(
 
     let memory = db::create_memory(&state.db, input).await?;
 
-    // TODO: Store embedding in Qdrant
+    // Build metadata payload for Qdrant
+    let mut payload = HashMap::new();
+    payload.insert("memory_id".to_string(), json!(memory.id));
+    payload.insert("project_id".to_string(), json!(memory.project_id));
+    payload.insert("type".to_string(), json!(memory.memory_type));
+    if let Some(ref author) = memory.author {
+        payload.insert("author".to_string(), json!(author));
+    }
+    if let Some(ref file_path) = memory.file_path {
+        payload.insert("file_path".to_string(), json!(file_path));
+    }
+
+    // Store embedding in Qdrant (non-blocking)
+    if let Err(e) = state.qdrant.upsert(
+        &project.slug,
+        &memory.id,
+        _embedding,
+        payload,
+    ).await {
+        warn!(error = %e, memory_id = %memory.id, "Failed to store embedding in Qdrant");
+    }
 
     Ok(Json(memory_to_response(memory)))
 }
@@ -462,16 +486,36 @@ async fn update_memory(
     Json(request): Json<UpdateMemoryRequest>,
 ) -> Result<Json<MemoryResponse>> {
     // Resolve project (to validate it exists and user has access)
-    let _project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
+    let project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
 
     // If content changed, regenerate embedding
     if let Some(ref content) = request.content {
-        let _embedding = state
+        let embedding = state
             .embeddings
             .embed_single(content)
             .await
             .map_err(|e| Error::Embedding(e.to_string()))?;
-        // TODO: Update embedding in Qdrant
+
+        // Build metadata payload for Qdrant update
+        let mut payload = HashMap::new();
+        payload.insert("memory_id".to_string(), json!(path.memory_id.to_string()));
+        payload.insert("project_id".to_string(), json!(project.id));
+        if let Some(ref author) = request.author {
+            payload.insert("author".to_string(), json!(author));
+        }
+        if let Some(ref file_path) = request.file_path {
+            payload.insert("file_path".to_string(), json!(file_path));
+        }
+
+        // Update embedding in Qdrant (non-blocking)
+        if let Err(e) = state.qdrant.upsert(
+            &project.slug,
+            &path.memory_id.to_string(),
+            embedding,
+            payload,
+        ).await {
+            warn!(error = %e, memory_id = %path.memory_id, "Failed to update embedding in Qdrant");
+        }
     }
 
     // Build update input
@@ -501,13 +545,32 @@ async fn delete_memory(
     Path(path): Path<MemoryPath>,
 ) -> Result<Json<serde_json::Value>> {
     // Resolve project (to validate it exists and user has access)
-    let _project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
+    let project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
+
+    // Get and delete attachments (best effort cleanup)
+    if let Ok(attachments) = crate::db::list_memory_attachments(&state.db, &path.memory_id.to_string()).await {
+        for attachment in attachments {
+            // Delete file from filesystem
+            if let Err(e) = tokio::fs::remove_file(&attachment.storage_path).await {
+                warn!(error = %e, path = %attachment.storage_path, "Failed to delete attachment file");
+            }
+        }
+        // Delete attachment records from database
+        if let Err(e) = crate::db::delete_memory_attachments(&state.db, &path.memory_id.to_string()).await {
+            warn!(error = %e, memory_id = %path.memory_id, "Failed to delete attachment records");
+        }
+    }
 
     // Delete memory from database
     db::delete_memory(&state.db, &path.memory_id.to_string()).await?;
 
-    // TODO: Delete embedding from Qdrant
-    // TODO: Delete associated attachments
+    // Delete embedding from Qdrant (non-blocking cleanup)
+    if let Err(e) = state.qdrant.delete(
+        &project.slug,
+        &path.memory_id.to_string(),
+    ).await {
+        warn!(error = %e, memory_id = %path.memory_id, "Failed to delete embedding from Qdrant");
+    }
 
     Ok(Json(serde_json::json!({
         "deleted": true,
@@ -614,11 +677,11 @@ async fn bulk_create_memories(
 
         // Generate embedding
         match state.embeddings.embed_single(&memory_req.content).await {
-            Ok(_embedding) => {
+            Ok(embedding) => {
                 // Create memory in database
                 let memory_id = Uuid::new_v4().to_string();
                 let input = db::CreateMemory {
-                    id: memory_id,
+                    id: memory_id.clone(),
                     project_id: project.id.clone(),
                     repository_id: None,
                     memory_type: memory_req.memory_type.to_db(),
@@ -635,9 +698,30 @@ async fn bulk_create_memories(
                 };
 
                 match db::create_memory(&state.db, input).await {
-                    Ok(_) => {
+                    Ok(memory) => {
                         created += 1;
-                        // TODO: Store embedding in Qdrant
+
+                        // Build metadata payload for Qdrant
+                        let mut payload = HashMap::new();
+                        payload.insert("memory_id".to_string(), json!(memory.id));
+                        payload.insert("project_id".to_string(), json!(memory.project_id));
+                        payload.insert("type".to_string(), json!(memory.memory_type));
+                        if let Some(ref author) = memory.author {
+                            payload.insert("author".to_string(), json!(author));
+                        }
+                        if let Some(ref file_path) = memory.file_path {
+                            payload.insert("file_path".to_string(), json!(file_path));
+                        }
+
+                        // Store embedding in Qdrant (non-blocking)
+                        if let Err(e) = state.qdrant.upsert(
+                            &project.slug,
+                            &memory.id,
+                            embedding,
+                            payload,
+                        ).await {
+                            warn!(error = %e, memory_id = %memory.id, "Failed to store embedding in Qdrant (bulk)");
+                        }
                     }
                     Err(e) => {
                         errors.push(BulkCreateError {

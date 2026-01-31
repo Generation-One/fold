@@ -656,6 +656,25 @@ pub async fn increment_job_progress(
     .ok_or_else(|| Error::NotFound(format!("Job not found: {}", id)))
 }
 
+/// Update job metadata/result field mid-execution.
+pub async fn update_job_metadata(pool: &DbPool, id: &str, metadata: &serde_json::Value) -> Result<Job> {
+    let metadata_json = serde_json::to_string(metadata).unwrap_or_default();
+
+    sqlx::query_as::<_, Job>(
+        r#"
+        UPDATE jobs SET
+            result = ?
+        WHERE id = ?
+        RETURNING *
+        "#,
+    )
+    .bind(&metadata_json)
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| Error::NotFound(format!("Job not found: {}", id)))
+}
+
 /// Complete a job successfully.
 pub async fn complete_job(pool: &DbPool, id: &str, result: Option<&JobResult>) -> Result<Job> {
     let result_json = result.map(|r| serde_json::to_string(r).unwrap_or_default());

@@ -304,10 +304,38 @@ impl JobWorker {
 
         info!(job_id, payload = ?payload, "Processing webhook job");
 
-        // TODO: Implement webhook processing based on payload
-        // This would dispatch to git_sync based on webhook type
+        // Route webhook to appropriate handler based on event type
+        let event_type = payload.get("event_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
 
-        self.log_job(job_id, LogLevel::Info, "Webhook processed").await?;
+        match event_type {
+            "push" => {
+                // Process push event - index changed files
+                if let Err(e) = self.inner.git_sync.process_push_webhook(&payload).await {
+                    warn!(error = %e, job_id, "Failed to process push webhook");
+                    return Err(Error::Internal(format!("Push webhook processing failed: {}", e)));
+                }
+                self.log_job(job_id, LogLevel::Info, "Processed push webhook").await?;
+            }
+            "pull_request" | "merge_request" => {
+                // Process PR/MR event
+                if let Err(e) = self.inner.git_sync.process_pr_webhook(&payload).await {
+                    warn!(error = %e, job_id, "Failed to process PR webhook");
+                    return Err(Error::Internal(format!("PR webhook processing failed: {}", e)));
+                }
+                self.log_job(job_id, LogLevel::Info, "Processed PR webhook").await?;
+            }
+            other => {
+                // Unknown event type - log and continue
+                self.log_job(
+                    job_id,
+                    LogLevel::Warn,
+                    &format!("Unknown webhook event type: {}", other),
+                ).await?;
+            }
+        }
+
         Ok(())
     }
 
@@ -322,10 +350,64 @@ impl JobWorker {
 
         info!(job_id, "Generating summary");
 
-        // TODO: Use LLM to generate summary based on payload
-        // This would be called for commit summaries, PR summaries, etc.
+        // Extract content to summarize from payload
+        let content = payload.get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
-        self.log_job(job_id, LogLevel::Info, "Summary generated").await?;
+        if content.is_empty() {
+            self.log_job(job_id, LogLevel::Warn, "No content provided for summary").await?;
+            return Ok(());
+        }
+
+        // Get summary type for context
+        let summary_type = payload.get("summary_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("general");
+
+        // Build prompt based on summary type
+        let prompt = match summary_type {
+            "commit" => format!(
+                "Generate a concise summary (2-3 sentences) of this git commit. Focus on what changed and why:\n\n{}",
+                content
+            ),
+            "pr" | "pull_request" => format!(
+                "Generate a concise summary (2-3 sentences) of this pull request. Focus on the main changes and their purpose:\n\n{}",
+                content
+            ),
+            "code" => format!(
+                "Generate a concise summary (2-3 sentences) of this code. Focus on its purpose and key functionality:\n\n{}",
+                content
+            ),
+            _ => format!(
+                "Generate a concise summary (2-3 sentences) of the following:\n\n{}",
+                content
+            ),
+        };
+
+        // Generate summary using LLM (max 500 tokens for concise output)
+        match self.inner.llm.complete(&prompt, 500).await {
+            Ok(summary) => {
+                self.log_job(
+                    job_id,
+                    LogLevel::Info,
+                    &format!("Generated {} char summary for {}", summary.len(), summary_type),
+                ).await?;
+
+                // Store summary in job metadata for retrieval
+                let metadata = serde_json::json!({ "summary": summary });
+                db::update_job_metadata(&self.inner.db, job_id, &metadata).await?;
+            }
+            Err(e) => {
+                self.log_job(
+                    job_id,
+                    LogLevel::Error,
+                    &format!("Failed to generate summary: {}", e),
+                ).await?;
+                return Err(Error::Internal(format!("LLM summary generation failed: {}", e)));
+            }
+        }
+
         Ok(())
     }
 
@@ -367,17 +449,44 @@ impl JobWorker {
             "Indexing repository files"
         );
 
-        // Update progress for each item
-        let total = job.total_items.unwrap_or(0);
+        let token = &repo.access_token;
 
-        for i in 0..total {
-            // TODO: Actually fetch and index files from GitHub
-            // For now just update progress
-            db::update_job_progress(&self.inner.db, job_id, i + 1, 0).await?;
+        // Extract files from job payload (set by webhook handler)
+        let payload: serde_json::Value = job.payload
+            .as_ref()
+            .and_then(|p| serde_json::from_str(p).ok())
+            .unwrap_or_default();
+
+        // Get files to index from payload
+        let files: Vec<String> = payload.get("files")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect())
+            .unwrap_or_default();
+
+        let total = files.len();
+        let mut indexed = 0i32;
+        let mut failed = 0i32;
+
+        for (i, file_path) in files.iter().enumerate() {
+            match self.index_file(&repo, &project, file_path, token).await {
+                Ok(()) => {
+                    indexed += 1;
+                    debug!(job_id, file = %file_path, "Indexed file");
+                }
+                Err(e) => {
+                    failed += 1;
+                    warn!(job_id, file = %file_path, error = %e, "Failed to index file");
+                }
+            }
+
+            // Update progress
+            db::update_job_progress(&self.inner.db, job_id, indexed, failed).await?;
 
             // Log progress periodically
             if (i + 1) % 10 == 0 || i + 1 == total {
-                debug!(job_id, processed = i + 1, total, "Index progress");
+                debug!(job_id, processed = i + 1, total, indexed, failed, "Index progress");
             }
         }
 

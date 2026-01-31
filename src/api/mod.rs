@@ -12,7 +12,7 @@ mod projects;
 mod repositories;
 mod search;
 mod sessions;
-mod status;
+pub mod status;
 mod team;
 mod webhooks;
 
