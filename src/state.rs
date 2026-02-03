@@ -133,6 +133,7 @@ impl AppState {
         // Wire up linker to indexer for holographic auto-linking
         let mut indexer = indexer;
         indexer.set_linker(linker.clone());
+        indexer.set_concurrency_limit(config.indexing.concurrency_limit);
 
         let auth = AuthService::new(db.clone(), config.auth.clone());
 

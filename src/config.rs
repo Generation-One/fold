@@ -34,6 +34,7 @@ pub struct Config {
     pub llm: LlmConfig,
     pub session: SessionConfig,
     pub storage: StorageConfig,
+    pub indexing: IndexingConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -138,6 +139,12 @@ pub struct StorageConfig {
     pub fold_path: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct IndexingConfig {
+    /// Maximum number of files to index in parallel (default: 4)
+    pub concurrency_limit: usize,
+}
+
 impl Config {
     pub fn from_env() -> Self {
         dotenvy::dotenv().ok();
@@ -177,6 +184,11 @@ impl Config {
                     .parse()
                     .unwrap_or(10 * 1024 * 1024), // 10MB
                 fold_path: env_or("FOLD_PATH", "fold"),
+            },
+            indexing: IndexingConfig {
+                concurrency_limit: env_or("INDEXING_CONCURRENCY", "4")
+                    .parse()
+                    .unwrap_or(4),
             },
         }
     }
