@@ -1,5 +1,5 @@
 # Build stage
-FROM rust:latest as builder
+FROM rust:1.83-bookworm as builder
 
 WORKDIR /app
 
@@ -12,9 +12,9 @@ RUN mkdir -p src && \
     cargo build --release && \
     rm -rf src
 
-# Copy actual source
+# Copy actual source and schema
 COPY src ./src
-COPY migrations ./migrations
+COPY schema.sql ./schema.sql
 
 # Build release binary (touch main.rs to force rebuild)
 RUN touch src/main.rs && cargo build --release
@@ -25,18 +25,17 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy binary
+# Copy binary and schema
 COPY --from=builder /app/target/release/fold /app/fold
+COPY --from=builder /app/schema.sql /app/schema.sql
 
-# Copy migrations
-COPY migrations ./migrations
-
-# Create data directories
-RUN mkdir -p /data/attachments /data/summaries
+# Create data directory
+RUN mkdir -p /data
 
 # Non-root user
 RUN useradd -r -s /bin/false fold && \
@@ -49,8 +48,7 @@ EXPOSE 8765
 ENV HOST=0.0.0.0
 ENV PORT=8765
 ENV DATABASE_PATH=/data/fold.db
-ENV ATTACHMENTS_PATH=/data/attachments
-ENV SUMMARIES_PATH=/data/summaries
+ENV RUST_LOG=fold=info,tower_http=info
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8765/health || exit 1
