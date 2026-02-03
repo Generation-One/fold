@@ -857,10 +857,14 @@ impl JobWorker {
         // Create memory for the file
         let title = file_path.split('/').last().unwrap_or(file_path).to_string();
 
+        // Generate stable memory ID from path
+        let memory_id = IndexerService::path_hash(&project.slug, file_path);
+
         self.inner.memory.add(
             &project.id,
             &project.slug,
             crate::models::MemoryCreate {
+                id: Some(memory_id),
                 memory_type: crate::models::MemoryType::Codebase,
                 content,
                 author: Some("system".to_string()),

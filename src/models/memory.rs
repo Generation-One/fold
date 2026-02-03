@@ -213,6 +213,10 @@ impl std::fmt::Display for LinkType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct MemoryCreate {
+    /// Optional custom ID. If not provided, a UUID will be generated.
+    /// For codebase files, this should be a hash of project_slug + file_path
+    /// to ensure updates replace existing memories rather than creating duplicates.
+    pub id: Option<String>,
     #[serde(default)]
     pub memory_type: MemoryType,
     pub content: String,
@@ -244,6 +248,7 @@ pub struct MemoryCreate {
 impl Default for MemoryCreate {
     fn default() -> Self {
         Self {
+            id: None,
             memory_type: MemoryType::General,
             content: String::new(),
             author: None,

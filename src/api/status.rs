@@ -154,6 +154,8 @@ pub struct LlmStatus {
     pub available: bool,
     pub provider: Option<String>,
     pub model: Option<String>,
+    pub error: Option<String>,
+    pub error_count: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -766,10 +768,20 @@ async fn get_llm_status(state: &AppState) -> Result<LlmStatus> {
         (None, None)
     };
 
+    // Get error info if any
+    let (error, error_count) = state
+        .llm
+        .get_error_info()
+        .await
+        .map(|(e, c)| (Some(e), c))
+        .unwrap_or((None, 0));
+
     Ok(LlmStatus {
         available,
         provider,
         model,
+        error,
+        error_count,
     })
 }
 

@@ -88,40 +88,60 @@ CREATE INDEX IF NOT EXISTS idx_repositories_project ON repositories(project_id);
 -- Memories (simplified - content stored in fold/)
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS memories (
-    id TEXT PRIMARY KEY,              -- Content hash (16 chars)
+    id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     repository_id TEXT REFERENCES repositories(id) ON DELETE SET NULL,
 
-    -- Content reference (actual content in fold/)
-    content_hash TEXT NOT NULL,       -- Full SHA256
-    hash_prefix TEXT NOT NULL,        -- First 2 chars for path
+    -- Type and source tracking
+    type TEXT,                        -- 'codebase' | 'session' | 'spec' | etc.
+    source TEXT,                      -- 'file' | 'manual' | 'generated' | 'agent' | 'git'
 
-    -- Source tracking
-    file_path TEXT,
-    language TEXT,
-    source TEXT NOT NULL,             -- 'file' | 'manual' | 'generated'
+    -- Content (stored externally in fold/)
+    content TEXT,
+    content_hash TEXT,                -- SHA256 for change detection
+    content_storage TEXT,             -- 'fold' | 'filesystem' | 'source_file'
 
     -- Metadata
     title TEXT,
     author TEXT,
     tags TEXT,                        -- JSON array
-
-    -- Agentic metadata (from A-MEM)
     keywords TEXT,                    -- JSON array - auto-extracted key terms
     context TEXT,                     -- Summary of domain/purpose
-    links TEXT,                       -- JSON array - IDs of linked memories
+
+    -- For codebase type
+    file_path TEXT,
+    summary_file_path TEXT,            -- Path to generated summary file
+    language TEXT,
+    line_start INTEGER,
+    line_end INTEGER,
+    git_branch TEXT,
+    git_commit_sha TEXT,
+
+    -- Metadata repo sync tracking
+    metadata_repo_synced_at TEXT,
+    metadata_repo_commit_sha TEXT,
+    metadata_repo_file_path TEXT,
+    synced_from TEXT,                 -- 'fold' | 'github' | 'gitlab'
+
+    -- For task type
+    status TEXT,
+    assignee TEXT,
+
+    -- Custom metadata as JSON
+    metadata TEXT,
+
+    -- Usage tracking
+    retrieval_count INTEGER DEFAULT 0,
+    last_accessed TEXT,
 
     -- Timestamps
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-
-    UNIQUE(project_id, content_hash)
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project_id);
 CREATE INDEX IF NOT EXISTS idx_memories_hash ON memories(content_hash);
-CREATE INDEX IF NOT EXISTS idx_memories_file ON memories(repository_id, file_path) WHERE file_path IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(project_id, source);
+CREATE INDEX IF NOT EXISTS idx_memories_file ON memories(repository_id, file_path);
 
 -- ============================================================================
 -- Memory Links (for holographic context reconstruction)
@@ -182,6 +202,20 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(project_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority, created_at);
+
+-- ============================================================================
+-- Job Logs
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS job_logs (
+    id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    level TEXT NOT NULL,              -- 'debug' | 'info' | 'warn' | 'error'
+    message TEXT NOT NULL,
+    metadata TEXT,                    -- JSON
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_logs_job ON job_logs(job_id);
 
 -- ============================================================================
 -- Users (OIDC)

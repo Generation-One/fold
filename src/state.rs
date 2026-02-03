@@ -42,7 +42,7 @@ pub struct AppState {
     /// Knowledge graph service.
     pub graph: GraphService,
     /// Auto-linking service.
-    pub linker: LinkerService,
+    pub linker: Arc<LinkerService>,
     /// Authentication service.
     pub auth: AuthService,
     /// Local git operations service.
@@ -122,13 +122,17 @@ impl AppState {
 
         let graph = GraphService::new(db.clone());
 
-        let linker = LinkerService::new(
+        let linker = Arc::new(LinkerService::new(
             db.clone(),
             memory.clone(),
             llm.clone(),
             qdrant.clone(),
             embeddings.clone(),
-        );
+        ));
+
+        // Wire up linker to indexer for holographic auto-linking
+        let mut indexer = indexer;
+        indexer.set_linker(linker.clone());
 
         let auth = AuthService::new(db.clone(), config.auth.clone());
 

@@ -124,10 +124,21 @@ impl LinkerService {
             b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        // Create links for high-confidence suggestions
+        // Log top suggestions for debugging
+        for (i, s) in filtered_suggestions.iter().take(5).enumerate() {
+            info!(
+                rank = i + 1,
+                target = %s.target_id,
+                confidence = s.confidence,
+                link_type = %s.link_type,
+                "Link suggestion"
+            );
+        }
+
+        // Create links for suggestions above threshold
         let mut links_created = 0;
         for suggestion in &filtered_suggestions {
-            if suggestion.confidence >= 0.7 {
+            if suggestion.confidence >= 0.5 {
                 // Auto-create for high confidence
                 if self
                     .create_link(

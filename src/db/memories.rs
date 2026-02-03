@@ -112,6 +112,10 @@ pub struct Memory {
     pub language: Option<String>,
     pub git_branch: Option<String>,
     pub git_commit_sha: Option<String>,
+    #[sqlx(default)]
+    pub line_start: Option<i32>,
+    #[sqlx(default)]
+    pub line_end: Option<i32>,
 
     // For commit type
     pub summary_file_path: Option<String>,
@@ -126,6 +130,20 @@ pub struct Memory {
     pub author: Option<String>,
     pub keywords: Option<String>,  // JSON array
     pub tags: Option<String>,      // JSON array
+    #[sqlx(default)]
+    pub context: Option<String>,
+    #[sqlx(default)]
+    pub status: Option<String>,
+    #[sqlx(default)]
+    pub assignee: Option<String>,
+    #[sqlx(default)]
+    pub metadata: Option<String>,
+
+    // Usage tracking
+    #[sqlx(default)]
+    pub retrieval_count: Option<i32>,
+    #[sqlx(default)]
+    pub last_accessed: Option<String>,
 
     pub created_at: String,
     pub updated_at: String,

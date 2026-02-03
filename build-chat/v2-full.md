@@ -21,7 +21,7 @@ In a hologram, any fragment contains enough information to reconstruct the whole
 
 1. **Unified Memory Type** - Instead of 8 types (codebase, session, spec, decision, commit, PR, general, manual), we use one `Memory` with a `source` field (`File`, `Agent`, `Git`)
 
-2. **Hash-Based Storage** - Content determines identity via SHA256 hash. The first 16 chars become the memory ID, stored at `fold/a/b/hash.md`
+2. **Hash-Based Storage** - Repo path determines identity via SHA256 hash. The first 16 chars become the memory ID, stored at `fold/a/b/hash.md`
 
 3. **Git-Native** - Memories are markdown files committed to the repository. This enables:
    - Version control of knowledge

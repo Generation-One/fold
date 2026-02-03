@@ -7,7 +7,8 @@
 //! for initial seeding.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,12 @@ const MAX_RETRIES: u32 = 2;
 
 /// Delay between retries (doubles each time)
 const RETRY_DELAY_MS: u64 = 500;
+
+/// Minimum interval between health checks (to avoid costs)
+const HEALTH_CHECK_INTERVAL_SECS: u64 = 60;
+
+/// Number of consecutive errors before marking unavailable
+const ERROR_THRESHOLD: u32 = 3;
 
 /// Runtime provider configuration (loaded from database)
 #[derive(Debug, Clone)]
@@ -116,6 +123,14 @@ struct LlmServiceInner {
     db: Option<DbPool>,
     providers: RwLock<Vec<RuntimeLlmProvider>>,
     client: Client,
+    /// Last error message from LLM call
+    last_error: RwLock<Option<String>>,
+    /// When the last error occurred
+    last_error_at: RwLock<Option<Instant>>,
+    /// Consecutive error count
+    error_count: AtomicU32,
+    /// When we last checked health
+    last_health_check: RwLock<Option<Instant>>,
 }
 
 /// Response from LLM API
@@ -254,6 +269,10 @@ impl LlmService {
                 db: Some(db),
                 providers: RwLock::new(providers),
                 client,
+                last_error: RwLock::new(None),
+                last_error_at: RwLock::new(None),
+                error_count: AtomicU32::new(0),
+                last_health_check: RwLock::new(None),
             }),
         })
     }
@@ -289,6 +308,10 @@ impl LlmService {
                 db: None, // Not used in config-only mode
                 providers: RwLock::new(providers),
                 client,
+                last_error: RwLock::new(None),
+                last_error_at: RwLock::new(None),
+                error_count: AtomicU32::new(0),
+                last_health_check: RwLock::new(None),
             }),
         }
     }
@@ -317,10 +340,67 @@ impl LlmService {
         Ok(())
     }
 
-    /// Check if any providers are configured
+    /// Check if LLM service is available.
+    /// Returns false if no providers configured OR if in error state.
+    /// Rate-limits health checks to avoid costs (max once per 60s).
     pub async fn is_available(&self) -> bool {
         let guard = self.inner.providers.read().await;
-        !guard.is_empty()
+        if guard.is_empty() {
+            return false;
+        }
+        drop(guard);
+
+        // Check if we're in error state
+        let error_count = self.inner.error_count.load(Ordering::Relaxed);
+        if error_count >= ERROR_THRESHOLD {
+            // Check if enough time has passed for a health check
+            let last_check = self.inner.last_health_check.read().await;
+            if let Some(last) = *last_check {
+                if last.elapsed().as_secs() < HEALTH_CHECK_INTERVAL_SECS {
+                    // Too soon to re-check, still unavailable
+                    return false;
+                }
+            }
+            // Don't reset here - let the next successful call reset it
+        }
+
+        true
+    }
+
+    /// Get error info for status endpoint
+    pub async fn get_error_info(&self) -> Option<(String, u32)> {
+        let error = self.inner.last_error.read().await;
+        if let Some(ref msg) = *error {
+            let count = self.inner.error_count.load(Ordering::Relaxed);
+            Some((msg.clone(), count))
+        } else {
+            None
+        }
+    }
+
+    /// Record an error from LLM call
+    async fn record_error(&self, error: &str) {
+        let mut last_error = self.inner.last_error.write().await;
+        *last_error = Some(error.to_string());
+        drop(last_error);
+
+        let mut last_error_at = self.inner.last_error_at.write().await;
+        *last_error_at = Some(Instant::now());
+        drop(last_error_at);
+
+        self.inner.error_count.fetch_add(1, Ordering::Relaxed);
+
+        let mut last_check = self.inner.last_health_check.write().await;
+        *last_check = Some(Instant::now());
+    }
+
+    /// Clear error state after successful call
+    async fn clear_error(&self) {
+        let mut last_error = self.inner.last_error.write().await;
+        *last_error = None;
+        drop(last_error);
+
+        self.inner.error_count.store(0, Ordering::Relaxed);
     }
 
     /// Get provider names in priority order
@@ -356,6 +436,8 @@ impl LlmService {
                             let _ = update_llm_provider_last_used(db, &provider.id).await;
                         }
                     }
+                    // Clear error state on success
+                    self.clear_error().await;
                     return Ok(response);
                 }
                 Err(e) => {
@@ -368,6 +450,13 @@ impl LlmService {
                 }
             }
         }
+
+        // Record error when all providers fail
+        let error_msg = last_error
+            .as_ref()
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "All providers failed".to_string());
+        self.record_error(&error_msg).await;
 
         Err(last_error.unwrap_or_else(|| Error::Llm("All providers failed".to_string())))
     }

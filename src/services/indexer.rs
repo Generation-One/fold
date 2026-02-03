@@ -16,7 +16,7 @@ use tracing::{debug, info, warn};
 use crate::error::{Error, Result};
 use crate::models::{Memory, MemoryCreate, MemoryType, Project};
 
-use super::{FoldStorageService, GitService, LlmService, MemoryService};
+use super::{FoldStorageService, GitService, LinkerService, LlmService, MemoryService};
 
 /// Maximum file size to index (100KB)
 const MAX_FILE_SIZE: usize = 100_000;
@@ -60,6 +60,7 @@ pub struct IndexerService {
     llm: Arc<LlmService>,
     fold_storage: Arc<FoldStorageService>,
     git_service: Option<Arc<GitService>>,
+    linker: Option<Arc<LinkerService>>,
     file_hashes: Arc<tokio::sync::RwLock<HashMap<String, HashMap<String, String>>>>,
 }
 
@@ -84,6 +85,7 @@ impl IndexerService {
             llm,
             fold_storage: Arc::new(FoldStorageService::new()),
             git_service: None,
+            linker: None,
             file_hashes: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
     }
@@ -99,6 +101,7 @@ impl IndexerService {
             llm,
             fold_storage,
             git_service: None,
+            linker: None,
             file_hashes: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
     }
@@ -114,6 +117,7 @@ impl IndexerService {
             llm,
             fold_storage: Arc::new(FoldStorageService::new()),
             git_service: Some(git_service),
+            linker: None,
             file_hashes: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
     }
@@ -121,6 +125,11 @@ impl IndexerService {
     /// Set the git service for auto-commit functionality.
     pub fn set_git_service(&mut self, git_service: Arc<GitService>) {
         self.git_service = Some(git_service);
+    }
+
+    /// Set the linker service for auto-linking memories.
+    pub fn set_linker(&mut self, linker: Arc<LinkerService>) {
+        self.linker = Some(linker);
     }
 
     /// Detect programming language from file extension.
@@ -152,22 +161,35 @@ impl IndexerService {
         false
     }
 
-    /// Generate a full SHA256 hash of file content for change detection and ID generation.
-    /// Returns (full_hash, short_hash) where short_hash is first 16 chars for memory ID.
-    fn file_hash(content: &str) -> (String, String) {
+    /// Generate a full SHA256 hash of file content for change detection.
+    /// Returns the full 64-char hex hash.
+    fn content_hash(content: &str) -> String {
         let mut hasher = Sha256::new();
         hasher.update(content.as_bytes());
         let result = hasher.finalize();
-        let full_hash = hex::encode(&result);
-        let short_hash = full_hash[..16].to_string();
-        (full_hash, short_hash)
+        hex::encode(&result)
     }
 
-    /// Generate a short hash (16 chars) for backwards compatibility.
-    #[allow(dead_code)]
-    fn file_hash_short(content: &str) -> String {
-        let (_, short) = Self::file_hash(content);
-        short
+    /// Generate a stable memory ID from project slug and file path.
+    /// This ensures the same file always maps to the same memory ID,
+    /// allowing proper updates when file content changes.
+    /// The ID is consistent across machines (uses slug + normalised relative path).
+    pub fn path_hash(project_slug: &str, file_path: &str) -> String {
+        let mut hasher = Sha256::new();
+        // Normalise path separators to forward slashes for cross-platform consistency
+        let normalised_path = file_path.replace('\\', "/");
+        hasher.update(format!("{}/{}", project_slug, normalised_path).as_bytes());
+        let result = hasher.finalize();
+        let full_hash = hex::encode(&result);
+        // Format first 32 chars as UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+        format!(
+            "{}-{}-{}-{}-{}",
+            &full_hash[0..8],
+            &full_hash[8..12],
+            &full_hash[12..16],
+            &full_hash[16..20],
+            &full_hash[20..32]
+        )
     }
 
     /// Index a project's codebase.
@@ -374,69 +396,45 @@ impl IndexerService {
 
         let language = Self::detect_language(&rel_path);
 
-        // Calculate content hash - use for change detection and memory ID
-        let (full_hash, memory_id) = Self::file_hash(&content);
+        // Calculate content hash for change detection
+        let content_hash_value = Self::content_hash(&content);
+
+        // Generate stable memory ID from path (consistent across machines, survives content changes)
+        let memory_id = Self::path_hash(&project.slug, &rel_path);
 
         // Check if file has changed using in-memory cache
         {
             let hashes = self.file_hashes.read().await;
             if let Some(project_hashes) = hashes.get(&project.slug) {
-                if project_hashes.get(&rel_path) == Some(&full_hash) {
+                if project_hashes.get(&rel_path) == Some(&content_hash_value) {
                     debug!(file = %rel_path, "Skipping unchanged file");
                     return Ok(false);
                 }
             }
         }
 
-        // Also check if memory with this hash already exists in fold/
-        if let Some(ref root_path) = project.root_path {
-            let fold_root = Path::new(root_path);
-            if self.fold_storage.exists(fold_root, &memory_id).await {
-                debug!(file = %rel_path, hash = %memory_id, "Memory already exists in fold/");
-                // Update in-memory cache
-                let mut hashes = self.file_hashes.write().await;
-                let project_hashes = hashes.entry(project.slug.clone()).or_insert_with(HashMap::new);
-                project_hashes.insert(rel_path, full_hash);
-                return Ok(false);
-            }
+        // Generate summary using LLM - fail if LLM is unavailable (no dumb fallbacks)
+        if !self.llm.is_available().await {
+            return Err(Error::Llm("LLM service is unavailable - cannot index without summarization".to_string()));
         }
 
-        // Generate summary using LLM
-        let (title, summary, keywords, tags, created_date) = if self.llm.is_available().await {
-            match self.llm.summarize_code(&content, &rel_path, &language).await {
-                Ok(cs) => (cs.title, cs.summary, cs.keywords, cs.tags, cs.created_date),
-                Err(e) => {
-                    warn!(error = %e, "LLM summarization failed, using defaults");
-                    (
-                        rel_path.split('/').last().unwrap_or(&rel_path).to_string(),
-                        String::new(),
-                        Vec::new(),
-                        Vec::new(),
-                        None,
-                    )
-                }
-            }
-        } else {
-            (
-                rel_path.split('/').last().unwrap_or(&rel_path).to_string(),
-                String::new(),
-                Vec::new(),
-                Vec::new(),
-                None,
-            )
-        };
+        let code_summary = self.llm.summarize_code(&content, &rel_path, &language).await?;
 
-        // Create summary content for storage (not the raw file content)
-        let summary_content = if summary.is_empty() {
-            content.chars().take(1000).collect()
-        } else {
-            summary
-        };
+        let title = code_summary.title;
+        let summary_content = code_summary.summary;
+        let keywords = code_summary.keywords;
+        let tags = code_summary.tags;
+        let created_date = code_summary.created_date;
+
+        // Ensure we got a real summary, not empty
+        if summary_content.trim().is_empty() {
+            return Err(Error::Llm("LLM returned empty summary - cannot index without proper summarization".to_string()));
+        }
 
         let mut metadata = HashMap::new();
         metadata.insert(
             "content_hash".to_string(),
-            serde_json::Value::String(full_hash.clone()),
+            serde_json::Value::String(content_hash_value.clone()),
         );
         metadata.insert(
             "file_size".to_string(),
@@ -454,6 +452,7 @@ impl IndexerService {
         }
 
         let create = MemoryCreate {
+            id: Some(memory_id),
             memory_type: MemoryType::Codebase,
             content: summary_content.clone(),
             author: author.map(String::from),
@@ -476,6 +475,26 @@ impl IndexerService {
             .add(&project.id, &project.slug, create, false)
             .await?;
 
+        // Auto-link to related memories for holographic context
+        if let Some(ref linker) = self.linker {
+            info!(memory_id = %memory.id, "Starting auto-link for memory");
+            match linker.auto_link(&project.id, &project.slug, &memory.id, 0.5).await {
+                Ok(result) => {
+                    info!(
+                        memory_id = %memory.id,
+                        links_created = result.links_created,
+                        suggestions = result.suggestions.len(),
+                        "Auto-link completed"
+                    );
+                }
+                Err(e) => {
+                    warn!(memory_id = %memory.id, error = %e, "Auto-linking failed");
+                }
+            }
+        } else {
+            debug!(memory_id = %memory.id, "No linker configured, skipping auto-link");
+        }
+
         // Write summary to fold/ directory using hash-based path
         if let Some(ref root_path) = project.root_path {
             let fold_root = Path::new(root_path);
@@ -493,7 +512,7 @@ impl IndexerService {
         {
             let mut hashes = self.file_hashes.write().await;
             let project_hashes = hashes.entry(project.slug.clone()).or_insert_with(HashMap::new);
-            project_hashes.insert(rel_path, full_hash);
+            project_hashes.insert(rel_path, content_hash_value);
         }
 
         Ok(true)
@@ -501,7 +520,7 @@ impl IndexerService {
 
     /// Index a single file by path (for webhook-triggered updates).
     ///
-    /// Uses content hash for memory ID and writes summary to fold/a/b/hash.md.
+    /// Uses path-based hash for memory ID (stable across content changes) and writes summary to fold/.
     pub async fn index_single_file(
         &self,
         project: &Project,
@@ -512,39 +531,33 @@ impl IndexerService {
         let language = Self::detect_language(file_path);
 
         // Calculate content hash for change detection and metadata
-        let (full_hash, _memory_id) = Self::file_hash(content);
+        let content_hash_value = Self::content_hash(content);
 
-        // Generate summary
-        let (title, summary, keywords, tags) = if self.llm.is_available().await {
-            match self.llm.summarize_code(content, file_path, &language).await {
-                Ok(cs) => (cs.title, cs.summary, cs.keywords, cs.tags),
-                Err(_) => (
-                    file_path.split('/').last().unwrap_or(file_path).to_string(),
-                    String::new(),
-                    Vec::new(),
-                    Vec::new(),
-                )
-            }
-        } else {
-            (
-                file_path.split('/').last().unwrap_or(file_path).to_string(),
-                String::new(),
-                Vec::new(),
-                Vec::new(),
-            )
-        };
+        // Generate stable memory ID from path
+        let memory_id = Self::path_hash(&project.slug, file_path);
 
-        let summary_content = if summary.is_empty() {
-            content.chars().take(1000).collect()
-        } else {
-            summary
-        };
+        // Generate summary using LLM - fail if LLM is unavailable (no dumb fallbacks)
+        if !self.llm.is_available().await {
+            return Err(Error::Llm("LLM service is unavailable - cannot index without summarization".to_string()));
+        }
+
+        let code_summary = self.llm.summarize_code(content, file_path, &language).await?;
+
+        let title = code_summary.title;
+        let summary_content = code_summary.summary;
+        let keywords = code_summary.keywords;
+        let tags = code_summary.tags;
+
+        // Ensure we got a real summary, not empty
+        if summary_content.trim().is_empty() {
+            return Err(Error::Llm("LLM returned empty summary - cannot index without proper summarization".to_string()));
+        }
 
         // Include hash and file stats in metadata
         let mut metadata = HashMap::new();
         metadata.insert(
             "content_hash".to_string(),
-            serde_json::Value::String(full_hash),
+            serde_json::Value::String(content_hash_value),
         );
         metadata.insert(
             "file_size".to_string(),
@@ -556,6 +569,7 @@ impl IndexerService {
         );
 
         let create = MemoryCreate {
+            id: Some(memory_id),
             memory_type: MemoryType::Codebase,
             content: summary_content.clone(),
             author: author.map(String::from),
@@ -577,6 +591,26 @@ impl IndexerService {
         let memory = self.memory_service
             .add(&project.id, &project.slug, create, false)
             .await?;
+
+        // Auto-link to related memories for holographic context
+        if let Some(ref linker) = self.linker {
+            info!(memory_id = %memory.id, "Starting auto-link for memory");
+            match linker.auto_link(&project.id, &project.slug, &memory.id, 0.5).await {
+                Ok(result) => {
+                    info!(
+                        memory_id = %memory.id,
+                        links_created = result.links_created,
+                        suggestions = result.suggestions.len(),
+                        "Auto-link completed"
+                    );
+                }
+                Err(e) => {
+                    warn!(memory_id = %memory.id, error = %e, "Auto-linking failed");
+                }
+            }
+        } else {
+            debug!(memory_id = %memory.id, "No linker configured, skipping auto-link");
+        }
 
         // Write summary to fold/ directory using hash-based path
         if let Some(ref root_path) = project.root_path {

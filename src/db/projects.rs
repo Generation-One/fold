@@ -183,27 +183,63 @@ pub async fn create_project(pool: &DbPool, input: CreateProject) -> Result<Proje
 }
 
 /// Get a project by ID.
+/// Also populates root_path from the first repository's local_path if available.
 pub async fn get_project(pool: &DbPool, id: &str) -> Result<Project> {
-    sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = ?")
+    let mut project = sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = ?")
         .bind(id)
         .fetch_optional(pool)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Project not found: {}", id)))
+        .ok_or_else(|| Error::NotFound(format!("Project not found: {}", id)))?;
+
+    // Populate root_path from repository's local_path if not already set
+    if project.root_path.is_none() {
+        if let Ok(Some(local_path)) = sqlx::query_scalar::<_, String>(
+            "SELECT local_path FROM repositories WHERE project_id = ? AND local_path IS NOT NULL LIMIT 1"
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        {
+            project.root_path = Some(local_path);
+        }
+    }
+
+    Ok(project)
 }
 
 /// Get a project by slug.
 /// Uses idx_projects_slug index.
+/// Also populates root_path from the first repository's local_path if available.
 pub async fn get_project_by_slug(pool: &DbPool, slug: &str) -> Result<Option<Project>> {
-    sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE slug = ?")
+    let project = sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE slug = ?")
         .bind(slug)
         .fetch_optional(pool)
         .await
-        .map_err(Error::Database)
+        .map_err(Error::Database)?;
+
+    // Populate root_path from repository's local_path if not already set
+    if let Some(mut project) = project {
+        if project.root_path.is_none() {
+            if let Ok(Some(local_path)) = sqlx::query_scalar::<_, String>(
+                "SELECT local_path FROM repositories WHERE project_id = ? AND local_path IS NOT NULL LIMIT 1"
+            )
+            .bind(&project.id)
+            .fetch_optional(pool)
+            .await
+            {
+                project.root_path = Some(local_path);
+            }
+        }
+        Ok(Some(project))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Get a project by ID or slug.
+/// Also populates root_path from the first repository's local_path if available.
 pub async fn get_project_by_id_or_slug(pool: &DbPool, id_or_slug: &str) -> Result<Project> {
-    sqlx::query_as::<_, Project>(
+    let mut project = sqlx::query_as::<_, Project>(
         r#"
         SELECT * FROM projects
         WHERE id = ? OR slug = ?
@@ -213,7 +249,22 @@ pub async fn get_project_by_id_or_slug(pool: &DbPool, id_or_slug: &str) -> Resul
     .bind(id_or_slug)
     .fetch_optional(pool)
     .await?
-    .ok_or_else(|| Error::NotFound(format!("Project not found: {}", id_or_slug)))
+    .ok_or_else(|| Error::NotFound(format!("Project not found: {}", id_or_slug)))?;
+
+    // Populate root_path from repository's local_path if not already set
+    if project.root_path.is_none() {
+        if let Ok(Some(local_path)) = sqlx::query_scalar::<_, String>(
+            "SELECT local_path FROM repositories WHERE project_id = ? AND local_path IS NOT NULL LIMIT 1"
+        )
+        .bind(&project.id)
+        .fetch_optional(pool)
+        .await
+        {
+            project.root_path = Some(local_path);
+        }
+    }
+
+    Ok(project)
 }
 
 /// Update a project.

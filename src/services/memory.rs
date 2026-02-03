@@ -14,6 +14,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use chrono::Utc;
+use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::{debug, info, warn};
@@ -590,15 +591,25 @@ Return JSON:
         };
 
         // Create memory object
+        // Use provided ID if available (e.g. path-based hash for codebase files),
+        // otherwise generate a new UUID
         let now = Utc::now();
+
+        // Compute content hash for deduplication and change detection
+        let content_hash = {
+            let mut hasher = Sha256::new();
+            hasher.update(data.content.as_bytes());
+            hex::encode(hasher.finalize())
+        };
+
         let memory = Memory {
-            id: crate::models::new_id(),
+            id: data.id.clone().unwrap_or_else(crate::models::new_id),
             project_id: project_id.to_string(),
             repository_id: None,
             memory_type: data.memory_type.as_str().to_string(),
             source: data.source.map(|s| s.as_str().to_string()),
             content: None, // Content stored in fold/
-            content_hash: None,
+            content_hash: Some(content_hash),
             content_storage: Some("fold".to_string()),
             title: data.title.clone(),
             author: data.author.clone(),
@@ -722,13 +733,21 @@ Return JSON:
         if let Ok(project) = crate::db::get_project(&self.db, project_id).await {
             if let Some(root_path) = &project.root_path {
                 let project_root = std::path::PathBuf::from(root_path);
-                if let Ok((_, content)) = self
-                    .fold_storage
-                    .read_memory(&project_root, memory_id)
-                    .await
-                {
-                    memory.content = Some(content);
+                match self.fold_storage.read_memory(&project_root, memory_id).await {
+                    Ok((_, content)) => {
+                        memory.content = Some(content);
+                    }
+                    Err(e) => {
+                        debug!(
+                            memory_id = %memory_id,
+                            project_root = %project_root.display(),
+                            error = %e,
+                            "Failed to read memory content from fold/"
+                        );
+                    }
                 }
+            } else {
+                debug!(memory_id = %memory_id, "Project has no root_path configured");
             }
         }
 
@@ -1057,8 +1076,18 @@ Return JSON:
             };
 
             // Resolve content from fold/
-            if let Ok((_, content)) = self.fold_storage.read_memory(&project_root, &vr.id).await {
-                memory.content = Some(content);
+            match self.fold_storage.read_memory(&project_root, &vr.id).await {
+                Ok((_, content)) => {
+                    memory.content = Some(content);
+                }
+                Err(e) => {
+                    debug!(
+                        memory_id = %vr.id,
+                        project_root = %project_root.display(),
+                        error = %e,
+                        "Failed to read memory content from fold/"
+                    );
+                }
             }
 
             // Calculate decay-adjusted strength
@@ -1436,7 +1465,8 @@ Return JSON:
         Ok(rows.into_iter().collect())
     }
 
-    /// Insert memory into SQLite.
+    /// Insert or update memory in SQLite.
+    /// Uses upsert to handle codebase files that may be re-indexed with the same path-based ID.
     async fn insert_memory(&self, memory: &Memory) -> Result<()> {
         sqlx::query(
             r#"
@@ -1448,6 +1478,16 @@ Return JSON:
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
+            ON CONFLICT(id) DO UPDATE SET
+                content = excluded.content,
+                content_hash = excluded.content_hash,
+                title = excluded.title,
+                author = excluded.author,
+                keywords = excluded.keywords,
+                tags = excluded.tags,
+                context = excluded.context,
+                metadata = excluded.metadata,
+                updated_at = datetime('now')
             "#,
         )
         .bind(&memory.id)
