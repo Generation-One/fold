@@ -30,7 +30,7 @@ toml = "0.8"
 sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
 
 # Vector database
-qdrant-client = "1.7"
+qdrant-client = "=1.12.1"  # Pin for Rust 1.85 compatibility
 
 # Embeddings (local) - disabled by default, enable in Docker where ONNX is available
 # fastembed = { version = "4", features = ["online"], optional = true }
@@ -62,7 +62,7 @@ rand = "0.8"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
-time = "0.3"
+time = "=0.3.36"  # Pin for Rust 1.85 compatibility
 
 # Unique IDs
 uuid = { version = "1.6", features = ["v4", "serde"] }
