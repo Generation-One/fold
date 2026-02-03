@@ -23,6 +23,7 @@ use crate::AppState;
 /// Route structure:
 /// - /auth/* - Authentication (public + session-protected)
 /// - /projects/* - Project management (token-protected)
+/// - /memories - Global memory listing (token-protected)
 /// - /providers/* - Provider management (session-protected, admin)
 /// - /mcp - MCP JSON-RPC endpoint (token-protected)
 /// - /webhooks/* - Git webhooks (signature-verified)
@@ -41,6 +42,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .nest("/providers", providers::oauth_routes())
         // Provider management (token auth for admin API)
         .nest("/providers", admin_routes(state.clone()))
+        // Global memories route (token auth)
+        .nest("/memories", global_memories_routes(state.clone()))
         // Protected API routes
         .nest("/projects", protected_routes(state))
 }
@@ -70,5 +73,12 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
         // Provider management (LLM and embedding providers)
         .merge(providers::routes())
         // Use token auth for API access (same as other protected routes)
+        .layer(axum::middleware::from_fn_with_state(state, require_token))
+}
+
+/// Global memories routes (cross-project).
+fn global_memories_routes(state: AppState) -> Router<AppState> {
+    Router::new()
+        .merge(memories::global_routes())
         .layer(axum::middleware::from_fn_with_state(state, require_token))
 }
