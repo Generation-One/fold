@@ -147,6 +147,39 @@ CREATE INDEX IF NOT EXISTS idx_memories_hash ON memories(content_hash);
 CREATE INDEX IF NOT EXISTS idx_memories_file ON memories(repository_id, file_path);
 
 -- ============================================================================
+-- Chunks (semantic code/text chunks for fine-grained search)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS chunks (
+    id TEXT PRIMARY KEY,
+    memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+
+    -- Chunk content
+    content TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+
+    -- Position in file
+    start_line INTEGER NOT NULL,
+    end_line INTEGER NOT NULL,
+    start_byte INTEGER NOT NULL DEFAULT 0,
+    end_byte INTEGER NOT NULL DEFAULT 0,
+
+    -- AST metadata
+    node_type TEXT NOT NULL,        -- "function", "class", "struct", "heading", "paragraph", etc.
+    node_name TEXT,                 -- Name of the function/class if available
+    language TEXT NOT NULL,
+
+    -- Timestamps
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_memory ON chunks(memory_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_project ON chunks(project_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_hash ON chunks(content_hash);
+CREATE INDEX IF NOT EXISTS idx_chunks_node_type ON chunks(node_type);
+
+-- ============================================================================
 -- Memory Links (for holographic context reconstruction)
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS memory_links (

@@ -15,7 +15,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::models::MemorySource;
+use crate::models::{ChunkMatch, MemorySource};
 use crate::{db, AppState, Error, Result};
 
 /// Build search routes.
@@ -59,6 +59,10 @@ pub struct SearchRequest {
     /// Minimum similarity score (0.0 - 1.0)
     #[serde(default = "default_min_score")]
     pub min_score: f32,
+
+    /// Include matched chunks (function/class/heading level) in results
+    #[serde(default)]
+    pub include_chunks: bool,
 }
 
 fn default_limit() -> u32 {
@@ -107,6 +111,9 @@ pub struct SearchResultItem {
     pub score: f32,
     pub metadata: SearchResultMetadata,
     pub created_at: DateTime<Utc>,
+    /// Matched chunks within this memory (when include_chunks=true)
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub matched_chunks: Vec<ChunkMatch>,
 }
 
 #[derive(Debug, Serialize)]
@@ -200,11 +207,18 @@ async fn search(
         return Err(Error::Validation("Query cannot be empty".into()));
     }
 
-    // Use MemoryService for search
-    let search_results = state
-        .memory
-        .search(&project.id, &project.slug, &request.query, request.limit as usize * 2)
-        .await?;
+    // Use MemoryService for search - with or without chunks
+    let search_results = if request.include_chunks {
+        state
+            .memory
+            .search_with_chunks(&project.id, &project.slug, &request.query, None, request.limit as usize * 2)
+            .await?
+    } else {
+        state
+            .memory
+            .search(&project.id, &project.slug, &request.query, request.limit as usize * 2)
+            .await?
+    };
 
     // If no results, return empty
     if search_results.is_empty() {
@@ -252,6 +266,7 @@ async fn search(
                     language: memory.language.clone(),
                 },
                 created_at: memory.created_at,
+                matched_chunks: result.matched_chunks,
             })
         })
         .collect();

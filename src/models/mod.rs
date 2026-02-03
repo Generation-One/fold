@@ -3,6 +3,7 @@
 //! Defines the core types used throughout the system including
 //! memories, projects, users, and various DTOs.
 
+mod chunk;
 mod job;
 mod memory;
 mod project;
@@ -12,6 +13,7 @@ mod session;
 mod team;
 mod user;
 
+pub use chunk::*;
 pub use memory::*;
 pub use project::*;
 pub use repository::*;

@@ -22,6 +22,7 @@
 
 mod attachment_storage;
 mod auth;
+mod chunker;
 mod claudecode;
 mod content_resolver;
 pub mod decay;
@@ -47,6 +48,7 @@ mod project;
 mod qdrant;
 
 pub use auth::AuthService;
+pub use chunker::{ChunkerConfig, ChunkerService, ChunkStrategy, CodeChunk};
 pub use claudecode::{ClaudeCodeInfo, ClaudeCodeService};
 pub use content_resolver::ContentResolverService;
 pub use embeddings::EmbeddingService;

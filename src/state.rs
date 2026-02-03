@@ -135,6 +135,9 @@ impl AppState {
         indexer.set_linker(linker.clone());
         indexer.set_concurrency_limit(config.indexing.concurrency_limit);
 
+        // Wire up chunk services for semantic code chunking
+        indexer.set_chunk_services(embeddings.clone(), qdrant.clone(), db.clone());
+
         let auth = AuthService::new(db.clone(), config.auth.clone());
 
         Ok(Self {
