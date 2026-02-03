@@ -1,6 +1,8 @@
 //! API token authentication middleware.
 //!
-//! Validates Bearer tokens from the Authorization header for programmatic API access.
+//! Validates Bearer tokens for programmatic API access. Supports both:
+//! - `Authorization: Bearer {token}` headers (recommended)
+//! - `?token={token}` query string parameters (for Claude custom connectors and other clients with header limitations)
 //! Used by MCP clients, CLI tools, webhooks, and other automated integrations.
 //!
 //! Token format: `fold_{prefix}_{random}` where:
@@ -14,6 +16,7 @@
 //! - Full token is verified against stored hash (timing-safe comparison)
 //! - Each token can be scoped to specific projects
 //! - Tokens can be revoked or expired
+//! - Query string tokens are URL-decoded before validation
 
 use axum::{
     body::Body,
@@ -26,6 +29,37 @@ use sha2::{Digest, Sha256};
 use sqlx::FromRow;
 
 use crate::{error::Error, AppState};
+
+/// Extract token from Authorization header or query string.
+///
+/// Priority:
+/// 1. Authorization: Bearer {token} header
+/// 2. ?token={token} query parameter
+fn extract_token_from_request(req: &Request<Body>) -> Option<String> {
+    // Try Authorization header first
+    if let Some(auth_header) = req.headers().get(AUTHORIZATION) {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                return Some(token.to_string());
+            }
+        }
+    }
+
+    // Fall back to query parameter
+    if let Some(query) = req.uri().query() {
+        for part in query.split('&') {
+            if let Some(token) = part.strip_prefix("token=") {
+                // URL decode the token
+                if let Ok(decoded) = urlencoding::decode(token) {
+                    return Some(decoded.into_owned());
+                }
+                return Some(token.to_string());
+            }
+        }
+    }
+
+    None
+}
 
 /// Authentication context injected into request extensions after successful token validation.
 #[derive(Clone, Debug)]
@@ -52,13 +86,17 @@ struct ApiTokenRow {
 
 /// Middleware that requires a valid API token.
 ///
-/// Extracts Bearer token from Authorization header, validates it against the database,
-/// and injects `AuthContext` into request extensions.
+/// Extracts Bearer token from either Authorization header or query string parameter,
+/// validates it against the database, and injects `AuthContext` into request extensions.
+///
+/// Token extraction priority:
+/// 1. `Authorization: Bearer {token}` header (recommended)
+/// 2. `?token={token}` query parameter (for clients with header limitations like Claude custom connectors)
 ///
 /// # Errors
 ///
 /// Returns 401 Unauthorized if:
-/// - No Authorization header present
+/// - No Authorization header or token query parameter present
 /// - Authorization header is not a Bearer token
 /// - Token prefix not found in database
 /// - Token hash doesn't match
@@ -74,25 +112,30 @@ struct ApiTokenRow {
 ///     .route("/api/memories", post(create_memory))
 ///     .layer(middleware::from_fn_with_state(state.clone(), require_token));
 /// ```
+///
+/// # Usage Examples
+///
+/// With Authorization header:
+/// ```text
+/// GET /mcp HTTP/1.1
+/// Authorization: Bearer fold_abcd1234_secretpart
+/// ```
+///
+/// With query string (e.g., for Claude custom connectors):
+/// ```text
+/// GET /mcp?token=fold_abcd1234_secretpart HTTP/1.1
+/// ```
 pub async fn require_token(
     State(state): State<AppState>,
     mut req: Request<Body>,
     next: Next,
 ) -> Result<Response, Error> {
-    // Extract Authorization header
-    let auth_header = req
-        .headers()
-        .get(AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .ok_or(Error::Unauthenticated)?;
-
-    // Parse Bearer token
-    let token = auth_header
-        .strip_prefix("Bearer ")
+    // Extract token from Authorization header or query string
+    let token = extract_token_from_request(&req)
         .ok_or(Error::Unauthenticated)?;
 
     // Validate token and get context
-    let auth_context = validate_token(&state, token).await?;
+    let auth_context = validate_token(&state, &token).await?;
 
     // Update last_used_at (fire and forget - don't block the request)
     let db = state.db.clone();
