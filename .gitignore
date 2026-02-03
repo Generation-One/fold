@@ -1,0 +1,12 @@
+# Build artifacts
+target/
+nul
+
+# Environment
+.env
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp

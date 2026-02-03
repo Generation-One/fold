@@ -1,0 +1,58 @@
+services:
+  fold:
+    build: .
+    ports:
+      - "8765:8765"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8765
+      - DATABASE_PATH=/data/fold.db
+      - QDRANT_URL=http://qdrant:6334
+      - ATTACHMENTS_PATH=/data/attachments
+      - SUMMARIES_PATH=/data/summaries
+      # Auth providers (from .env file)
+      - AUTH_PROVIDER_CORPORATE_TYPE
+      - AUTH_PROVIDER_CORPORATE_DISPLAY_NAME
+      - AUTH_PROVIDER_CORPORATE_ISSUER
+      - AUTH_PROVIDER_CORPORATE_CLIENT_ID
+      - AUTH_PROVIDER_CORPORATE_CLIENT_SECRET
+      # LLM providers (from .env file)
+      - GOOGLE_API_KEY
+      - OPENROUTER_API_KEY
+      - OPENAI_API_KEY
+      # Session
+      - SESSION_SECRET
+      - ADMIN_BOOTSTRAP_TOKEN
+    volumes:
+      - fold-data:/data
+      - fastembed-cache:/root/.cache/fastembed
+    depends_on:
+      - qdrant
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"   # REST API
+      - "6334:6334"   # gRPC
+    volumes:
+      - qdrant-data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  fold-data:
+  qdrant-data:
+  fastembed-cache:

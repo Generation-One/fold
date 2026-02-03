@@ -1,0 +1,6 @@
+[target.x86_64-pc-windows-msvc]
+linker = "C:\\Program Files\\LLVM\\bin\\lld-link.exe"
+
+[build]
+# Use all available CPU cores for parallel compilation
+jobs = 8

@@ -1,0 +1,119 @@
+[package]
+name = "fold"
+version = "0.1.0"
+edition = "2021"
+description = "Holographic memory system for development teams"
+license = "MIT"
+authors = ["Francis West <frank@generation.one>"]
+repository = "https://github.com/Generation-One/fold"
+
+[dependencies]
+# Web framework
+axum = { version = "0.7", features = ["macros", "multipart"] }
+axum-extra = { version = "0.9", features = ["typed-header", "cookie"] }
+tower = { version = "0.4", features = ["full"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "limit", "timeout", "normalize-path"] }
+hyper = { version = "1.0", features = ["full"] }
+
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+once_cell = "1.19"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+toml = "0.8"
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
+
+# Vector database
+qdrant-client = "1.7"
+
+# Embeddings (local) - disabled by default, enable in Docker where ONNX is available
+# fastembed = { version = "4", features = ["online"], optional = true }
+
+# Glob patterns
+glob = "0.3"
+
+# Git operations (native)
+git2 = "0.18"
+
+# URL parsing and encoding
+url = "2.5"
+urlencoding = "2.1"
+
+# HTTP client (for GitHub/GitLab/LLM APIs)
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
+
+# Auth
+jsonwebtoken = "9"
+oauth2 = "4.4"
+openidconnect = "3.4"
+
+# Crypto
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+base64 = "0.21"
+rand = "0.8"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+time = "0.3"
+
+# Unique IDs
+uuid = { version = "1.6", features = ["v4", "serde"] }
+nanoid = "0.4"
+
+# Configuration
+dotenvy = "0.15"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Async utilities
+futures = "0.3"
+async-trait = "0.1"
+
+# Rate limiting
+governor = "0.6"
+
+# Metrics
+metrics = "0.22"
+metrics-exporter-prometheus = "0.13"
+
+# File handling
+mime_guess = "2.0"
+tempfile = "3.9"
+dirs = "5.0"
+
+[dev-dependencies]
+# Testing
+tokio-test = "0.4"
+wiremock = "0.5"
+fake = { version = "2.9", features = ["derive"] }
+rstest = "0.18"
+insta = { version = "1.34", features = ["json"] }
+
+# HTTP testing
+axum-test = "14"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+strip = true
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
