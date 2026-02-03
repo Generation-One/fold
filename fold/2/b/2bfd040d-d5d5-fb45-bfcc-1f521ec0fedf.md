@@ -1,46 +1,17 @@
 ---
 id: 2bfd040d-d5d5-fb45-bfcc-1f521ec0fedf
-title: search.rs
+title: Search and Context Retrieval API Routes
 author: system
+tags:
+- api
+- http
+- search
+- async
 file_path: src/api/search.rs
 language: rust
 memory_type: codebase
-created_at: 2026-02-03T08:05:08.449836700Z
-updated_at: 2026-02-03T08:05:08.449836700Z
+created_at: 2026-02-03T08:32:50.731563500Z
+updated_at: 2026-02-03T08:32:50.731563500Z
 ---
 
-//! Search Routes
-//!
-//! Unified search and context retrieval endpoints.
-//!
-//! Routes:
-//! - POST /projects/:project_id/search - Unified semantic search
-//! - POST /projects/:project_id/context - Get context for a task
-
-use axum::{
-    extract::{Path, State},
-    routing::post,
-    Json, Router,
-};
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-
-use crate::models::MemorySource;
-use crate::{db, AppState, Error, Result};
-
-/// Build search routes.
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/:project_id/search", post(search))
-        .route("/:project_id/context", post(get_context))
-}
-
-// ============================================================================
-// Request/Response Types
-// ============================================================================
-
-/// Unified search request.
-#[derive(Debug, Deserialize)]
-pub struct SearchRequest {
-    /// Query text for semantic search
+This file implements unified search and context retrieval endpoints for a project-based memory system. It provides two main HTTP POST routes: semantic search across memories with filtering capabilities, and context retrieval for tasks. The module defines request/response types with comprehensive filtering options (by source, tags, author, date range, file patterns) and handles semantic similarity scoring, making it a critical component for querying and retrieving contextual information from the application's memory storage.

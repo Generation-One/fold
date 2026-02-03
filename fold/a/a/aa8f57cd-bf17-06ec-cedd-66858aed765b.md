@@ -1,54 +1,19 @@
 ---
 id: aa8f57cd-bf17-06ec-cedd-66858aed765b
-title: mod.rs
+title: Database Layer Module - SQLite Connection Pool & Schema Management
 author: system
+tags:
+- database
+- async
+- utility
+- service
+- connection-pooling
+- sqlite
 file_path: src/db/mod.rs
 language: rust
 memory_type: codebase
-created_at: 2026-02-03T08:05:22.969340700Z
-updated_at: 2026-02-03T08:05:22.969340700Z
+created_at: 2026-02-03T08:34:28.230293800Z
+updated_at: 2026-02-03T08:34:28.230293800Z
 ---
 
-//! Database layer for Fold.
-//!
-//! Provides SQLite connection pooling and query modules
-//! for all domain entities.
-
-mod attachments;
-mod jobs;
-mod links;
-mod memories;
-mod pool;
-mod projects;
-mod providers;
-mod repositories;
-mod sessions;
-mod users;
-
-// Re-export Qdrant client (actual implementation in services)
-pub mod qdrant;
-
-// Re-export all query modules
-pub use attachments::*;
-pub use jobs::*;
-pub use links::*;
-pub use memories::*;
-pub use projects::*;
-pub use providers::*;
-pub use repositories::*;
-pub use sessions::*;
-pub use users::*;
-
-use crate::Result;
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
-use std::path::Path;
-use std::str::FromStr;
-use tracing::info;
-
-/// Type alias for the SQLite connection pool.
-pub type DbPool = sqlx::SqlitePool;
-
-/// Initialize the database connection pool.
-///
-/// Creates parent directories if needed and configures SQLite with
-/// optimal settings 
+This file serves as the central database layer for the Fold application, providing SQLite connection pooling initialization and schema management. It aggregates query modules for all domain entities (users, projects, memories, jobs, etc.) and exposes them through a unified public interface. The module implements connection pool configuration with performance optimizations including WAL mode, memory-mapped I/O, and foreign key constraints, while also handling schema initialization from an embedded SQL file with support for idempotent execution.

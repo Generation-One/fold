@@ -1,44 +1,19 @@
 ---
 id: 74062d8b-8fe0-d9ca-ac2e-e56c9fa20bfe
-title: registry.rs
+title: Dynamic File Source Provider Registry
 author: system
+tags:
+- service
+- registry-pattern
+- plugin-architecture
+- trait-objects
+- configuration
+- extensibility
 file_path: src/services/file_source/registry.rs
 language: rust
 memory_type: codebase
-created_at: 2026-02-03T08:06:27.511047100Z
-updated_at: 2026-02-03T08:06:27.511047100Z
+created_at: 2026-02-03T08:41:47.412741700Z
+updated_at: 2026-02-03T08:41:47.412741700Z
 ---
 
-//! Provider registry for dynamic provider lookup.
-//!
-//! The registry allows runtime lookup of file source providers by type,
-//! enabling dynamic configuration of which providers are available.
-
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use super::{FileSourceProvider, GitHubFileSource, GoogleDriveFileSource, LocalFileSource};
-
-/// Registry of available file source providers.
-///
-/// Allows dynamic lookup of providers by their type identifier.
-pub struct ProviderRegistry {
-    providers: HashMap<&'static str, Arc<dyn FileSourceProvider>>,
-}
-
-impl ProviderRegistry {
-    /// Create a new empty registry.
-    pub fn new() -> Self {
-        Self {
-            providers: HashMap::new(),
-        }
-    }
-
-    /// Create a registry with default providers.
-    pub fn with_defaults() -> Self {
-        let mut registry = Self::new();
-
-        // Register GitHub provider
-        registry.register(Arc::new(GitHubFileSource::new()));
-
-        // Register Go
+This file implements a registry system for managing file source providers at runtime, allowing dynamic lookup and configuration of different file source implementations (GitHub, Google Drive, Local filesystem, etc.). It serves as a central registry that maintains a collection of provider implementations and provides methods to register, retrieve, and list available providers. The architecture uses the Registry pattern combined with trait objects to enable extensible, runtime-configurable provider management without compile-time coupling to specific implementations.
