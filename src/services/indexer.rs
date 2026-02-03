@@ -7,8 +7,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use chrono::Utc;
+use futures::stream::{self, StreamExt};
 use sha2::{Sha256, Digest};
 use tokio::fs;
 use tracing::{debug, info, warn};
@@ -53,6 +55,9 @@ const LANGUAGE_MAP: &[(&str, &str)] = &[
     (".svelte", "svelte"),
 ];
 
+/// Default concurrency limit for indexing
+const DEFAULT_CONCURRENCY: usize = 4;
+
 /// Service for indexing codebases into memories.
 #[derive(Clone)]
 pub struct IndexerService {
@@ -62,6 +67,8 @@ pub struct IndexerService {
     git_service: Option<Arc<GitService>>,
     linker: Option<Arc<LinkerService>>,
     file_hashes: Arc<tokio::sync::RwLock<HashMap<String, HashMap<String, String>>>>,
+    /// Maximum number of files to index in parallel
+    concurrency_limit: usize,
 }
 
 /// Progress callback for indexing
@@ -87,6 +94,7 @@ impl IndexerService {
             git_service: None,
             linker: None,
             file_hashes: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            concurrency_limit: DEFAULT_CONCURRENCY,
         }
     }
 
@@ -103,6 +111,7 @@ impl IndexerService {
             git_service: None,
             linker: None,
             file_hashes: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            concurrency_limit: DEFAULT_CONCURRENCY,
         }
     }
 
@@ -119,6 +128,7 @@ impl IndexerService {
             git_service: Some(git_service),
             linker: None,
             file_hashes: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            concurrency_limit: DEFAULT_CONCURRENCY,
         }
     }
 
@@ -130,6 +140,11 @@ impl IndexerService {
     /// Set the linker service for auto-linking memories.
     pub fn set_linker(&mut self, linker: Arc<LinkerService>) {
         self.linker = Some(linker);
+    }
+
+    /// Set the concurrency limit for parallel file indexing.
+    pub fn set_concurrency_limit(&mut self, limit: usize) {
+        self.concurrency_limit = limit.max(1); // Ensure at least 1
     }
 
     /// Detect programming language from file extension.
@@ -233,35 +248,65 @@ impl IndexerService {
         info!(
             project = %project.slug,
             files = files.len(),
-            "Found files to index"
+            concurrency = self.concurrency_limit,
+            "Found files to index (parallel)"
         );
 
-        for (i, file_path) in files.iter().enumerate() {
-            match self
-                .index_file(file_path, project, &root, author)
-                .await
-            {
-                Ok(indexed) => {
-                    if indexed {
-                        stats.indexed_files += 1;
-                    } else {
-                        stats.skipped_files += 1;
+        // Use atomic counters for thread-safe stats
+        let indexed_count = Arc::new(AtomicUsize::new(0));
+        let skipped_count = Arc::new(AtomicUsize::new(0));
+        let error_count = Arc::new(AtomicUsize::new(0));
+        let processed_count = Arc::new(AtomicUsize::new(0));
+
+        let total_files = files.len();
+        let progress = Arc::new(progress);
+
+        // Process files in parallel with concurrency limit
+        stream::iter(files.into_iter().enumerate())
+            .for_each_concurrent(self.concurrency_limit, |(_, file_path)| {
+                let indexed_count = Arc::clone(&indexed_count);
+                let skipped_count = Arc::clone(&skipped_count);
+                let error_count = Arc::clone(&error_count);
+                let processed_count = Arc::clone(&processed_count);
+                let progress = Arc::clone(&progress);
+                let project = project.clone();
+                let root = root.clone();
+                let author = author.map(String::from);
+
+                async move {
+                    match self
+                        .index_file(&file_path, &project, &root, author.as_deref())
+                        .await
+                    {
+                        Ok(indexed) => {
+                            if indexed {
+                                indexed_count.fetch_add(1, Ordering::Relaxed);
+                            } else {
+                                skipped_count.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                file = %file_path.display(),
+                                error = %e,
+                                "Error indexing file"
+                            );
+                            error_count.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+
+                    let completed = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
+                    if let Some(ref callback) = *progress {
+                        callback(completed, total_files, &file_path.display().to_string());
                     }
                 }
-                Err(e) => {
-                    warn!(
-                        file = %file_path.display(),
-                        error = %e,
-                        "Error indexing file"
-                    );
-                    stats.errors += 1;
-                }
-            }
+            })
+            .await;
 
-            if let Some(ref callback) = progress {
-                callback(i + 1, files.len(), &file_path.display().to_string());
-            }
-        }
+        // Extract final counts
+        stats.indexed_files = indexed_count.load(Ordering::Relaxed);
+        stats.skipped_files = skipped_count.load(Ordering::Relaxed);
+        stats.errors = error_count.load(Ordering::Relaxed);
 
         let duration = (Utc::now() - start_time).num_milliseconds() as f64 / 1000.0;
         stats.duration_seconds = duration;
