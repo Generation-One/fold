@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS projects (
     name TEXT NOT NULL,
     description TEXT,
 
+    -- Root path for project files (where fold/ directory lives)
+    root_path TEXT,
+
     -- Indexing patterns
     index_patterns TEXT,              -- JSON array of glob patterns
     ignore_patterns TEXT,             -- JSON array of glob patterns
@@ -152,7 +155,12 @@ CREATE TABLE IF NOT EXISTS memory_links (
     source_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
     target_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
     link_type TEXT NOT NULL,          -- 'related' | 'references' | 'depends_on' | 'modifies'
+    created_by TEXT NOT NULL DEFAULT 'system',  -- 'system' | 'user' | 'ai'
+    confidence REAL,                  -- AI confidence score (0.0-1.0)
     context TEXT,                     -- Why this link exists
+    change_type TEXT,                 -- For code changes: 'added' | 'modified' | 'deleted'
+    additions INTEGER,                -- Lines added (for code changes)
+    deletions INTEGER,                -- Lines deleted (for code changes)
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
 
     UNIQUE(source_id, target_id, link_type)

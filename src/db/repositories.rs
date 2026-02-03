@@ -53,6 +53,7 @@ impl Repository {
         match self.provider.as_str() {
             "github" => format!("https://github.com/{}/{}", self.owner, self.repo),
             "gitlab" => format!("https://gitlab.com/{}/{}", self.owner, self.repo),
+            "local" => self.local_path.clone().unwrap_or_else(|| format!("file://{}/{}", self.owner, self.repo)),
             _ => format!("{}/{}", self.owner, self.repo),
         }
     }
@@ -68,6 +69,7 @@ pub struct CreateRepository {
     pub repo: String,
     pub branch: String,
     pub access_token: String,
+    pub local_path: Option<String>,
 }
 
 /// Input for updating a repository.
@@ -245,8 +247,8 @@ pub struct CreateGitPullRequest {
 pub async fn create_repository(pool: &DbPool, input: CreateRepository) -> Result<Repository> {
     sqlx::query_as::<_, Repository>(
         r#"
-        INSERT INTO repositories (id, project_id, provider, owner, repo, branch, access_token)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO repositories (id, project_id, provider, owner, repo, branch, access_token, local_path)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING *
         "#,
     )
@@ -257,6 +259,7 @@ pub async fn create_repository(pool: &DbPool, input: CreateRepository) -> Result
     .bind(&input.repo)
     .bind(&input.branch)
     .bind(&input.access_token)
+    .bind(&input.local_path)
     .fetch_one(pool)
     .await
     .map_err(|e| match e {
@@ -904,6 +907,7 @@ mod tests {
             repo: "testrepo".to_string(),
             branch: "main".to_string(),
             access_token: "token123".to_string(),
+            local_path: None,
         }).await.unwrap();
 
         assert_eq!(repo.id, "repo-1");
@@ -926,6 +930,7 @@ mod tests {
             repo: "test".to_string(),
             branch: "main".to_string(),
             access_token: "token".to_string(),
+            local_path: None,
         }).await.unwrap();
 
         let commit = create_git_commit(&pool, CreateGitCommit {
@@ -963,6 +968,7 @@ mod tests {
             repo: "test".to_string(),
             branch: "main".to_string(),
             access_token: "token".to_string(),
+            local_path: None,
         }).await.unwrap();
 
         let pr = create_git_pull_request(&pool, CreateGitPullRequest {

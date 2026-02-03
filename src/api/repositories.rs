@@ -108,6 +108,7 @@ pub enum RepositoryStatus {
 /// Can use either:
 /// - `url`: A full repository URL (e.g., "https://github.com/owner/repo")
 /// - `provider` + `owner` + `name`: Explicit fields
+/// - `provider: local` + `local_path`: For local filesystem repositories
 ///
 /// If `url` is provided, it takes precedence and the provider/owner/name
 /// are parsed from it automatically.
@@ -129,6 +130,8 @@ pub struct ConnectRepositoryRequest {
     pub auto_index: bool,
     /// Access token for the repository (GitHub PAT, GitLab token, etc.)
     pub access_token: Option<String>,
+    /// Local filesystem path (required for local provider)
+    pub local_path: Option<String>,
 }
 
 /// Parsed repository information from a URL or explicit fields.
@@ -149,6 +152,27 @@ impl ConnectRepositoryRequest {
 
         // Otherwise, require explicit fields
         let provider = self.provider.ok_or("provider is required when url is not provided")?;
+
+        // For Local provider, derive owner/name from local_path if not provided
+        if matches!(provider, RepositoryProvider::Local) {
+            let local_path = self.local_path.as_ref()
+                .ok_or("local_path is required for local provider")?;
+
+            // Derive name from the last path component if not provided
+            let name = self.name.clone().unwrap_or_else(|| {
+                std::path::Path::new(local_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "local-repo".to_string())
+            });
+
+            // Use "local" as owner if not provided
+            let owner = self.owner.clone().unwrap_or_else(|| "local".to_string());
+
+            return Ok(ParsedRepository { provider, owner, name });
+        }
+
         let owner = self.owner.clone().ok_or("owner is required when url is not provided")?;
         let name = self.name.clone().ok_or("name is required when url is not provided")?;
 
@@ -478,6 +502,7 @@ async fn list_repositories(
                 project_id: Uuid::parse_str(&r.project_id).unwrap_or_else(|_| Uuid::new_v4()),
                 provider: match r.provider.as_str() {
                     "gitlab" => RepositoryProvider::GitLab,
+                    "local" => RepositoryProvider::Local,
                     _ => RepositoryProvider::GitHub,
                 },
                 owner: r.owner.clone(),
@@ -545,13 +570,14 @@ async fn connect_repository(
     // Get project by ID or slug
     let project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
 
-    // Convert provider - only GitHub and GitLab supported for now
+    // Convert provider
     let db_provider = match parsed.provider {
         RepositoryProvider::GitHub => db::GitProvider::GitHub,
         RepositoryProvider::GitLab => db::GitProvider::GitLab,
-        RepositoryProvider::GoogleDrive | RepositoryProvider::OneDrive | RepositoryProvider::Local => {
+        RepositoryProvider::Local => db::GitProvider::Local,
+        RepositoryProvider::GoogleDrive | RepositoryProvider::OneDrive => {
             return Err(Error::Validation(format!(
-                "Provider '{}' is not yet supported. Currently supported: github, gitlab",
+                "Provider '{}' is not yet supported. Currently supported: github, gitlab, local",
                 parsed.provider.as_source_type()
             )));
         }
@@ -580,6 +606,13 @@ async fn connect_repository(
     let repo_id = crate::models::new_id();
     let access_token = request.access_token.unwrap_or_default();
 
+    // For Local provider, use the provided local_path directly
+    let initial_local_path = if matches!(parsed.provider, RepositoryProvider::Local) {
+        request.local_path.clone()
+    } else {
+        None
+    };
+
     let mut repo = db::create_repository(
         &state.db,
         db::CreateRepository {
@@ -590,45 +623,57 @@ async fn connect_repository(
             repo: parsed.name.clone(),
             branch: branch.clone(),
             access_token: access_token.clone(),
+            local_path: initial_local_path.clone(),
         },
     )
     .await?;
 
-    // Clone repository locally for efficient indexing
-    let _local_path = match state.git_local.clone_repo(
-        &project.slug,
-        &parsed.owner,
-        &parsed.name,
-        &branch,
-        &access_token,
-        db_provider.as_str(),
-    ).await {
-        Ok(path) => {
-            let path_str = path.to_string_lossy().to_string();
-            info!(
-                repo = %repo.full_name(),
-                path = %path_str,
-                "Cloned repository locally"
-            );
-            // Update repository with local path
-            repo = db::update_repository(
-                &state.db,
-                &repo_id,
-                db::UpdateRepository {
-                    local_path: Some(path_str.clone()),
-                    ..Default::default()
-                },
-            ).await?;
-            Some(path_str)
-        }
-        Err(e) => {
-            // Log warning but don't fail the connection - can still use API
-            warn!(
-                repo = %repo.full_name(),
-                error = %e,
-                "Failed to clone repository locally - will use API for indexing"
-            );
-            None
+    // For non-local providers, clone repository locally for efficient indexing
+    let final_local_path = if matches!(parsed.provider, RepositoryProvider::Local) {
+        // Local provider already has local_path set
+        info!(
+            repo = %repo.full_name(),
+            path = ?initial_local_path,
+            "Connected local repository"
+        );
+        initial_local_path
+    } else {
+        // Clone from remote
+        match state.git_local.clone_repo(
+            &project.slug,
+            &parsed.owner,
+            &parsed.name,
+            &branch,
+            &access_token,
+            db_provider.as_str(),
+        ).await {
+            Ok(path) => {
+                let path_str = path.to_string_lossy().to_string();
+                info!(
+                    repo = %repo.full_name(),
+                    path = %path_str,
+                    "Cloned repository locally"
+                );
+                // Update repository with local path
+                repo = db::update_repository(
+                    &state.db,
+                    &repo_id,
+                    db::UpdateRepository {
+                        local_path: Some(path_str.clone()),
+                        ..Default::default()
+                    },
+                ).await?;
+                Some(path_str)
+            }
+            Err(e) => {
+                // Log warning but don't fail the connection - can still use API
+                warn!(
+                    repo = %repo.full_name(),
+                    error = %e,
+                    "Failed to clone repository locally - will use API for indexing"
+                );
+                None
+            }
         }
     };
 
@@ -700,7 +745,7 @@ async fn connect_repository(
         auto_index: webhook_id.is_some(),
         polling_enabled: false,
         polling_interval_secs: None,
-        local_path: None,
+        local_path: final_local_path,
         head_sha: None,
         last_indexed_at: None,
         last_polled_at: None,
@@ -727,6 +772,7 @@ async fn get_repository(
         project_id: Uuid::parse_str(&repo.project_id).unwrap_or_else(|_| Uuid::new_v4()),
         provider: match repo.provider.as_str() {
             "gitlab" => RepositoryProvider::GitLab,
+            "local" => RepositoryProvider::Local,
             _ => RepositoryProvider::GitHub,
         },
         owner: repo.owner.clone(),
@@ -1031,6 +1077,7 @@ async fn update_repository(
         project_id: Uuid::parse_str(&updated.project_id).unwrap_or_else(|_| Uuid::new_v4()),
         provider: match updated.provider.as_str() {
             "gitlab" => RepositoryProvider::GitLab,
+            "local" => RepositoryProvider::Local,
             _ => RepositoryProvider::GitHub,
         },
         owner: updated.owner.clone(),

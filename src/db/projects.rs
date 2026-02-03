@@ -45,6 +45,7 @@ impl MetadataRepoMode {
 pub enum GitProvider {
     GitHub,
     GitLab,
+    Local,
 }
 
 impl GitProvider {
@@ -52,6 +53,7 @@ impl GitProvider {
         match self {
             Self::GitHub => "github",
             Self::GitLab => "gitlab",
+            Self::Local => "local",
         }
     }
 
@@ -59,6 +61,7 @@ impl GitProvider {
         match s {
             "github" => Some(Self::GitHub),
             "gitlab" => Some(Self::GitLab),
+            "local" => Some(Self::Local),
             _ => None,
         }
     }

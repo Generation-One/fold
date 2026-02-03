@@ -39,7 +39,7 @@ impl PrState {
 pub struct Repository {
     pub id: String,
     pub project_id: String,
-    /// 'github' or 'gitlab'
+    /// 'github', 'gitlab', or 'local'
     pub provider: String,
     pub owner: String,
     pub repo: String,
@@ -52,6 +52,9 @@ pub struct Repository {
 
     /// Encrypted access token
     pub access_token: String,
+
+    /// Local filesystem path (for local provider or cloned repos)
+    pub local_path: Option<String>,
 
     // Status
     pub last_indexed_at: Option<String>,
@@ -76,6 +79,7 @@ impl Repository {
         match self.provider.as_str() {
             "github" => format!("https://github.com/{}/{}", self.owner, self.repo),
             "gitlab" => format!("https://gitlab.com/{}/{}", self.owner, self.repo),
+            "local" => self.local_path.clone().unwrap_or_else(|| format!("file://{}/{}", self.owner, self.repo)),
             _ => format!("https://unknown/{}/{}", self.owner, self.repo),
         }
     }
