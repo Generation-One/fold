@@ -246,6 +246,7 @@ async fn test_repository_crud() -> Result<()> {
             repo: "test-repo".to_string(),
             branch: "main".to_string(),
             access_token: "token123".to_string(),
+            local_path: None,
         },
     )
     .await?;

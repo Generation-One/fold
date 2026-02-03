@@ -536,6 +536,7 @@ async fn test_repository_create_and_get() -> Result<()> {
             repo: "testrepo".to_string(),
             branch: "main".to_string(),
             access_token: "token123".to_string(),
+            local_path: None,
         },
     )
     .await?;
@@ -564,6 +565,7 @@ async fn test_repository_update() -> Result<()> {
             repo: "testrepo".to_string(),
             branch: "main".to_string(),
             access_token: "old-token".to_string(),
+            local_path: None,
         },
     )
     .await?;
@@ -608,6 +610,7 @@ async fn test_repository_delete() -> Result<()> {
             repo: "testrepo".to_string(),
             branch: "main".to_string(),
             access_token: "token".to_string(),
+            local_path: None,
         },
     )
     .await?;
@@ -647,6 +650,7 @@ async fn test_repository_list_by_project() -> Result<()> {
             repo: "repo1".to_string(),
             branch: "main".to_string(),
             access_token: "token".to_string(),
+            local_path: None,
         },
     )
     .await?;
@@ -661,6 +665,7 @@ async fn test_repository_list_by_project() -> Result<()> {
             repo: "repo2".to_string(),
             branch: "main".to_string(),
             access_token: "token".to_string(),
+            local_path: None,
         },
     )
     .await?;
@@ -675,6 +680,7 @@ async fn test_repository_list_by_project() -> Result<()> {
             repo: "repo3".to_string(),
             branch: "main".to_string(),
             access_token: "token".to_string(),
+            local_path: None,
         },
     )
     .await?;

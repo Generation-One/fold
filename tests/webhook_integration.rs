@@ -53,6 +53,7 @@ async fn create_test_repository(
             repo: "test-repo".to_string(),
             branch: "main".to_string(),
             access_token: "test-token".to_string(),
+            local_path: None,
         },
     )
     .await
