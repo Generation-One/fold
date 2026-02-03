@@ -131,6 +131,30 @@ Fold applies this principle: search for a file path and get the commits that mod
 
 ---
 
+## References
+
+### Reference Implementation
+
+- **[A-MEM: Agentic Memory for LLM Agents](https://github.com/WujiangXu/A-mem-sys)** — Wujiang Xu et al.
+  The primary codebase this project initially referenced. Implements dynamic memory organisation using Zettelkasten principles with auto-generated metadata and inter-memory linking.
+  Paper: [arXiv:2502.12110](https://arxiv.org/abs/2502.12110) (NeurIPS 2025)
+
+### Theoretical Foundations
+
+- **Sparse Distributed Memory** — Pentti Kanerva (1988)
+- **Holographic Reduced Representations** — Tony Plate (1995)
+- **Vector Symbolic Architectures** — Ross Gayler (2003)
+- **Zettelkasten Method** — Niklas Luhmann
+
+### Tech Stack
+
+- **[Rust](https://www.rust-lang.org/)** + **[Axum](https://github.com/tokio-rs/axum)** — Backend server
+- **[Qdrant](https://qdrant.tech/)** — Vector database for semantic search
+- **[SQLite](https://www.sqlite.org/)** — Metadata and relationships
+- **[Gemini](https://ai.google.dev/)** / **[OpenAI](https://openai.com/)** — Embeddings and LLM
+
+---
+
 ## Licence
 
 MIT
