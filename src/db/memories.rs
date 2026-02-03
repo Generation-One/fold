@@ -214,6 +214,8 @@ pub struct UpdateMemory {
 #[derive(Debug, Clone, Default)]
 pub struct MemoryFilter {
     pub project_id: Option<String>,
+    /// Filter by multiple project IDs (for cross-project queries)
+    pub project_ids: Option<Vec<String>>,
     pub repository_id: Option<String>,
     pub memory_type: Option<MemoryType>,
     pub memory_types: Option<Vec<MemoryType>>,
@@ -497,6 +499,17 @@ pub async fn list_memories(pool: &DbPool, filter: MemoryFilter) -> Result<Vec<Me
     if let Some(project_id) = &filter.project_id {
         conditions.push("project_id = ?".to_string());
         bindings.push(project_id.clone());
+    }
+
+    // Handle multiple project IDs (for cross-project queries)
+    if let Some(project_ids) = &filter.project_ids {
+        if !project_ids.is_empty() {
+            let placeholders: Vec<&str> = project_ids.iter().map(|_| "?").collect();
+            conditions.push(format!("project_id IN ({})", placeholders.join(", ")));
+            for id in project_ids {
+                bindings.push(id.clone());
+            }
+        }
     }
 
     if let Some(repository_id) = &filter.repository_id {

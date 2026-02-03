@@ -25,16 +25,26 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::db;
+use crate::middleware::AuthContext;
 use crate::models::MemorySource;
 use crate::{AppState, Error, Result};
 
-/// Build memory routes.
+/// Build memory routes (project-scoped).
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/", get(list_memories).post(create_memory))
         .route("/:memory_id", get(get_memory).put(update_memory).delete(delete_memory))
         .route("/search", post(search_memories))
         .route("/context/:memory_id", get(get_context))
+}
+
+/// Build global memory routes (cross-project).
+///
+/// Routes:
+/// - GET /memories - List memories across all accessible projects
+pub fn global_routes() -> Router<AppState> {
+    Router::new()
+        .route("/", get(list_all_memories))
 }
 
 // ============================================================================
@@ -739,5 +749,145 @@ async fn get_context(
         memory: memory_to_response_from_model(memory),
         related,
         similar,
+    }))
+}
+
+// ============================================================================
+// Global Handlers (cross-project)
+// ============================================================================
+
+/// Query parameters for listing all memories.
+#[derive(Debug, Deserialize, Default)]
+pub struct ListAllMemoriesQuery {
+    /// Filter by project ID or slug
+    pub project: Option<String>,
+    /// Filter by source (agent, file, git)
+    pub source: Option<MemorySource>,
+    /// Filter by author
+    pub author: Option<String>,
+    /// Filter by tags (comma-separated)
+    pub tags: Option<String>,
+    /// Search in content (basic text match)
+    pub q: Option<String>,
+    /// Pagination offset
+    #[serde(default)]
+    pub offset: u32,
+    /// Pagination limit
+    #[serde(default = "default_limit")]
+    pub limit: u32,
+}
+
+/// Response for listing all memories.
+#[derive(Debug, Serialize)]
+pub struct ListAllMemoriesResponse {
+    pub memories: Vec<MemoryWithProject>,
+    pub total: u32,
+    pub offset: u32,
+    pub limit: u32,
+}
+
+/// Memory response with project info.
+#[derive(Debug, Serialize)]
+pub struct MemoryWithProject {
+    #[serde(flatten)]
+    pub memory: MemoryResponse,
+    pub project_id: String,
+    pub project_slug: String,
+    pub project_name: String,
+}
+
+/// List memories across all accessible projects.
+///
+/// GET /memories
+#[axum::debug_handler]
+async fn list_all_memories(
+    State(state): State<AppState>,
+    axum::Extension(auth): axum::Extension<AuthContext>,
+    Query(query): Query<ListAllMemoriesQuery>,
+) -> Result<Json<ListAllMemoriesResponse>> {
+    let limit = query.limit.min(100) as i64;
+    let offset = query.offset as i64;
+
+    // Get projects the user has access to
+    let accessible_projects = if auth.project_ids.is_empty() {
+        // Token has access to all projects for this user
+        db::list_user_projects(&state.db, &auth.user_id).await?
+    } else {
+        // Token is scoped to specific projects
+        let mut projects = Vec::new();
+        for project_id in &auth.project_ids {
+            if let Ok(project) = db::get_project(&state.db, project_id).await {
+                projects.push(project);
+            }
+        }
+        projects
+    };
+
+    // If filtering by specific project, validate access
+    let project_ids: Vec<String> = if let Some(ref project_filter) = query.project {
+        let project = db::get_project_by_id_or_slug(&state.db, project_filter).await?;
+        if !accessible_projects.iter().any(|p| p.id == project.id) {
+            return Err(Error::Forbidden);
+        }
+        vec![project.id]
+    } else {
+        accessible_projects.iter().map(|p| p.id.clone()).collect()
+    };
+
+    if project_ids.is_empty() {
+        return Ok(Json(ListAllMemoriesResponse {
+            memories: vec![],
+            total: 0,
+            offset: query.offset,
+            limit: limit as u32,
+        }));
+    }
+
+    // Build filter for memories across projects
+    let filter = db::MemoryFilter {
+        project_ids: Some(project_ids.clone()),
+        source: query.source,
+        author: query.author.clone(),
+        tag: query.tags.as_ref().and_then(|t| t.split(',').next().map(|s| s.trim().to_string())),
+        search_query: query.q.clone(),
+        limit: Some(limit),
+        offset: Some(offset),
+        ..Default::default()
+    };
+
+    // Fetch memories
+    let memories = db::list_memories(&state.db, filter).await?;
+
+    // Count total across all accessible projects
+    let mut total = 0u32;
+    for project_id in &project_ids {
+        total += db::count_project_memories(&state.db, project_id).await? as u32;
+    }
+
+    // Build project lookup map
+    let project_map: std::collections::HashMap<String, _> = accessible_projects
+        .into_iter()
+        .map(|p| (p.id.clone(), p))
+        .collect();
+
+    // Convert to response with project info
+    let memory_responses: Vec<MemoryWithProject> = memories
+        .into_iter()
+        .filter_map(|memory| {
+            let project = project_map.get(&memory.project_id)?;
+            Some(MemoryWithProject {
+                project_id: project.id.clone(),
+                project_slug: project.slug.clone(),
+                project_name: project.name.clone(),
+                memory: memory_to_response(memory),
+            })
+        })
+        .collect();
+
+    Ok(Json(ListAllMemoriesResponse {
+        memories: memory_responses,
+        total,
+        offset: query.offset,
+        limit: limit as u32,
     }))
 }
