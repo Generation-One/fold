@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::{debug, info, warn, error};
 
 use crate::db::DbPool;
 use crate::error::{Error, Result};
@@ -137,10 +137,24 @@ impl LinkerService {
 
         // Create links for suggestions above threshold
         let mut links_created = 0;
+        debug!(
+            suggestions_count = filtered_suggestions.len(),
+            threshold = 0.3,
+            "Creating links for suggestions above threshold"
+        );
+
         for suggestion in &filtered_suggestions {
-            if suggestion.confidence >= 0.5 {
-                // Auto-create for high confidence
-                if self
+            if suggestion.confidence >= 0.3 {
+                debug!(
+                    source = %suggestion.source_id,
+                    target = %suggestion.target_id,
+                    link_type = %suggestion.link_type,
+                    confidence = suggestion.confidence,
+                    "Attempting to create link"
+                );
+
+                // Auto-create for moderate-to-high confidence
+                match self
                     .create_link(
                         project_id,
                         &suggestion.source_id,
@@ -151,9 +165,24 @@ impl LinkerService {
                         "ai",
                     )
                     .await
-                    .is_ok()
                 {
-                    links_created += 1;
+                    Ok(link) => {
+                        links_created += 1;
+                        info!(
+                            link_id = %link.id,
+                            source = %suggestion.source_id,
+                            target = %suggestion.target_id,
+                            "Successfully created link"
+                        );
+                    }
+                    Err(e) => {
+                        error!(
+                            source = %suggestion.source_id,
+                            target = %suggestion.target_id,
+                            error = %e,
+                            "Failed to create link"
+                        );
+                    }
                 }
             }
         }
@@ -179,16 +208,31 @@ impl LinkerService {
         project_id: &str,
         project_slug: &str,
     ) -> Result<Vec<LinkSuggestion>> {
+        let search_text = memory.to_search_text();
+        debug!(
+            memory_id = %memory.id,
+            search_text_len = search_text.len(),
+            project_slug = %project_slug,
+            "Finding semantic links for memory"
+        );
+
         let search_results = self
             .memory
-            .search(project_id, project_slug, &memory.to_search_text(), 10)
+            .search(project_id, project_slug, &search_text, 10)
             .await?;
+
+        debug!(
+            memory_id = %memory.id,
+            results_count = search_results.len(),
+            "Semantic search completed"
+        );
 
         let mut suggestions = Vec::new();
 
         for result in search_results {
             // Skip self
             if result.memory.id == memory.id {
+                debug!(target_id = %result.memory.id, "Skipping self");
                 continue;
             }
 
@@ -197,11 +241,21 @@ impl LinkerService {
                 .link_exists(&memory.id, &result.memory.id)
                 .await?
             {
+                debug!(target_id = %result.memory.id, "Skipping - already linked");
                 continue;
             }
 
             // Determine link type based on memory types
             let link_type = self.infer_link_type(memory, &result.memory);
+
+            debug!(
+                source_id = %memory.id,
+                target_id = %result.memory.id,
+                score = result.score,
+                link_type = %link_type,
+                target_title = result.memory.title.as_deref().unwrap_or("untitled"),
+                "Found semantic link candidate"
+            );
 
             suggestions.push(LinkSuggestion {
                 source_id: memory.id.clone(),
@@ -212,6 +266,12 @@ impl LinkerService {
                 source: "semantic".to_string(),
             });
         }
+
+        debug!(
+            memory_id = %memory.id,
+            suggestions_count = suggestions.len(),
+            "Semantic link suggestions generated"
+        );
 
         Ok(suggestions)
     }

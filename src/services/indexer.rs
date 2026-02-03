@@ -476,9 +476,11 @@ impl IndexerService {
             .await?;
 
         // Auto-link to related memories for holographic context
+        // NOTE: memory.add() already calls process_memory_evolution() which handles evolution-based linking.
+        // The linker service provides ADDITIONAL semantic similarity-based linking.
         if let Some(ref linker) = self.linker {
             info!(memory_id = %memory.id, "Starting auto-link for memory");
-            match linker.auto_link(&project.id, &project.slug, &memory.id, 0.5).await {
+            match linker.auto_link(&project.id, &project.slug, &memory.id, 0.3).await {
                 Ok(result) => {
                     info!(
                         memory_id = %memory.id,
@@ -495,18 +497,9 @@ impl IndexerService {
             debug!(memory_id = %memory.id, "No linker configured, skipping auto-link");
         }
 
-        // Write summary to fold/ directory using hash-based path
-        if let Some(ref root_path) = project.root_path {
-            let fold_root = Path::new(root_path);
-            match self.fold_storage.write_memory(fold_root, &memory, &summary_content).await {
-                Ok(path) => {
-                    debug!(file = %rel_path, path = %path.display(), "Wrote summary to fold/");
-                }
-                Err(e) => {
-                    warn!(file = %rel_path, error = %e, "Failed to write to fold/, continuing anyway");
-                }
-            }
-        }
+        // NOTE: The fold file write is handled by memory.add() via FoldStorageService.
+        // We removed the duplicate write here that was erasing the related_to links.
+        // The memory.add() call above already writes to fold/ with evolution-based links.
 
         // Update in-memory hash cache
         {
@@ -595,7 +588,7 @@ impl IndexerService {
         // Auto-link to related memories for holographic context
         if let Some(ref linker) = self.linker {
             info!(memory_id = %memory.id, "Starting auto-link for memory");
-            match linker.auto_link(&project.id, &project.slug, &memory.id, 0.5).await {
+            match linker.auto_link(&project.id, &project.slug, &memory.id, 0.3).await {
                 Ok(result) => {
                     info!(
                         memory_id = %memory.id,
@@ -612,18 +605,8 @@ impl IndexerService {
             debug!(memory_id = %memory.id, "No linker configured, skipping auto-link");
         }
 
-        // Write summary to fold/ directory using hash-based path
-        if let Some(ref root_path) = project.root_path {
-            let fold_root = Path::new(root_path);
-            match self.fold_storage.write_memory(fold_root, &memory, &summary_content).await {
-                Ok(path) => {
-                    debug!(file = %file_path, path = %path.display(), "Wrote summary to fold/");
-                }
-                Err(e) => {
-                    warn!(file = %file_path, error = %e, "Failed to write to fold/, continuing anyway");
-                }
-            }
-        }
+        // NOTE: The fold file write is handled by memory.add() via FoldStorageService.
+        // We removed the duplicate write here that was erasing the related_to links.
 
         Ok(memory)
     }

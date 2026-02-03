@@ -905,6 +905,9 @@ impl JobWorker {
             "Full repository reindex"
         );
 
+        // Clear in-memory file hash cache to force re-indexing all files
+        self.inner.indexer.clear_cache(&project.slug).await;
+
         // Clone repo locally if we don't have a local path yet
         let local_path = match repo.local_path.clone() {
             Some(path) => path,

@@ -29,6 +29,7 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
+use tracing::{debug, info, warn};
 
 use crate::error::{Error, Result};
 use crate::models::Memory;
@@ -257,6 +258,15 @@ impl FoldStorageService {
     ) -> Result<PathBuf> {
         let file_path = self.get_memory_path(project_root, &memory.id);
 
+        // Log this write operation
+        info!(
+            memory_id = %memory.id,
+            file_path = %file_path.display(),
+            related_count = related_ids.len(),
+            related_ids = ?related_ids,
+            "FOLD_WRITE: Writing memory file"
+        );
+
         // Ensure parent directories exist
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent).await.map_err(|e| {
@@ -319,6 +329,13 @@ impl FoldStorageService {
         memory_id: &str,
         related_ids: &[String],
     ) -> Result<PathBuf> {
+        info!(
+            memory_id = %memory_id,
+            related_count = related_ids.len(),
+            related_ids = ?related_ids,
+            "FOLD_UPDATE_LINKS: Updating memory with links"
+        );
+
         // Read existing memory
         let (memory, content) = self.read_memory(project_root, memory_id).await?;
 
