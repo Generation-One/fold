@@ -19,9 +19,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::{debug, info, warn};
 
-use crate::db::DbPool;
+use crate::db::{self, DbPool};
 use crate::error::{Error, Result};
-use crate::models::{Memory, MemoryCreate, MemorySearchResult, MemoryType, MemoryUpdate};
+use crate::models::{ChunkMatch, Memory, MemoryCreate, MemorySearchResult, MemoryType, MemoryUpdate};
 
 use super::decay::{calculate_strength, blend_scores, DecayConfig, DEFAULT_HALF_LIFE_DAYS, DEFAULT_STRENGTH_WEIGHT};
 use super::fold_storage::FoldStorageService;
@@ -1120,6 +1120,188 @@ Return JSON:
         results.truncate(limit);
 
         // Update access tracking for returned results
+        self.track_search_access(&results).await;
+
+        Ok(results)
+    }
+
+    /// Enhanced search that queries both memories and code chunks.
+    ///
+    /// This method first searches memories (like search_with_type), then also
+    /// searches code chunks stored in Qdrant. Matched chunks are attached to
+    /// their parent memories, and memories found via chunk matches are included
+    /// in results even if the memory itself didn't match directly.
+    pub async fn search_with_chunks(
+        &self,
+        project_id: &str,
+        project_slug: &str,
+        query: &str,
+        memory_type: Option<MemoryType>,
+        limit: usize,
+    ) -> Result<Vec<MemorySearchResult>> {
+        // Generate query embedding once
+        let embedding = self.embeddings.embed_single(query).await?;
+
+        // Build filter for memories
+        let memory_filter = memory_type.map(|mt| SearchFilter::new().with_type(mt.as_str()));
+
+        // Search memories - fetch more to allow for re-ranking
+        let fetch_limit = (limit * 2).min(100);
+        let memory_results = self
+            .qdrant
+            .search(project_slug, embedding.clone(), fetch_limit, memory_filter)
+            .await?;
+
+        // Search chunks - use type="chunk" filter
+        let chunk_filter = Some(SearchFilter::new().with_type("chunk"));
+        let chunk_results = self
+            .qdrant
+            .search(project_slug, embedding, fetch_limit, chunk_filter)
+            .await?;
+
+        let project = crate::db::get_project(&self.db, project_id).await?;
+        let project_root = project
+            .root_path
+            .as_ref()
+            .map(|p| std::path::PathBuf::from(p))
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+        // Get decay config
+        let half_life = project.decay_half_life_days.unwrap_or(DEFAULT_HALF_LIFE_DAYS);
+        let strength_weight = project.decay_strength_weight.unwrap_or(DEFAULT_STRENGTH_WEIGHT);
+
+        // Collect matched chunks by parent_memory_id
+        let mut chunks_by_memory: HashMap<String, Vec<ChunkMatch>> = HashMap::new();
+
+        for cr in &chunk_results {
+            // Get parent_memory_id from payload
+            let parent_id = cr.payload.get("parent_memory_id")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+
+            if let Some(parent_id) = parent_id {
+                // Get chunk details from SQLite
+                let chunk = db::get_chunk(&self.db, &cr.id).await?;
+
+                if let Some(chunk) = chunk {
+                    let snippet = if chunk.content.len() > 100 {
+                        Some(format!("{}...", &chunk.content[..100]))
+                    } else {
+                        Some(chunk.content.clone())
+                    };
+
+                    let chunk_match = ChunkMatch {
+                        id: chunk.id,
+                        node_type: chunk.node_type,
+                        node_name: chunk.node_name,
+                        start_line: chunk.start_line,
+                        end_line: chunk.end_line,
+                        score: cr.score,
+                        snippet,
+                    };
+
+                    chunks_by_memory
+                        .entry(parent_id)
+                        .or_default()
+                        .push(chunk_match);
+                }
+            }
+        }
+
+        // Sort chunks by score within each memory
+        for chunks in chunks_by_memory.values_mut() {
+            chunks.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        }
+
+        // Build results - start with direct memory matches
+        let mut results_map: HashMap<String, MemorySearchResult> = HashMap::new();
+
+        for vr in &memory_results {
+            let mut memory = match self.get_without_tracking(project_id, &vr.id).await? {
+                Some(m) => m,
+                None => continue,
+            };
+
+            // Resolve content from fold/
+            if let Ok((_, content)) = self.fold_storage.read_memory(&project_root, &vr.id).await {
+                memory.content = Some(content);
+            }
+
+            let strength = calculate_strength(
+                memory.updated_at,
+                memory.last_accessed,
+                memory.retrieval_count,
+                half_life,
+            );
+
+            let combined_score = blend_scores(vr.score as f64, strength, strength_weight);
+
+            // Attach any matched chunks
+            let matched_chunks = chunks_by_memory.remove(&vr.id).unwrap_or_default();
+
+            results_map.insert(
+                vr.id.clone(),
+                MemorySearchResult::with_chunks(
+                    memory,
+                    vr.score,
+                    strength as f32,
+                    combined_score as f32,
+                    matched_chunks,
+                ),
+            );
+        }
+
+        // Add memories found via chunk matches that weren't in direct results
+        for (memory_id, matched_chunks) in chunks_by_memory {
+            if results_map.contains_key(&memory_id) {
+                continue;
+            }
+
+            let mut memory = match self.get_without_tracking(project_id, &memory_id).await? {
+                Some(m) => m,
+                None => continue,
+            };
+
+            // Resolve content from fold/
+            if let Ok((_, content)) = self.fold_storage.read_memory(&project_root, &memory_id).await {
+                memory.content = Some(content);
+            }
+
+            let strength = calculate_strength(
+                memory.updated_at,
+                memory.last_accessed,
+                memory.retrieval_count,
+                half_life,
+            );
+
+            // Use best chunk score as the memory's relevance score
+            let best_chunk_score = matched_chunks.first().map(|c| c.score).unwrap_or(0.0);
+            let combined_score = blend_scores(best_chunk_score as f64, strength, strength_weight);
+
+            results_map.insert(
+                memory_id,
+                MemorySearchResult::with_chunks(
+                    memory,
+                    best_chunk_score,
+                    strength as f32,
+                    combined_score as f32,
+                    matched_chunks,
+                ),
+            );
+        }
+
+        // Convert to vec and sort by combined score
+        let mut results: Vec<_> = results_map.into_values().collect();
+        results.sort_by(|a, b| {
+            b.combined_score
+                .partial_cmp(&a.combined_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // Truncate to limit
+        results.truncate(limit);
+
+        // Update access tracking
         self.track_search_access(&results).await;
 
         Ok(results)

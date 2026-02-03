@@ -3,6 +3,10 @@
 //! Scans project directories, detects languages, and indexes source files
 //! with LLM-generated summaries. Summaries are written to fold/a/b/hash.md
 //! using hash-based storage for deduplication.
+//!
+//! Also extracts semantic chunks (functions, classes, sections) using tree-sitter
+//! AST parsing for code and heading-based splitting for markdown. Chunks are
+//! stored in SQLite and Qdrant for fine-grained search.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -15,10 +19,14 @@ use sha2::{Sha256, Digest};
 use tokio::fs;
 use tracing::{debug, info, warn};
 
+use crate::db::{self, DbPool};
 use crate::error::{Error, Result};
-use crate::models::{Memory, MemoryCreate, MemoryType, Project};
+use crate::models::{ChunkCreate, Memory, MemoryCreate, MemoryType, Project};
 
-use super::{FoldStorageService, GitService, LinkerService, LlmService, MemoryService};
+use super::{
+    ChunkerService, EmbeddingService, FoldStorageService, GitService, LinkerService,
+    LlmService, MemoryService, QdrantService,
+};
 
 /// Maximum file size to index (100KB)
 const MAX_FILE_SIZE: usize = 100_000;
@@ -69,6 +77,14 @@ pub struct IndexerService {
     file_hashes: Arc<tokio::sync::RwLock<HashMap<String, HashMap<String, String>>>>,
     /// Maximum number of files to index in parallel
     concurrency_limit: usize,
+    /// Chunker service for extracting semantic code chunks
+    chunker: Arc<ChunkerService>,
+    /// Embedding service for vectorizing chunks
+    embedding: Option<Arc<EmbeddingService>>,
+    /// Qdrant service for storing chunk vectors
+    qdrant: Option<Arc<QdrantService>>,
+    /// Database pool for storing chunks
+    db: Option<DbPool>,
 }
 
 /// Progress callback for indexing
@@ -95,6 +111,10 @@ impl IndexerService {
             linker: None,
             file_hashes: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             concurrency_limit: DEFAULT_CONCURRENCY,
+            chunker: Arc::new(ChunkerService::new()),
+            embedding: None,
+            qdrant: None,
+            db: None,
         }
     }
 
@@ -112,6 +132,10 @@ impl IndexerService {
             linker: None,
             file_hashes: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             concurrency_limit: DEFAULT_CONCURRENCY,
+            chunker: Arc::new(ChunkerService::new()),
+            embedding: None,
+            qdrant: None,
+            db: None,
         }
     }
 
@@ -129,6 +153,10 @@ impl IndexerService {
             linker: None,
             file_hashes: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             concurrency_limit: DEFAULT_CONCURRENCY,
+            chunker: Arc::new(ChunkerService::new()),
+            embedding: None,
+            qdrant: None,
+            db: None,
         }
     }
 
@@ -145,6 +173,23 @@ impl IndexerService {
     /// Set the concurrency limit for parallel file indexing.
     pub fn set_concurrency_limit(&mut self, limit: usize) {
         self.concurrency_limit = limit.max(1); // Ensure at least 1
+    }
+
+    /// Set services required for chunking (embedding, qdrant, and db).
+    pub fn set_chunk_services(
+        &mut self,
+        embedding: Arc<EmbeddingService>,
+        qdrant: Arc<QdrantService>,
+        db: DbPool,
+    ) {
+        self.embedding = Some(embedding);
+        self.qdrant = Some(qdrant);
+        self.db = Some(db);
+    }
+
+    /// Check if chunking services are configured.
+    pub fn chunking_enabled(&self) -> bool {
+        self.embedding.is_some() && self.qdrant.is_some() && self.db.is_some()
     }
 
     /// Detect programming language from file extension.
@@ -509,7 +554,7 @@ impl IndexerService {
             language: if language.is_empty() {
                 None
             } else {
-                Some(language)
+                Some(language.clone())
             },
             metadata,
             ..Default::default()
@@ -545,6 +590,31 @@ impl IndexerService {
         // NOTE: The fold file write is handled by memory.add() via FoldStorageService.
         // We removed the duplicate write here that was erasing the related_to links.
         // The memory.add() call above already writes to fold/ with evolution-based links.
+
+        // Extract and store semantic chunks for fine-grained search
+        if self.chunking_enabled() {
+            match self
+                .process_chunks(&memory.id, &project.id, &project.slug, &content, &language)
+                .await
+            {
+                Ok(chunk_count) => {
+                    if chunk_count > 0 {
+                        debug!(
+                            memory_id = %memory.id,
+                            chunks = chunk_count,
+                            "Extracted and stored chunks"
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        memory_id = %memory.id,
+                        error = %e,
+                        "Failed to process chunks (non-fatal)"
+                    );
+                }
+            }
+        }
 
         // Update in-memory hash cache
         {
@@ -619,7 +689,7 @@ impl IndexerService {
             language: if language.is_empty() {
                 None
             } else {
-                Some(language)
+                Some(language.clone())
             },
             metadata,
             ..Default::default()
@@ -653,7 +723,179 @@ impl IndexerService {
         // NOTE: The fold file write is handled by memory.add() via FoldStorageService.
         // We removed the duplicate write here that was erasing the related_to links.
 
+        // Extract and store semantic chunks for fine-grained search
+        if self.chunking_enabled() {
+            match self
+                .process_chunks(&memory.id, &project.id, &project.slug, content, &language)
+                .await
+            {
+                Ok(chunk_count) => {
+                    if chunk_count > 0 {
+                        debug!(
+                            memory_id = %memory.id,
+                            chunks = chunk_count,
+                            "Extracted and stored chunks"
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        memory_id = %memory.id,
+                        error = %e,
+                        "Failed to process chunks (non-fatal)"
+                    );
+                }
+            }
+        }
+
         Ok(memory)
+    }
+
+    /// Extract semantic chunks from content and store in DB + Qdrant.
+    ///
+    /// Returns the number of chunks stored.
+    async fn process_chunks(
+        &self,
+        memory_id: &str,
+        project_id: &str,
+        project_slug: &str,
+        content: &str,
+        language: &str,
+    ) -> Result<usize> {
+        let db = self.db.as_ref().ok_or_else(|| {
+            Error::Internal("Database not configured for chunking".to_string())
+        })?;
+        let embedding = self.embedding.as_ref().ok_or_else(|| {
+            Error::Internal("Embedding service not configured for chunking".to_string())
+        })?;
+        let qdrant = self.qdrant.as_ref().ok_or_else(|| {
+            Error::Internal("Qdrant service not configured for chunking".to_string())
+        })?;
+
+        // Extract chunks using the chunker service
+        let code_chunks = self.chunker.chunk(content, language);
+
+        if code_chunks.is_empty() {
+            debug!(memory_id = %memory_id, "No chunks extracted");
+            return Ok(0);
+        }
+
+        debug!(
+            memory_id = %memory_id,
+            chunk_count = code_chunks.len(),
+            language = %language,
+            "Extracted chunks from content"
+        );
+
+        // Delete any existing chunks for this memory (handles updates)
+        let deleted = db::delete_chunks_for_memory(db, memory_id).await?;
+        if deleted > 0 {
+            debug!(memory_id = %memory_id, deleted = deleted, "Deleted existing chunks");
+
+            // Also delete from Qdrant - filter by parent_memory_id
+            // We'll use a prefix convention: chunk IDs start with "chunk-{memory_id}-"
+            // For now, we'll skip Qdrant deletion as it's handled by the upsert
+        }
+
+        // Convert code chunks to ChunkCreate structs
+        let creates: Vec<ChunkCreate> = code_chunks
+            .iter()
+            .map(|c| ChunkCreate {
+                memory_id: memory_id.to_string(),
+                project_id: project_id.to_string(),
+                content: c.content.clone(),
+                start_line: c.start_line as i32,
+                end_line: c.end_line as i32,
+                start_byte: c.start_byte as i32,
+                end_byte: c.end_byte as i32,
+                node_type: c.node_type.clone(),
+                node_name: c.node_name.clone(),
+                language: language.to_string(),
+            })
+            .collect();
+
+        // Insert chunks into SQLite
+        let chunks = db::insert_chunks(db, creates).await?;
+        let chunk_count = chunks.len();
+
+        // Prepare for batch embedding
+        let texts: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
+
+        // Generate embeddings for all chunks
+        let embeddings = match embedding.embed(texts).await {
+            Ok(embs) => embs,
+            Err(e) => {
+                warn!(
+                    memory_id = %memory_id,
+                    error = %e,
+                    "Failed to generate chunk embeddings"
+                );
+                return Ok(chunk_count); // Still return chunk count - DB storage succeeded
+            }
+        };
+
+        // Prepare Qdrant points
+        let points: Vec<(String, Vec<f32>, HashMap<String, serde_json::Value>)> = chunks
+            .iter()
+            .zip(embeddings.into_iter())
+            .map(|(chunk, vector)| {
+                let mut payload = HashMap::new();
+                payload.insert(
+                    "type".to_string(),
+                    serde_json::Value::String("chunk".to_string()),
+                );
+                payload.insert(
+                    "parent_memory_id".to_string(),
+                    serde_json::Value::String(chunk.memory_id.clone()),
+                );
+                payload.insert(
+                    "project_id".to_string(),
+                    serde_json::Value::String(chunk.project_id.clone()),
+                );
+                payload.insert(
+                    "node_type".to_string(),
+                    serde_json::Value::String(chunk.node_type.clone()),
+                );
+                if let Some(ref name) = chunk.node_name {
+                    payload.insert(
+                        "node_name".to_string(),
+                        serde_json::Value::String(name.clone()),
+                    );
+                }
+                payload.insert(
+                    "start_line".to_string(),
+                    serde_json::Value::Number(chunk.start_line.into()),
+                );
+                payload.insert(
+                    "end_line".to_string(),
+                    serde_json::Value::Number(chunk.end_line.into()),
+                );
+                payload.insert(
+                    "language".to_string(),
+                    serde_json::Value::String(chunk.language.clone()),
+                );
+
+                (chunk.id.clone(), vector, payload)
+            })
+            .collect();
+
+        // Store in Qdrant
+        if let Err(e) = qdrant.upsert_batch(project_slug, points).await {
+            warn!(
+                memory_id = %memory_id,
+                error = %e,
+                "Failed to store chunk vectors in Qdrant"
+            );
+            // Don't fail - DB storage succeeded
+        } else {
+            info!(
+                memory_id = %memory_id,
+                chunks = chunk_count,
+                "Stored chunk vectors in Qdrant"
+            );
+        }
+
+        Ok(chunk_count)
     }
 
     /// Search indexed codebase.

@@ -4,6 +4,7 @@
 //! for all domain entities.
 
 mod attachments;
+mod chunks;
 mod jobs;
 mod links;
 mod memories;
@@ -19,6 +20,7 @@ pub mod qdrant;
 
 // Re-export all query modules
 pub use attachments::*;
+pub use chunks::*;
 pub use jobs::*;
 pub use links::*;
 pub use memories::*;

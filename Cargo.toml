@@ -38,6 +38,18 @@ qdrant-client = "=1.12.1"  # Pin for Rust 1.85 compatibility
 # Glob patterns
 glob = "0.3"
 
+# AST parsing for code chunking
+tree-sitter = "0.24"
+tree-sitter-rust = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-md = "0.3"
+
+# Regex for text chunking
+regex = "1.10"
+
 # Git operations (native)
 git2 = "0.18"
 

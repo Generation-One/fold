@@ -650,6 +650,27 @@ impl Memory {
     }
 }
 
+/// A matched chunk from search results.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChunkMatch {
+    /// Chunk ID
+    pub id: String,
+    /// Type of node: "function", "class", "heading", etc.
+    pub node_type: String,
+    /// Name of the node if available
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_name: Option<String>,
+    /// Starting line number (1-indexed)
+    pub start_line: i32,
+    /// Ending line number (1-indexed)
+    pub end_line: i32,
+    /// Similarity score for this chunk
+    pub score: f32,
+    /// Short content snippet
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
+}
+
 /// Search result with score and decay-adjusted ranking.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemorySearchResult {
@@ -663,6 +684,9 @@ pub struct MemorySearchResult {
     /// Final combined score blending relevance and strength
     #[serde(default)]
     pub combined_score: f32,
+    /// Matched chunks that contributed to this result (if chunk search was used)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub matched_chunks: Vec<ChunkMatch>,
 }
 
 impl MemorySearchResult {
@@ -673,6 +697,7 @@ impl MemorySearchResult {
             score,
             strength: 0.0,
             combined_score: score,
+            matched_chunks: Vec::new(),
         }
     }
 
@@ -683,6 +708,24 @@ impl MemorySearchResult {
             score: relevance,
             strength,
             combined_score,
+            matched_chunks: Vec::new(),
+        }
+    }
+
+    /// Create a search result with matched chunks.
+    pub fn with_chunks(
+        memory: Memory,
+        relevance: f32,
+        strength: f32,
+        combined_score: f32,
+        matched_chunks: Vec<ChunkMatch>,
+    ) -> Self {
+        Self {
+            memory,
+            score: relevance,
+            strength,
+            combined_score,
+            matched_chunks,
         }
     }
 }

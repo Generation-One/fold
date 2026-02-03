@@ -201,7 +201,11 @@ impl LinkerService {
         })
     }
 
-    /// Find semantically similar memories.
+    /// Find semantically similar memories using chunk-level search.
+    ///
+    /// This enhanced version uses chunk-level similarity to find more precise links.
+    /// When chunks from different memories are similar, we link the parent memories
+    /// and include chunk details in the link reason.
     async fn find_semantic_links(
         &self,
         memory: &Memory,
@@ -213,18 +217,19 @@ impl LinkerService {
             memory_id = %memory.id,
             search_text_len = search_text.len(),
             project_slug = %project_slug,
-            "Finding semantic links for memory"
+            "Finding semantic links for memory (with chunks)"
         );
 
+        // Use chunk-aware search for more precise linking
         let search_results = self
             .memory
-            .search(project_id, project_slug, &search_text, 10)
+            .search_with_chunks(project_id, project_slug, &search_text, None, 15)
             .await?;
 
         debug!(
             memory_id = %memory.id,
             results_count = search_results.len(),
-            "Semantic search completed"
+            "Chunk-aware semantic search completed"
         );
 
         let mut suggestions = Vec::new();
@@ -248,10 +253,43 @@ impl LinkerService {
             // Determine link type based on memory types
             let link_type = self.infer_link_type(memory, &result.memory);
 
+            // Build reason including chunk details if available
+            let (reason, confidence_boost) = if !result.matched_chunks.is_empty() {
+                let chunk_count = result.matched_chunks.len();
+                let top_chunks: Vec<String> = result.matched_chunks
+                    .iter()
+                    .take(3)
+                    .map(|c| {
+                        if let Some(name) = &c.node_name {
+                            format!("{} '{}' (L{}-{})", c.node_type, name, c.start_line, c.end_line)
+                        } else {
+                            format!("{} (L{}-{})", c.node_type, c.start_line, c.end_line)
+                        }
+                    })
+                    .collect();
+
+                let reason = format!(
+                    "Similar chunks: {} matched. Top: {}",
+                    chunk_count,
+                    top_chunks.join(", ")
+                );
+
+                // Boost confidence based on number of matching chunks
+                let boost = (chunk_count as f64 * 0.02).min(0.1);
+                (reason, boost)
+            } else {
+                ("Semantically similar content".to_string(), 0.0)
+            };
+
+            // Calculate final confidence with boost
+            let confidence = (result.score as f64 + confidence_boost).min(1.0);
+
             debug!(
                 source_id = %memory.id,
                 target_id = %result.memory.id,
                 score = result.score,
+                confidence = confidence,
+                matched_chunks = result.matched_chunks.len(),
                 link_type = %link_type,
                 target_title = result.memory.title.as_deref().unwrap_or("untitled"),
                 "Found semantic link candidate"
@@ -261,8 +299,8 @@ impl LinkerService {
                 source_id: memory.id.clone(),
                 target_id: result.memory.id.clone(),
                 link_type,
-                confidence: result.score as f64,
-                reason: "Semantically similar content".to_string(),
+                confidence,
+                reason,
                 source: "semantic".to_string(),
             });
         }

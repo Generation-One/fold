@@ -660,6 +660,7 @@ More content here."#;
             file_path: Some("src/main.rs".to_string()),
             language: Some("rust".to_string()),
             memory_type: "codebase".to_string(),
+            original_date: None,
             created_at: now,
             updated_at: now,
             related_to: vec![],
