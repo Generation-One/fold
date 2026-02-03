@@ -72,9 +72,10 @@ pub struct Project {
     pub name: String,
     pub description: Option<String>,
 
-    // Project paths
+    /// Root path for project files (derived from repository local_path, not stored in DB)
+    #[sqlx(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub root_path: Option<String>,
-    pub repo_url: Option<String>,
 
     // Metadata repo sync config
     pub metadata_repo_enabled: i32,

@@ -123,6 +123,7 @@ pub struct SystemStatusResponse {
     pub database: DatabaseStatus,
     pub qdrant: QdrantStatus,
     pub embeddings: EmbeddingStatus,
+    pub llm: LlmStatus,
     pub jobs: JobsStatus,
     pub metrics: SystemMetrics,
 }
@@ -146,6 +147,13 @@ pub struct EmbeddingStatus {
     pub model: String,
     pub loaded: bool,
     pub dimension: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LlmStatus {
+    pub available: bool,
+    pub provider: Option<String>,
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -318,6 +326,9 @@ async fn system_status(State(state): State<AppState>) -> Result<Json<SystemStatu
     // Get embedding status
     let embeddings = get_embedding_status(&state).await?;
 
+    // Get LLM status
+    let llm = get_llm_status(&state).await?;
+
     // Get jobs status
     let jobs = get_jobs_status(&state.db).await?;
 
@@ -344,6 +355,7 @@ async fn system_status(State(state): State<AppState>) -> Result<Json<SystemStatu
         database,
         qdrant,
         embeddings,
+        llm,
         jobs,
         metrics,
     }))
@@ -734,6 +746,30 @@ async fn get_embedding_status(state: &AppState) -> Result<EmbeddingStatus> {
         model,
         loaded: true,
         dimension: state.embeddings.dimension().await as u32,
+    })
+}
+
+/// Get LLM provider status.
+async fn get_llm_status(state: &AppState) -> Result<LlmStatus> {
+    // Check if LLM service is available
+    let available = state.llm.is_available().await;
+
+    let (provider, model) = if available {
+        let config = crate::config();
+        config
+            .llm
+            .providers
+            .first()
+            .map(|p| (Some(p.name.clone()), Some(p.model.clone())))
+            .unwrap_or((None, None))
+    } else {
+        (None, None)
+    };
+
+    Ok(LlmStatus {
+        available,
+        provider,
+        model,
     })
 }
 

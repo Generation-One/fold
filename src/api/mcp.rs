@@ -377,8 +377,7 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
                 "type": "object",
                 "properties": {
                     "name": { "type": "string", "description": "Project name" },
-                    "description": { "type": "string", "description": "Project description" },
-                    "root_path": { "type": "string", "description": "Local path to codebase" }
+                    "description": { "type": "string", "description": "Project description" }
                 },
                 "required": ["name"]
             }),

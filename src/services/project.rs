@@ -55,18 +55,16 @@ impl ProjectService {
         sqlx::query(
             r#"
             INSERT INTO projects (
-                id, slug, name, description, repo_url, root_path,
+                id, slug, name, description,
                 index_patterns, ignore_patterns, team_members, owner,
                 metadata, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&project.id)
         .bind(&project.slug)
         .bind(&project.name)
         .bind(&project.description)
-        .bind(&project.repo_url)
-        .bind(&project.root_path)
         .bind(&project.index_patterns)
         .bind(&project.ignore_patterns)
         .bind(&project.team_members)
@@ -174,8 +172,6 @@ impl ProjectService {
         // Build update with existing values as defaults
         let name = data.name.unwrap_or(existing.name);
         let description = data.description.or(existing.description);
-        let repo_url = data.repo_url.or(existing.repo_url);
-        let root_path = data.root_path.or(existing.root_path);
         let index_patterns = data
             .index_patterns
             .map(|p| serde_json::to_string(&p).unwrap())
@@ -194,8 +190,6 @@ impl ProjectService {
             UPDATE projects
             SET name = ?,
                 description = ?,
-                repo_url = ?,
-                root_path = ?,
                 index_patterns = ?,
                 ignore_patterns = ?,
                 team_members = ?,
@@ -205,8 +199,6 @@ impl ProjectService {
         )
         .bind(&name)
         .bind(&description)
-        .bind(&repo_url)
-        .bind(&root_path)
         .bind(&index_patterns)
         .bind(&ignore_patterns)
         .bind(&team_members)
@@ -218,8 +210,6 @@ impl ProjectService {
         let updated = Project {
             name,
             description,
-            repo_url,
-            root_path,
             index_patterns,
             ignore_patterns,
             team_members,
@@ -467,8 +457,6 @@ impl ProjectService {
 pub struct ProjectUpdate {
     pub name: Option<String>,
     pub description: Option<String>,
-    pub repo_url: Option<String>,
-    pub root_path: Option<String>,
     pub index_patterns: Option<Vec<String>>,
     pub ignore_patterns: Option<Vec<String>>,
     pub team_members: Option<Vec<String>>,

@@ -151,10 +151,6 @@ pub struct ProjectCreate {
     pub name: String,
     pub description: Option<String>,
 
-    // Codebase settings
-    pub repo_url: Option<String>,
-    pub root_path: Option<String>,
-
     #[serde(default = "default_index_patterns")]
     pub index_patterns: Vec<String>,
     #[serde(default = "default_ignore_patterns")]
@@ -226,8 +222,6 @@ impl Default for ProjectCreate {
         Self {
             name: String::new(),
             description: None,
-            repo_url: None,
-            root_path: None,
             index_patterns: default_index_patterns(),
             ignore_patterns: default_ignore_patterns(),
             team_members: Vec::new(),
@@ -264,9 +258,11 @@ pub struct Project {
     pub name: String,
     pub description: Option<String>,
 
-    // Codebase settings
-    pub repo_url: Option<String>,
+    /// Root path for project files (derived from repository local_path, not stored)
+    #[sqlx(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub root_path: Option<String>,
+
     /// JSON array of glob patterns
     pub index_patterns: Option<String>,
     /// JSON array of glob patterns
@@ -328,8 +324,7 @@ impl Project {
             slug: slugify(&name),
             name,
             description: None,
-            repo_url: None,
-            root_path: None,
+            root_path: None, // Derived from repository local_path
             index_patterns: Some(serde_json::to_string(&default_index_patterns()).unwrap()),
             ignore_patterns: Some(serde_json::to_string(&default_ignore_patterns()).unwrap()),
             team_members: None,
@@ -363,8 +358,7 @@ impl Project {
             slug: slugify(&data.name),
             name: data.name,
             description: data.description,
-            repo_url: data.repo_url,
-            root_path: data.root_path,
+            root_path: None, // Derived from repository local_path
             index_patterns: Some(serde_json::to_string(&data.index_patterns).unwrap()),
             ignore_patterns: Some(serde_json::to_string(&data.ignore_patterns).unwrap()),
             team_members: if data.team_members.is_empty() {

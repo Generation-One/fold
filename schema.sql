@@ -10,7 +10,35 @@ CREATE TABLE IF NOT EXISTS projects (
     slug TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
     description TEXT,
-    root_path TEXT NOT NULL,
+
+    -- Indexing patterns
+    index_patterns TEXT,              -- JSON array of glob patterns
+    ignore_patterns TEXT,             -- JSON array of glob patterns
+
+    -- Team
+    team_members TEXT,                -- JSON array of usernames
+    owner TEXT,
+
+    -- Metadata
+    metadata TEXT,                    -- JSON object
+    repo_url TEXT,
+
+    -- Metadata repo sync config
+    metadata_repo_enabled INTEGER NOT NULL DEFAULT 0,
+    metadata_repo_mode TEXT,
+    metadata_repo_provider TEXT,
+    metadata_repo_owner TEXT,
+    metadata_repo_name TEXT,
+    metadata_repo_branch TEXT,
+    metadata_repo_token TEXT,
+    metadata_repo_source_id TEXT,
+    metadata_repo_path_prefix TEXT,
+
+    -- Algorithm config (per-project)
+    ignored_commit_authors TEXT,      -- JSON array
+    decay_strength_weight REAL,
+    decay_half_life_days REAL,
+
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -28,6 +56,11 @@ CREATE TABLE IF NOT EXISTS repositories (
     repo TEXT,
     branch TEXT NOT NULL DEFAULT 'main',
 
+    -- Source config
+    source_type TEXT,
+    source_config TEXT,               -- JSON config
+    notification_type TEXT,
+
     -- Webhook info
     webhook_id TEXT,
     webhook_secret TEXT,
@@ -41,6 +74,8 @@ CREATE TABLE IF NOT EXISTS repositories (
     -- Sync state
     last_sync TEXT,
     last_commit_sha TEXT,
+    last_indexed_at TEXT,
+    sync_cursor TEXT,
 
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
 
@@ -117,18 +152,36 @@ CREATE TABLE IF NOT EXISTS jobs (
     project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
     repository_id TEXT REFERENCES repositories(id) ON DELETE SET NULL,
 
+    -- Progress
     total_items INTEGER,
     processed_items INTEGER DEFAULT 0,
+    failed_items INTEGER NOT NULL DEFAULT 0,
 
+    -- Job data
+    payload TEXT,                     -- JSON payload
+    result TEXT,                      -- JSON result
+
+    -- Retry handling
+    max_retries INTEGER,
+    retry_count INTEGER,
+    last_error TEXT,
+    error TEXT,
+
+    -- Scheduling
+    priority INTEGER NOT NULL DEFAULT 0,
+    scheduled_at TEXT,
+    locked_at TEXT,
+    locked_by TEXT,
+
+    -- Timestamps
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     started_at TEXT,
-    completed_at TEXT,
-
-    error TEXT
+    completed_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(project_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority, created_at);
 
 -- ============================================================================
 -- Users (OIDC)
@@ -191,7 +244,8 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     project_ids TEXT NOT NULL,        -- JSON array
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     last_used TEXT,
-    expires_at TEXT
+    expires_at TEXT,
+    revoked_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_api_tokens_prefix ON api_tokens(token_prefix);
@@ -225,9 +279,12 @@ CREATE TABLE IF NOT EXISTS llm_providers (
     priority INTEGER NOT NULL DEFAULT 0,
     auth_type TEXT NOT NULL DEFAULT 'api_key',  -- 'api_key' | 'oauth'
     api_key TEXT,
+    oauth_client_id TEXT,
+    oauth_client_secret TEXT,
     oauth_access_token TEXT,
     oauth_refresh_token TEXT,
     oauth_token_expires_at TEXT,
+    oauth_scopes TEXT,
     config TEXT,                      -- JSON config
     request_count INTEGER NOT NULL DEFAULT 0,
     token_count INTEGER NOT NULL DEFAULT 0,
@@ -252,6 +309,12 @@ CREATE TABLE IF NOT EXISTS embedding_providers (
     priority INTEGER NOT NULL DEFAULT 0,
     auth_type TEXT NOT NULL DEFAULT 'api_key',
     api_key TEXT,
+    oauth_client_id TEXT,
+    oauth_client_secret TEXT,
+    oauth_access_token TEXT,
+    oauth_refresh_token TEXT,
+    oauth_token_expires_at TEXT,
+    oauth_scopes TEXT,
     config TEXT,                      -- JSON config
     request_count INTEGER NOT NULL DEFAULT 0,
     token_count INTEGER NOT NULL DEFAULT 0,

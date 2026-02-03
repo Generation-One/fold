@@ -84,10 +84,6 @@ pub struct CreateProjectRequest {
     pub name: String,
     /// Project description
     pub description: Option<String>,
-    /// Local path to the codebase (for indexing)
-    pub root_path: Option<String>,
-    /// Git repository URL
-    pub repo_url: Option<String>,
 }
 
 /// Request to update a project.
@@ -97,10 +93,6 @@ pub struct UpdateProjectRequest {
     pub name: Option<String>,
     /// Project description
     pub description: Option<String>,
-    /// Local path to the codebase
-    pub root_path: Option<String>,
-    /// Git repository URL
-    pub repo_url: Option<String>,
     /// Author patterns to ignore during webhook processing (prevents loops)
     pub ignored_commit_authors: Option<Vec<String>>,
 }
@@ -112,8 +104,6 @@ pub struct ProjectResponse {
     pub slug: String,
     pub name: String,
     pub description: Option<String>,
-    pub root_path: Option<String>,
-    pub repo_url: Option<String>,
     pub memory_count: u32,
     /// Author patterns to ignore during webhook processing
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -170,8 +160,6 @@ async fn list_projects(
                 slug: p.slug,
                 name: p.name,
                 description: p.description,
-                root_path: p.root_path,
-                repo_url: p.repo_url,
                 memory_count: 0,
                 ignored_commit_authors: ignored_authors,
                 created_at: p.created_at.parse().unwrap_or_else(|_| Utc::now()),
@@ -234,8 +222,6 @@ async fn create_project(
         slug: project.slug,
         name: project.name,
         description: project.description,
-        root_path: project.root_path,
-        repo_url: project.repo_url,
         memory_count: 0,
         ignored_commit_authors: ignored_authors,
         created_at: project.created_at.parse().unwrap_or_else(|_| Utc::now()),
@@ -265,8 +251,6 @@ async fn get_project(
         slug: project.slug,
         name: project.name,
         description: project.description,
-        root_path: project.root_path,
-        repo_url: project.repo_url,
         memory_count: 0,
         ignored_commit_authors: ignored_authors,
         created_at: project.created_at.parse().unwrap_or_else(|_| Utc::now()),
@@ -312,8 +296,6 @@ async fn update_project(
         slug: project.slug,
         name: project.name,
         description: project.description,
-        root_path: project.root_path,
-        repo_url: project.repo_url,
         memory_count: 0,
         ignored_commit_authors: ignored_authors,
         created_at: project.created_at.parse().unwrap_or_else(|_| Utc::now()),
