@@ -10,3 +10,6 @@ nul
 .idea/
 .vscode/
 *.swp
+
+# Runtime data
+data/
