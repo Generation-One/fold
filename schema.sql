@@ -220,7 +220,7 @@ CREATE INDEX IF NOT EXISTS idx_auth_providers_enabled ON auth_providers(enabled)
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS llm_providers (
     id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,               -- 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'claudecode'
+    name TEXT NOT NULL UNIQUE,        -- 'gemini' | 'openai' | 'anthropic' | 'openrouter' | 'claudecode'
     enabled INTEGER NOT NULL DEFAULT 1,
     priority INTEGER NOT NULL DEFAULT 0,
     auth_type TEXT NOT NULL DEFAULT 'api_key',  -- 'api_key' | 'oauth'
@@ -247,7 +247,7 @@ CREATE INDEX IF NOT EXISTS idx_llm_providers_enabled ON llm_providers(enabled);
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS embedding_providers (
     id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,               -- 'gemini' | 'openai'
+    name TEXT NOT NULL UNIQUE,        -- 'gemini' | 'openai'
     enabled INTEGER NOT NULL DEFAULT 1,
     priority INTEGER NOT NULL DEFAULT 0,
     auth_type TEXT NOT NULL DEFAULT 'api_key',
