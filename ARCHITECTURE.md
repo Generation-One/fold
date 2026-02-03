@@ -52,7 +52,7 @@ Processes files from repositories and creates memories.
 **Pipeline:**
 1. Read file from local clone
 2. Skip if: empty, >100KB, non-code, excluded by pattern
-3. Calculate SHA256 hash → memory_id (first 16 chars)
+3. Calculate SHA256 hash of file path → memory_id (first 16 chars)
 4. Check cache: skip if hash unchanged
 5. Check fold/: skip if already indexed
 6. Summarize via LLM
@@ -397,14 +397,14 @@ dimension = 768
 
 ### Hash-Based Memory IDs
 
-Memory IDs are derived from content hash:
+Memory IDs are derived from repo path hash:
 ```
-content_hash = SHA256(file_content)[0..16]  // First 16 chars
-memory_id = content_hash
+path_hash = SHA256(project_slug + "/" + normalised_path)[0..16]  // First 16 chars
+memory_id = path_hash
 storage_path = fold/{first_char}/{second_char}/{hash}.md
 ```
 
-This makes memory identity deterministic and enables deduplication.
+The path is normalised (forward slashes, relative to repo root) to ensure consistent IDs across machines. This makes memory identity deterministic and stable across content changes.
 
 ### Indexing Pipeline
 
