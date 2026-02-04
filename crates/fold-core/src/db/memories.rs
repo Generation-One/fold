@@ -697,6 +697,21 @@ pub async fn count_project_memories_by_type(
     Ok(count)
 }
 
+/// Count memories by source for a project.
+pub async fn count_project_memories_by_source(
+    pool: &DbPool,
+    project_id: &str,
+    source: &str,
+) -> Result<i64> {
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM memories WHERE project_id = ? AND source = ?")
+            .bind(project_id)
+            .bind(source)
+            .fetch_one(pool)
+            .await?;
+    Ok(count)
+}
+
 /// Get memories that need metadata sync (changed since last sync).
 pub async fn list_memories_needing_sync(pool: &DbPool, project_id: &str) -> Result<Vec<Memory>> {
     sqlx::query_as::<_, Memory>(
