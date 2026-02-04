@@ -563,16 +563,17 @@ async fn execute_github_project_create(state: &AppState, args: Value) -> Result<
 
     let params: Params = serde_json::from_value(args)?;
 
-    // Generate slug from repo URL + nonce (to avoid collisions)
-    // Extract owner/repo from URL
-    let repo_path = params.repo_url
-        .trim_end_matches('/')
-        .split('/').last()
-        .unwrap_or("repo")
-        .trim_end_matches(".git");
+    // Parse owner/repo from URL
+    let url = params.repo_url.trim_end_matches('/').trim_end_matches(".git");
+    let parts: Vec<&str> = url.split('/').collect();
+    if parts.len() < 2 {
+        return Err(Error::Validation("Invalid GitHub URL format".into()));
+    }
+    let owner = parts[parts.len() - 2].to_string();
+    let repo_name = parts[parts.len() - 1].to_string();
 
     // Create base slug from repo name
-    let base_slug = repo_path
+    let base_slug = repo_name
         .to_lowercase()
         .replace(|c: char| !c.is_alphanumeric() && c != '-', "-")
         .trim_matches('-')
@@ -582,13 +583,14 @@ async fn execute_github_project_create(state: &AppState, args: Value) -> Result<
     let nonce = uuid::Uuid::new_v4().to_string()[..8].to_string();
     let slug = format!("{}-{}", base_slug, nonce);
 
-    // Generate ID
-    let id = crate::models::new_id();
+    // Generate IDs
+    let project_id = crate::models::new_id();
+    let repo_id = crate::models::new_id();
 
     let project = db::create_project(
         &state.db,
         db::CreateProject {
-            id,
+            id: project_id.clone(),
             slug,
             name: params.name,
             description: params.description,
@@ -602,12 +604,48 @@ async fn execute_github_project_create(state: &AppState, args: Value) -> Result<
         .create_collection(&project.slug, state.embeddings.dimension().await)
         .await?;
 
+    // Create repository record
+    let repo = db::create_repository(
+        &state.db,
+        db::CreateRepository {
+            id: repo_id.clone(),
+            project_id: project.id.clone(),
+            provider: db::GitProvider::GitHub,
+            owner: owner.clone(),
+            repo: repo_name.clone(),
+            branch: "main".to_string(),
+            access_token: String::new(),
+            local_path: None,
+        },
+    )
+    .await?;
+
+    // Queue an index job immediately
+    let job_id = crate::models::new_id();
+    let job = db::create_job(
+        &state.db,
+        db::CreateJob::new(job_id, db::JobType::IndexRepo)
+            .with_project(project.id.clone())
+            .with_repository(repo_id),
+    )
+    .await?;
+
     Ok(serde_json::to_string_pretty(&serde_json::json!({
         "id": project.id,
         "slug": project.slug,
         "name": project.name,
         "description": project.description,
         "repo_url": params.repo_url,
+        "repository": {
+            "id": repo.id,
+            "owner": owner,
+            "repo": repo_name,
+            "branch": "main"
+        },
+        "index_job": {
+            "id": job.id,
+            "status": job.status
+        },
         "created_at": project.created_at
     }))?)
 }
