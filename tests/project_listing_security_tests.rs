@@ -20,10 +20,7 @@ async fn test_list_projects_requires_authentication() {
         .unwrap();
 
     // No auth header
-    assert!(!request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(!request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -39,10 +36,7 @@ async fn test_authenticated_user_sees_only_accessible_projects() {
         .body(Body::empty())
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -57,10 +51,7 @@ async fn test_user_does_not_see_projects_without_access() {
         .unwrap();
 
     // Request should be valid but results should be filtered
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -74,10 +65,7 @@ async fn test_admin_sees_all_projects() {
         .body(Body::empty())
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -91,10 +79,7 @@ async fn test_member_via_direct_assignment_sees_project() {
         .body(Body::empty())
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -108,10 +93,7 @@ async fn test_member_via_group_assignment_sees_project() {
         .body(Body::empty())
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -126,10 +108,7 @@ async fn test_list_projects_pagination_respects_access() {
         .body(Body::empty())
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -143,10 +122,7 @@ async fn test_viewer_role_can_see_accessible_projects() {
         .body(Body::empty())
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -174,10 +150,7 @@ async fn test_expired_token_returns_401() {
         .body(Body::empty())
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -191,10 +164,7 @@ async fn test_revoked_token_returns_401() {
         .body(Body::empty())
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -208,10 +178,7 @@ async fn test_api_token_project_scoping_respected() {
         .body(Body::empty())
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -225,10 +192,7 @@ async fn test_unscoped_token_sees_all_user_accessible_projects() {
         .body(Body::empty())
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -243,10 +207,7 @@ async fn test_project_listing_total_count_respects_access() {
         .unwrap();
 
     // Response should include total count of accessible projects only
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -260,8 +221,5 @@ async fn test_empty_project_list_for_user_with_no_access() {
         .body(Body::empty())
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }

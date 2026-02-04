@@ -7,10 +7,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use qdrant_client::qdrant::{
-    condition::ConditionOneOf, CreateCollectionBuilder, DeletePointsBuilder, Distance,
-    FieldCondition, Filter, Condition, Match, PointId, PointStruct, ScoredPoint,
-    ScrollPointsBuilder, SearchPointsBuilder, UpsertPointsBuilder, Value as QdrantValue,
-    VectorParamsBuilder, r#match::MatchValue,
+    condition::ConditionOneOf, r#match::MatchValue, Condition, CreateCollectionBuilder,
+    DeletePointsBuilder, Distance, FieldCondition, Filter, Match, PointId, PointStruct,
+    ScoredPoint, ScrollPointsBuilder, SearchPointsBuilder, UpsertPointsBuilder,
+    Value as QdrantValue, VectorParamsBuilder,
 };
 use qdrant_client::Qdrant;
 use serde_json::Value;
@@ -75,11 +75,7 @@ impl QdrantService {
     }
 
     /// Create a collection for a project if it doesn't exist.
-    pub async fn create_collection(
-        &self,
-        project_slug: &str,
-        dimension: usize,
-    ) -> Result<()> {
+    pub async fn create_collection(&self, project_slug: &str, dimension: usize) -> Result<()> {
         let collection_name = self.collection_name(project_slug);
 
         // Check if collection exists
@@ -100,7 +96,7 @@ impl QdrantService {
             .client
             .create_collection(
                 CreateCollectionBuilder::new(&collection_name)
-                    .vectors_config(VectorParamsBuilder::new(dimension as u64, Distance::Cosine))
+                    .vectors_config(VectorParamsBuilder::new(dimension as u64, Distance::Cosine)),
             )
             .await
             .map_err(|e| Error::VectorStore(format!("Failed to create collection: {}", e)))?;
@@ -144,7 +140,8 @@ impl QdrantService {
         vector: Vec<f32>,
         payload: HashMap<String, Value>,
     ) -> Result<()> {
-        self.upsert_batch(project_slug, vec![(id.to_string(), vector, payload)]).await
+        self.upsert_batch(project_slug, vec![(id.to_string(), vector, payload)])
+            .await
     }
 
     /// Upsert multiple points in a batch.
@@ -194,8 +191,8 @@ impl QdrantService {
     ) -> Result<Vec<VectorSearchResult>> {
         let collection_name = self.collection_name(project_slug);
 
-        let mut builder = SearchPointsBuilder::new(&collection_name, vector, limit as u64)
-            .with_payload(true);
+        let mut builder =
+            SearchPointsBuilder::new(&collection_name, vector, limit as u64).with_payload(true);
 
         if let Some(f) = filter {
             builder = builder.filter(f.to_qdrant_filter());
@@ -243,11 +240,7 @@ impl QdrantService {
 
     /// Delete points matching a filter.
     /// Note: Uses scroll + delete batch since DeletePointsBuilder doesn't support filter directly.
-    pub async fn delete_by_filter(
-        &self,
-        project_slug: &str,
-        filter: SearchFilter,
-    ) -> Result<()> {
+    pub async fn delete_by_filter(&self, project_slug: &str, filter: SearchFilter) -> Result<()> {
         // Scroll to find all matching points, then delete by ID
         let (results, _) = self.scroll(project_slug, 1000, None, Some(filter)).await?;
 
@@ -289,7 +282,10 @@ impl QdrantService {
         Ok(CollectionInfo {
             name: collection_name,
             exists: true,
-            points_count: info.result.map(|r| r.points_count.unwrap_or(0)).unwrap_or(0),
+            points_count: info
+                .result
+                .map(|r| r.points_count.unwrap_or(0))
+                .unwrap_or(0),
             dimension: 384, // Would need to extract from config
         })
     }
@@ -328,8 +324,14 @@ impl QdrantService {
             .into_iter()
             .map(|point| {
                 let id = match point.id {
-                    Some(PointId { point_id_options: Some(qdrant_client::qdrant::point_id::PointIdOptions::Uuid(uuid)) }) => uuid,
-                    Some(PointId { point_id_options: Some(qdrant_client::qdrant::point_id::PointIdOptions::Num(num)) }) => num.to_string(),
+                    Some(PointId {
+                        point_id_options:
+                            Some(qdrant_client::qdrant::point_id::PointIdOptions::Uuid(uuid)),
+                    }) => uuid,
+                    Some(PointId {
+                        point_id_options:
+                            Some(qdrant_client::qdrant::point_id::PointIdOptions::Num(num)),
+                    }) => num.to_string(),
                     _ => String::new(),
                 };
 
@@ -351,7 +353,9 @@ impl QdrantService {
             .next_page_offset
             .and_then(|id| match id.point_id_options {
                 Some(qdrant_client::qdrant::point_id::PointIdOptions::Uuid(uuid)) => Some(uuid),
-                Some(qdrant_client::qdrant::point_id::PointIdOptions::Num(num)) => Some(num.to_string()),
+                Some(qdrant_client::qdrant::point_id::PointIdOptions::Num(num)) => {
+                    Some(num.to_string())
+                }
                 _ => None,
             });
 
@@ -452,10 +456,8 @@ fn json_to_qdrant_value(value: Value) -> Option<QdrantValue> {
         }
         Value::String(s) => Some(QdrantValue::from(s)),
         Value::Array(arr) => {
-            let values: Vec<QdrantValue> = arr
-                .into_iter()
-                .filter_map(json_to_qdrant_value)
-                .collect();
+            let values: Vec<QdrantValue> =
+                arr.into_iter().filter_map(json_to_qdrant_value).collect();
             if values.is_empty() {
                 None
             } else {
@@ -477,9 +479,7 @@ fn qdrant_value_to_json(value: QdrantValue) -> Option<Value> {
         Some(Kind::NullValue(_)) => Some(Value::Null),
         Some(Kind::BoolValue(b)) => Some(Value::Bool(b)),
         Some(Kind::IntegerValue(i)) => Some(Value::Number(i.into())),
-        Some(Kind::DoubleValue(d)) => {
-            serde_json::Number::from_f64(d).map(Value::Number)
-        }
+        Some(Kind::DoubleValue(d)) => serde_json::Number::from_f64(d).map(Value::Number),
         Some(Kind::StringValue(s)) => Some(Value::String(s)),
         Some(Kind::ListValue(list)) => {
             let values: Vec<Value> = list
@@ -504,8 +504,12 @@ fn qdrant_value_to_json(value: QdrantValue) -> Option<Value> {
 /// Convert scored point to search result
 fn scored_point_to_result(point: ScoredPoint) -> VectorSearchResult {
     let id = match point.id {
-        Some(PointId { point_id_options: Some(qdrant_client::qdrant::point_id::PointIdOptions::Uuid(uuid)) }) => uuid,
-        Some(PointId { point_id_options: Some(qdrant_client::qdrant::point_id::PointIdOptions::Num(num)) }) => num.to_string(),
+        Some(PointId {
+            point_id_options: Some(qdrant_client::qdrant::point_id::PointIdOptions::Uuid(uuid)),
+        }) => uuid,
+        Some(PointId {
+            point_id_options: Some(qdrant_client::qdrant::point_id::PointIdOptions::Num(num)),
+        }) => num.to_string(),
         _ => String::new(),
     };
 

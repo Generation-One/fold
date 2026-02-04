@@ -70,7 +70,11 @@ pub fn start_session_cleanup() {
 
             let removed = before - sessions.len();
             if removed > 0 {
-                tracing::debug!(removed, remaining = sessions.len(), "Cleaned up MCP sessions");
+                tracing::debug!(
+                    removed,
+                    remaining = sessions.len(),
+                    "Cleaned up MCP sessions"
+                );
             }
         }
     });
@@ -136,16 +140,22 @@ impl JsonRpcResponse {
             jsonrpc: "2.0".into(),
             id,
             result: None,
-            error: Some(JsonRpcError { code, message, data }),
+            error: Some(JsonRpcError {
+                code,
+                message,
+                data,
+            }),
         }
     }
 }
 
 // JSON-RPC error codes
+#[allow(dead_code)]
 const PARSE_ERROR: i32 = -32700;
 const INVALID_REQUEST: i32 = -32600;
 const METHOD_NOT_FOUND: i32 = -32601;
 const INVALID_PARAMS: i32 = -32602;
+#[allow(dead_code)]
 const INTERNAL_ERROR: i32 = -32603;
 
 // ============================================================================
@@ -283,7 +293,10 @@ async fn handle_mcp_post(
                 tx,
             };
 
-            MCP_SESSIONS.write().await.insert(session_id.clone(), session);
+            MCP_SESSIONS
+                .write()
+                .await
+                .insert(session_id.clone(), session);
             tracing::debug!(session_id = %session_id, "Created MCP session");
 
             // Return response with session ID header
@@ -303,9 +316,7 @@ async fn handle_mcp_post(
         }
         _ => {
             // Validate session ID for all other methods (optional but recommended)
-            let session_id = headers
-                .get("mcp-session-id")
-                .and_then(|v| v.to_str().ok());
+            let session_id = headers.get("mcp-session-id").and_then(|v| v.to_str().ok());
 
             if let Some(sid) = session_id {
                 if !MCP_SESSIONS.read().await.contains_key(sid) {
@@ -322,9 +333,7 @@ async fn handle_mcp_post(
             // Route to existing handlers
             let response = match request.method.as_str() {
                 "tools/list" => handle_tools_list(request.id.clone()),
-                "tools/call" => {
-                    handle_tools_call(&state, request.id.clone(), request.params).await
-                }
+                "tools/call" => handle_tools_call(&state, request.id.clone(), request.params).await,
                 "resources/list" => handle_resources_list(request.id.clone()),
                 "resources/read" => handle_resources_read(request.id.clone(), request.params),
                 _ => JsonRpcResponse::error(
@@ -552,11 +561,7 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
 }
 
 /// Handle tools/call method.
-async fn handle_tools_call(
-    state: &AppState,
-    id: Option<Value>,
-    params: Value,
-) -> JsonRpcResponse {
+async fn handle_tools_call(state: &AppState, id: Option<Value>, params: Value) -> JsonRpcResponse {
     let call_params: ToolCallParams = match serde_json::from_value(params) {
         Ok(p) => p,
         Err(e) => {
@@ -624,12 +629,7 @@ fn handle_resources_list(id: Option<Value>) -> JsonRpcResponse {
 
 /// Handle resources/read method.
 fn handle_resources_read(id: Option<Value>, _params: Value) -> JsonRpcResponse {
-    JsonRpcResponse::error(
-        id,
-        METHOD_NOT_FOUND,
-        "Resource not found".into(),
-        None,
-    )
+    JsonRpcResponse::error(id, METHOD_NOT_FOUND, "Resource not found".into(), None)
 }
 
 // ============================================================================
@@ -772,7 +772,9 @@ async fn execute_memory_search(state: &AppState, args: Value) -> Result<String> 
         results
             .into_iter()
             .filter(|r| {
-                r.memory.source.as_deref()
+                r.memory
+                    .source
+                    .as_deref()
                     .and_then(MemorySource::from_str)
                     .map(|s| Some(s) == source)
                     .unwrap_or(false)
@@ -845,7 +847,8 @@ async fn execute_memory_list(state: &AppState, args: Value) -> Result<String> {
         memories
             .into_iter()
             .filter(|m| {
-                m.source.as_deref()
+                m.source
+                    .as_deref()
                     .and_then(MemorySource::from_str)
                     .map(|s| s == source_filter)
                     .unwrap_or(false)
@@ -882,6 +885,7 @@ async fn execute_memory_context(state: &AppState, args: Value) -> Result<String>
         project: String,
         memory_id: String,
         #[serde(default = "default_depth")]
+        #[allow(dead_code)]
         depth: usize,
     }
 
@@ -936,16 +940,18 @@ async fn execute_memory_context(state: &AppState, args: Value) -> Result<String>
     let similar: Vec<_> = similar_results
         .into_iter()
         .filter(|r| r.memory.id != params.memory_id)
-        .map(|r| serde_json::json!({
-            "id": r.memory.id,
-            "title": r.memory.title,
-            "content_preview": r.memory.content.as_deref()
-                .unwrap_or("")
-                .chars()
-                .take(200)
-                .collect::<String>(),
-            "score": r.score
-        }))
+        .map(|r| {
+            serde_json::json!({
+                "id": r.memory.id,
+                "title": r.memory.title,
+                "content_preview": r.memory.content.as_deref()
+                    .unwrap_or("")
+                    .chars()
+                    .take(200)
+                    .collect::<String>(),
+                "score": r.score
+            })
+        })
         .collect();
 
     Ok(serde_json::to_string_pretty(&serde_json::json!({
@@ -1011,12 +1017,14 @@ async fn execute_memory_link_list(state: &AppState, args: Value) -> Result<Strin
 
     let links_json: Vec<_> = links
         .iter()
-        .map(|l| serde_json::json!({
-            "id": l.id,
-            "target_id": l.target_id,
-            "link_type": l.link_type,
-            "context": l.context
-        }))
+        .map(|l| {
+            serde_json::json!({
+                "id": l.id,
+                "target_id": l.target_id,
+                "link_type": l.link_type,
+                "context": l.context
+            })
+        })
         .collect();
 
     Ok(serde_json::to_string_pretty(&serde_json::json!({
@@ -1043,8 +1051,7 @@ async fn execute_codebase_index(state: &AppState, args: Value) -> Result<String>
 
     let job = db::create_job(
         &state.db,
-        db::CreateJob::new(job_id.clone(), db::JobType::IndexRepo)
-            .with_project(project.id.clone()),
+        db::CreateJob::new(job_id.clone(), db::JobType::IndexRepo).with_project(project.id.clone()),
     )
     .await?;
 
@@ -1085,7 +1092,9 @@ async fn execute_codebase_search(state: &AppState, args: Value) -> Result<String
     let file_results: Vec<_> = results
         .into_iter()
         .filter(|r| {
-            r.memory.source.as_deref()
+            r.memory
+                .source
+                .as_deref()
                 .and_then(MemorySource::from_str)
                 .map(|s| s == MemorySource::File)
                 .unwrap_or(false)

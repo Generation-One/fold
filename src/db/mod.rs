@@ -143,15 +143,29 @@ mod tests {
 
         // Check core required tables
         assert!(table_names.contains(&"projects"), "projects table missing");
-        assert!(table_names.contains(&"repositories"), "repositories table missing");
+        assert!(
+            table_names.contains(&"repositories"),
+            "repositories table missing"
+        );
         assert!(table_names.contains(&"memories"), "memories table missing");
-        assert!(table_names.contains(&"memory_links"), "memory_links table missing");
+        assert!(
+            table_names.contains(&"memory_links"),
+            "memory_links table missing"
+        );
         assert!(table_names.contains(&"jobs"), "jobs table missing");
         assert!(table_names.contains(&"users"), "users table missing");
         assert!(table_names.contains(&"sessions"), "sessions table missing");
-        assert!(table_names.contains(&"api_tokens"), "api_tokens table missing");
+        assert!(
+            table_names.contains(&"api_tokens"),
+            "api_tokens table missing"
+        );
 
         // Verify we have at least the core tables
-        assert!(table_names.len() >= 9, "Expected at least 9 tables, got {}: {:?}", table_names.len(), table_names);
+        assert!(
+            table_names.len() >= 9,
+            "Expected at least 9 tables, got {}: {:?}",
+            table_names.len(),
+            table_names
+        );
     }
 }

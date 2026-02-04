@@ -53,7 +53,7 @@ pub struct AiSession {
     pub local_root: Option<String>,
     pub repository_id: Option<String>,
     pub summary: Option<String>,
-    pub next_steps: Option<String>,  // JSON array
+    pub next_steps: Option<String>, // JSON array
     pub agent_type: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -247,7 +247,7 @@ pub struct TeamStatus {
     pub username: String,
     pub status: String,
     pub current_task: Option<String>,
-    pub current_files: Option<String>,  // JSON array
+    pub current_files: Option<String>, // JSON array
     pub last_seen: String,
     pub session_start: Option<String>,
 }
@@ -309,7 +309,11 @@ pub async fn get_ai_session(pool: &DbPool, id: &str) -> Result<AiSession> {
 }
 
 /// Update an AI session.
-pub async fn update_ai_session(pool: &DbPool, id: &str, input: UpdateAiSession) -> Result<AiSession> {
+pub async fn update_ai_session(
+    pool: &DbPool,
+    id: &str,
+    input: UpdateAiSession,
+) -> Result<AiSession> {
     let mut updates = Vec::new();
     let mut bindings: Vec<Option<String>> = Vec::new();
 
@@ -632,7 +636,9 @@ pub async fn upsert_team_status(
     username: &str,
     input: UpdateTeamStatus,
 ) -> Result<TeamStatus> {
-    let current_files_json = input.current_files.map(|f| serde_json::to_string(&f).unwrap_or_default());
+    let current_files_json = input
+        .current_files
+        .map(|f| serde_json::to_string(&f).unwrap_or_default());
     let id = format!("{}-{}", project_id, username);
 
     sqlx::query_as::<_, TeamStatus>(
@@ -742,38 +748,56 @@ pub async fn mark_stale_members_idle(pool: &DbPool, minutes: i64) -> Result<u64>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{init_pool, migrate, create_project, CreateProject, create_api_token, CreateApiToken, create_user, CreateUser, UserRole};
+    use crate::db::{
+        create_api_token, create_project, create_user, init_pool, migrate, CreateApiToken,
+        CreateProject, CreateUser, UserRole,
+    };
 
     async fn setup_test_db() -> DbPool {
         let pool = init_pool(":memory:").await.unwrap();
         migrate(&pool).await.unwrap();
 
-        create_project(&pool, CreateProject {
-            id: "proj-1".to_string(),
-            slug: "test".to_string(),
-            name: "Test".to_string(),
-            description: None,
-        }).await.unwrap();
+        create_project(
+            &pool,
+            CreateProject {
+                id: "proj-1".to_string(),
+                slug: "test".to_string(),
+                name: "Test".to_string(),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
 
-        create_user(&pool, CreateUser {
-            id: "user-1".to_string(),
-            provider: "google".to_string(),
-            subject: "sub-1".to_string(),
-            email: None,
-            display_name: None,
-            avatar_url: None,
-            role: UserRole::Member,
-        }).await.unwrap();
+        create_user(
+            &pool,
+            CreateUser {
+                id: "user-1".to_string(),
+                provider: "google".to_string(),
+                subject: "sub-1".to_string(),
+                email: None,
+                display_name: None,
+                avatar_url: None,
+                role: UserRole::Member,
+            },
+        )
+        .await
+        .unwrap();
 
-        create_api_token(&pool, CreateApiToken {
-            id: "token-1".to_string(),
-            user_id: "user-1".to_string(),
-            name: "Test Token".to_string(),
-            token_hash: "hash123".to_string(),
-            token_prefix: "fold_".to_string(),
-            project_ids: vec!["proj-1".to_string()],
-            expires_at: None,
-        }).await.unwrap();
+        create_api_token(
+            &pool,
+            CreateApiToken {
+                id: "token-1".to_string(),
+                user_id: "user-1".to_string(),
+                name: "Test Token".to_string(),
+                token_hash: "hash123".to_string(),
+                token_prefix: "fold_".to_string(),
+                project_ids: vec!["proj-1".to_string()],
+                expires_at: None,
+            },
+        )
+        .await
+        .unwrap();
 
         pool
     }
@@ -782,14 +806,19 @@ mod tests {
     async fn test_create_and_get_ai_session() {
         let pool = setup_test_db().await;
 
-        let session = create_ai_session(&pool, CreateAiSession {
-            id: "sess-1".to_string(),
-            project_id: "proj-1".to_string(),
-            task: "Implement auth feature".to_string(),
-            local_root: Some("/home/user/project".to_string()),
-            repository_id: None,
-            agent_type: Some("claude-code".to_string()),
-        }).await.unwrap();
+        let session = create_ai_session(
+            &pool,
+            CreateAiSession {
+                id: "sess-1".to_string(),
+                project_id: "proj-1".to_string(),
+                task: "Implement auth feature".to_string(),
+                local_root: Some("/home/user/project".to_string()),
+                repository_id: None,
+                agent_type: Some("claude-code".to_string()),
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(session.id, "sess-1");
         assert!(session.is_active());
@@ -803,33 +832,50 @@ mod tests {
     async fn test_session_notes() {
         let pool = setup_test_db().await;
 
-        create_ai_session(&pool, CreateAiSession {
-            id: "sess-1".to_string(),
-            project_id: "proj-1".to_string(),
-            task: "Test task".to_string(),
-            local_root: None,
-            repository_id: None,
-            agent_type: None,
-        }).await.unwrap();
+        create_ai_session(
+            &pool,
+            CreateAiSession {
+                id: "sess-1".to_string(),
+                project_id: "proj-1".to_string(),
+                task: "Test task".to_string(),
+                local_root: None,
+                repository_id: None,
+                agent_type: None,
+            },
+        )
+        .await
+        .unwrap();
 
-        create_session_note(&pool, CreateSessionNote {
-            id: "note-1".to_string(),
-            session_id: "sess-1".to_string(),
-            note_type: NoteType::Decision,
-            content: "Decided to use REST API".to_string(),
-        }).await.unwrap();
+        create_session_note(
+            &pool,
+            CreateSessionNote {
+                id: "note-1".to_string(),
+                session_id: "sess-1".to_string(),
+                note_type: NoteType::Decision,
+                content: "Decided to use REST API".to_string(),
+            },
+        )
+        .await
+        .unwrap();
 
-        create_session_note(&pool, CreateSessionNote {
-            id: "note-2".to_string(),
-            session_id: "sess-1".to_string(),
-            note_type: NoteType::Progress,
-            content: "Completed initial setup".to_string(),
-        }).await.unwrap();
+        create_session_note(
+            &pool,
+            CreateSessionNote {
+                id: "note-2".to_string(),
+                session_id: "sess-1".to_string(),
+                note_type: NoteType::Progress,
+                content: "Completed initial setup".to_string(),
+            },
+        )
+        .await
+        .unwrap();
 
         let notes = list_session_notes(&pool, "sess-1").await.unwrap();
         assert_eq!(notes.len(), 2);
 
-        let decisions = list_session_notes_by_type(&pool, "sess-1", NoteType::Decision).await.unwrap();
+        let decisions = list_session_notes_by_type(&pool, "sess-1", NoteType::Decision)
+            .await
+            .unwrap();
         assert_eq!(decisions.len(), 1);
     }
 
@@ -837,14 +883,19 @@ mod tests {
     async fn test_workspace() {
         let pool = setup_test_db().await;
 
-        let workspace = create_workspace(&pool, CreateWorkspace {
-            id: "ws-1".to_string(),
-            project_id: "proj-1".to_string(),
-            token_id: "token-1".to_string(),
-            local_root: "/home/user/project".to_string(),
-            repository_id: None,
-            expires_at: None,
-        }).await.unwrap();
+        let workspace = create_workspace(
+            &pool,
+            CreateWorkspace {
+                id: "ws-1".to_string(),
+                project_id: "proj-1".to_string(),
+                token_id: "token-1".to_string(),
+                local_root: "/home/user/project".to_string(),
+                repository_id: None,
+                expires_at: None,
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(workspace.id, "ws-1");
         assert!(!workspace.is_expired());
@@ -852,7 +903,9 @@ mod tests {
         let fetched = get_workspace(&pool, "ws-1").await.unwrap();
         assert_eq!(fetched.local_root, "/home/user/project");
 
-        let by_root = get_workspace_by_local_root(&pool, "token-1", "/home/user/project").await.unwrap();
+        let by_root = get_workspace_by_local_root(&pool, "token-1", "/home/user/project")
+            .await
+            .unwrap();
         assert!(by_root.is_some());
     }
 
@@ -860,11 +913,18 @@ mod tests {
     async fn test_team_status() {
         let pool = setup_test_db().await;
 
-        let status = upsert_team_status(&pool, "proj-1", "alice", UpdateTeamStatus {
-            status: TeamMemberStatus::Active,
-            current_task: Some("Working on auth".to_string()),
-            current_files: Some(vec!["src/auth.rs".to_string()]),
-        }).await.unwrap();
+        let status = upsert_team_status(
+            &pool,
+            "proj-1",
+            "alice",
+            UpdateTeamStatus {
+                status: TeamMemberStatus::Active,
+                current_task: Some("Working on auth".to_string()),
+                current_files: Some(vec!["src/auth.rs".to_string()]),
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(status.username, "alice");
         assert_eq!(status.status_enum(), TeamMemberStatus::Active);

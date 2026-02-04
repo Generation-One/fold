@@ -206,24 +206,20 @@ pub async fn delete_chunks_for_project(pool: &DbPool, project_id: &str) -> Resul
 
 /// Count chunks for a memory.
 pub async fn count_chunks_for_memory(pool: &DbPool, memory_id: &str) -> Result<i64> {
-    let (count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM chunks WHERE memory_id = ?",
-    )
-    .bind(memory_id)
-    .fetch_one(pool)
-    .await?;
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM chunks WHERE memory_id = ?")
+        .bind(memory_id)
+        .fetch_one(pool)
+        .await?;
 
     Ok(count)
 }
 
 /// Count chunks for a project.
 pub async fn count_chunks_for_project(pool: &DbPool, project_id: &str) -> Result<i64> {
-    let (count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM chunks WHERE project_id = ?",
-    )
-    .bind(project_id)
-    .fetch_one(pool)
-    .await?;
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM chunks WHERE project_id = ?")
+        .bind(project_id)
+        .fetch_one(pool)
+        .await?;
 
     Ok(count)
 }

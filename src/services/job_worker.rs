@@ -17,7 +17,10 @@ use tracing::{debug, error, info, warn};
 
 use crate::db::{self, DbPool, JobType, LogLevel};
 use crate::error::{Error, Result};
-use crate::services::{EmbeddingService, GitHubService, GitLocalService, GitSyncService, IndexerService, LlmService, MemoryService, MetadataSyncService};
+use crate::services::{
+    EmbeddingService, GitHubService, GitLocalService, GitSyncService, IndexerService, LlmService,
+    MemoryService, MetadataSyncService,
+};
 
 /// Poll interval for checking new jobs (seconds)
 const POLL_INTERVAL_SECS: u64 = 2;
@@ -109,7 +112,9 @@ impl JobWorker {
         let initial_available = self.check_providers_available().await;
         *self.inner.providers_available.write().await = initial_available;
         if !initial_available {
-            warn!("LLM/embedding providers not available at startup - indexing jobs will be paused");
+            warn!(
+                "LLM/embedding providers not available at startup - indexing jobs will be paused"
+            );
         }
 
         // Spawn main worker loop
@@ -156,7 +161,11 @@ impl JobWorker {
             // Check active job count
             let active = *self.inner.active_jobs.read().await;
             if active >= MAX_CONCURRENT_JOBS {
-                debug!(active, max = MAX_CONCURRENT_JOBS, "At max concurrent jobs, waiting");
+                debug!(
+                    active,
+                    max = MAX_CONCURRENT_JOBS,
+                    "At max concurrent jobs, waiting"
+                );
                 sleep(Duration::from_secs(1)).await;
                 continue;
             }
@@ -274,12 +283,14 @@ impl JobWorker {
                 Ok(repos) => {
                     for repo in repos {
                         // Check if we should poll this repo based on its interval
-                        let interval_secs = repo.sync_cursor
+                        let interval_secs = repo
+                            .sync_cursor
                             .as_deref()
                             .and_then(|s| s.parse::<u64>().ok())
                             .unwrap_or(REPO_POLL_INTERVAL_SECS);
 
-                        let should_poll = repo.last_sync
+                        let should_poll = repo
+                            .last_sync
                             .as_ref()
                             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                             .map(|last| {
@@ -331,7 +342,9 @@ impl JobWorker {
     /// Poll a single repository for new commits.
     async fn poll_repository(&self, repo: &db::Repository) -> Result<usize> {
         // Fetch commits from GitHub since last sync
-        let commits = self.inner.github
+        let commits = self
+            .inner
+            .github
             .get_commits(
                 &repo.owner,
                 &repo.repo,
@@ -415,7 +428,9 @@ impl JobWorker {
                 &job_id,
                 retry_count + 1,
                 &worker.inner.worker_id,
-            ).await.ok();
+            )
+            .await
+            .ok();
 
             let start_time = Instant::now();
 
@@ -446,7 +461,8 @@ impl JobWorker {
                     status,
                     error.as_deref(),
                     duration_ms,
-                ).await;
+                )
+                .await;
             }
 
             // Handle result
@@ -487,7 +503,10 @@ impl JobWorker {
                 }
                 Ok(false) => {
                     // Job no longer owned by us, stop heartbeat
-                    warn!(job_id, "Job no longer owned by this worker, stopping heartbeat");
+                    warn!(
+                        job_id,
+                        "Job no longer owned by this worker, stopping heartbeat"
+                    );
                     break;
                 }
                 Err(e) => {
@@ -527,23 +546,21 @@ impl JobWorker {
                     *self.inner.providers_available.write().await = actually_available;
 
                     if !actually_available {
-                        warn!(
-                            job_id,
-                            job_type,
-                            "Providers unavailable - pausing job"
-                        );
+                        warn!(job_id, job_type, "Providers unavailable - pausing job");
                         self.log_job(
                             job_id,
                             LogLevel::Warn,
                             "Paused: LLM/embedding providers not available",
-                        ).await?;
+                        )
+                        .await?;
 
                         // Pause the job instead of failing
                         db::pause_job(
                             &self.inner.db,
                             job_id,
                             "LLM/embedding providers not available",
-                        ).await?;
+                        )
+                        .await?;
 
                         // Return a special error that the caller can detect
                         return Err(Error::Internal("PAUSED:providers_unavailable".to_string()));
@@ -580,7 +597,8 @@ impl JobWorker {
         let job = db::get_job(&self.inner.db, job_id).await?;
 
         // Get payload from job
-        let payload: serde_json::Value = job.payload
+        let payload: serde_json::Value = job
+            .payload
             .as_ref()
             .and_then(|p| serde_json::from_str(p).ok())
             .unwrap_or_default();
@@ -588,7 +606,8 @@ impl JobWorker {
         info!(job_id, payload = ?payload, "Processing webhook job");
 
         // Route webhook to appropriate handler based on event type
-        let event_type = payload.get("event_type")
+        let event_type = payload
+            .get("event_type")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
 
@@ -597,17 +616,25 @@ impl JobWorker {
                 // Process push event - index changed files
                 if let Err(e) = self.inner.git_sync.process_push_webhook(&payload).await {
                     warn!(error = %e, job_id, "Failed to process push webhook");
-                    return Err(Error::Internal(format!("Push webhook processing failed: {}", e)));
+                    return Err(Error::Internal(format!(
+                        "Push webhook processing failed: {}",
+                        e
+                    )));
                 }
-                self.log_job(job_id, LogLevel::Info, "Processed push webhook").await?;
+                self.log_job(job_id, LogLevel::Info, "Processed push webhook")
+                    .await?;
             }
             "pull_request" | "merge_request" => {
                 // Process PR/MR event
                 if let Err(e) = self.inner.git_sync.process_pr_webhook(&payload).await {
                     warn!(error = %e, job_id, "Failed to process PR webhook");
-                    return Err(Error::Internal(format!("PR webhook processing failed: {}", e)));
+                    return Err(Error::Internal(format!(
+                        "PR webhook processing failed: {}",
+                        e
+                    )));
                 }
-                self.log_job(job_id, LogLevel::Info, "Processed PR webhook").await?;
+                self.log_job(job_id, LogLevel::Info, "Processed PR webhook")
+                    .await?;
             }
             other => {
                 // Unknown event type - log and continue
@@ -615,7 +642,8 @@ impl JobWorker {
                     job_id,
                     LogLevel::Warn,
                     &format!("Unknown webhook event type: {}", other),
-                ).await?;
+                )
+                .await?;
             }
         }
 
@@ -626,7 +654,8 @@ impl JobWorker {
     async fn process_generate_summary(&self, job_id: &str) -> Result<()> {
         let job = db::get_job(&self.inner.db, job_id).await?;
 
-        let payload: serde_json::Value = job.payload
+        let payload: serde_json::Value = job
+            .payload
             .as_ref()
             .and_then(|p| serde_json::from_str(p).ok())
             .unwrap_or_default();
@@ -634,17 +663,20 @@ impl JobWorker {
         info!(job_id, "Generating summary");
 
         // Extract content to summarize from payload
-        let content = payload.get("content")
+        let content = payload
+            .get("content")
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
         if content.is_empty() {
-            self.log_job(job_id, LogLevel::Warn, "No content provided for summary").await?;
+            self.log_job(job_id, LogLevel::Warn, "No content provided for summary")
+                .await?;
             return Ok(());
         }
 
         // Get summary type for context
-        let summary_type = payload.get("summary_type")
+        let summary_type = payload
+            .get("summary_type")
             .and_then(|v| v.as_str())
             .unwrap_or("general");
 
@@ -674,8 +706,13 @@ impl JobWorker {
                 self.log_job(
                     job_id,
                     LogLevel::Info,
-                    &format!("Generated {} char summary for {}", summary.len(), summary_type),
-                ).await?;
+                    &format!(
+                        "Generated {} char summary for {}",
+                        summary.len(),
+                        summary_type
+                    ),
+                )
+                .await?;
 
                 // Store summary in job metadata for retrieval
                 let metadata = serde_json::json!({ "summary": summary });
@@ -686,8 +723,12 @@ impl JobWorker {
                     job_id,
                     LogLevel::Error,
                     &format!("Failed to generate summary: {}", e),
-                ).await?;
-                return Err(Error::Internal(format!("LLM summary generation failed: {}", e)));
+                )
+                .await?;
+                return Err(Error::Internal(format!(
+                    "LLM summary generation failed: {}",
+                    e
+                )));
             }
         }
 
@@ -698,7 +739,8 @@ impl JobWorker {
     async fn process_custom(&self, job_id: &str) -> Result<()> {
         let job = db::get_job(&self.inner.db, job_id).await?;
 
-        let payload: serde_json::Value = job.payload
+        let payload: serde_json::Value = job
+            .payload
             .as_ref()
             .and_then(|p| serde_json::from_str(p).ok())
             .unwrap_or_default();
@@ -708,7 +750,8 @@ impl JobWorker {
         // Custom jobs are entirely payload-driven
         // The payload should contain all necessary information
 
-        self.log_job(job_id, LogLevel::Info, "Custom job processed").await?;
+        self.log_job(job_id, LogLevel::Info, "Custom job processed")
+            .await?;
         Ok(())
     }
 
@@ -719,7 +762,9 @@ impl JobWorker {
 
         let job = db::get_job(&self.inner.db, job_id).await?;
 
-        let repo_id = job.repository_id.as_ref()
+        let repo_id = job
+            .repository_id
+            .as_ref()
             .ok_or_else(|| Error::Internal("Job missing repository_id".to_string()))?;
 
         // Get repository details
@@ -741,20 +786,29 @@ impl JobWorker {
             None => {
                 info!(job_id, repo = %repo.full_name(), "Cloning repository locally");
 
-                let cloned_path = self.inner.git_local.clone_repo(
-                    &project.slug,
-                    &repo.owner,
-                    &repo.repo,
-                    &repo.branch,
-                    &repo.access_token,
-                    &repo.provider,
-                ).await?;
+                let cloned_path = self
+                    .inner
+                    .git_local
+                    .clone_repo(
+                        &project.slug,
+                        &repo.owner,
+                        &repo.repo,
+                        &repo.branch,
+                        &repo.access_token,
+                        &repo.provider,
+                    )
+                    .await?;
 
                 let path_str = cloned_path.to_string_lossy().to_string();
-                db::update_repository(&self.inner.db, &repo.id, db::UpdateRepository {
-                    local_path: Some(path_str.clone()),
-                    ..Default::default()
-                }).await?;
+                db::update_repository(
+                    &self.inner.db,
+                    &repo.id,
+                    db::UpdateRepository {
+                        local_path: Some(path_str.clone()),
+                        ..Default::default()
+                    },
+                )
+                .await?;
 
                 repo.local_path = Some(path_str);
                 cloned_path
@@ -762,27 +816,36 @@ impl JobWorker {
         };
 
         // Pull latest changes
-        if let Err(e) = self.inner.git_local.pull_repo(
-            &local_path,
-            &repo.branch,
-            &repo.access_token,
-            &repo.provider,
-        ).await {
+        if let Err(e) = self
+            .inner
+            .git_local
+            .pull_repo(
+                &local_path,
+                &repo.branch,
+                &repo.access_token,
+                &repo.provider,
+            )
+            .await
+        {
             warn!(job_id, error = %e, "Failed to pull latest changes, using existing files");
         }
 
         // Extract files from job payload (set by webhook handler)
-        let payload: serde_json::Value = job.payload
+        let payload: serde_json::Value = job
+            .payload
             .as_ref()
             .and_then(|p| serde_json::from_str(p).ok())
             .unwrap_or_default();
 
         // Get files to index from payload
-        let files: Vec<String> = payload.get("files")
+        let files: Vec<String> = payload
+            .get("files")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
 
         let total = files.len();
@@ -790,7 +853,10 @@ impl JobWorker {
         let mut failed = 0i32;
 
         for (i, file_path) in files.iter().enumerate() {
-            match self.index_file_from_local(&local_path, &project, file_path).await {
+            match self
+                .index_file_from_local(&local_path, &project, file_path)
+                .await
+            {
                 Ok(()) => {
                     indexed += 1;
                     debug!(job_id, file = %file_path, "Indexed file");
@@ -806,7 +872,14 @@ impl JobWorker {
 
             // Log progress periodically
             if (i + 1) % 10 == 0 || i + 1 == total {
-                debug!(job_id, processed = i + 1, total, indexed, failed, "Index progress");
+                debug!(
+                    job_id,
+                    processed = i + 1,
+                    total,
+                    indexed,
+                    failed,
+                    "Index progress"
+                );
             }
         }
 
@@ -860,27 +933,30 @@ impl JobWorker {
         // Generate stable memory ID from path
         let memory_id = IndexerService::path_hash(&project.slug, file_path);
 
-        self.inner.memory.add(
-            &project.id,
-            &project.slug,
-            crate::models::MemoryCreate {
-                id: Some(memory_id),
-                memory_type: crate::models::MemoryType::Codebase,
-                content,
-                author: Some("system".to_string()),
-                source: Some(crate::models::MemorySource::File),
-                title: Some(title),
-                keywords: vec![],
-                tags: vec![lang.clone(), "code".to_string()],
-                context: None,
-                file_path: Some(file_path.to_string()),
-                language: Some(lang),
-                status: None,
-                assignee: None,
-                metadata: std::collections::HashMap::new(),
-            },
-            true, // auto_metadata
-        ).await?;
+        self.inner
+            .memory
+            .add(
+                &project.id,
+                &project.slug,
+                crate::models::MemoryCreate {
+                    id: Some(memory_id),
+                    memory_type: crate::models::MemoryType::Codebase,
+                    content,
+                    author: Some("system".to_string()),
+                    source: Some(crate::models::MemorySource::File),
+                    title: Some(title),
+                    keywords: vec![],
+                    tags: vec![lang.clone(), "code".to_string()],
+                    context: None,
+                    file_path: Some(file_path.to_string()),
+                    language: Some(lang),
+                    status: None,
+                    assignee: None,
+                    metadata: std::collections::HashMap::new(),
+                },
+                true, // auto_metadata
+            )
+            .await?;
 
         debug!(file = %file_path, "Indexed file from local clone");
         Ok(())
@@ -891,7 +967,9 @@ impl JobWorker {
     async fn process_reindex_repo(&self, job_id: &str) -> Result<()> {
         let job = db::get_job(&self.inner.db, job_id).await?;
 
-        let repo_id = job.repository_id.as_ref()
+        let repo_id = job
+            .repository_id
+            .as_ref()
             .ok_or_else(|| Error::Internal("Job missing repository_id".to_string()))?;
 
         let mut repo = db::get_repository(&self.inner.db, repo_id).await?;
@@ -914,29 +992,39 @@ impl JobWorker {
             None => {
                 info!(job_id, repo = %repo.full_name(), "Cloning repository locally");
 
-                let cloned_path = self.inner.git_local.clone_repo(
-                    &project.slug,
-                    &repo.owner,
-                    &repo.repo,
-                    &repo.branch,
-                    &repo.access_token,
-                    &repo.provider,
-                ).await?;
+                let cloned_path = self
+                    .inner
+                    .git_local
+                    .clone_repo(
+                        &project.slug,
+                        &repo.owner,
+                        &repo.repo,
+                        &repo.branch,
+                        &repo.access_token,
+                        &repo.provider,
+                    )
+                    .await?;
 
                 let path_str = cloned_path.to_string_lossy().to_string();
 
                 // Update repository record with local path
-                db::update_repository(&self.inner.db, &repo.id, db::UpdateRepository {
-                    local_path: Some(path_str.clone()),
-                    ..Default::default()
-                }).await?;
+                db::update_repository(
+                    &self.inner.db,
+                    &repo.id,
+                    db::UpdateRepository {
+                        local_path: Some(path_str.clone()),
+                        ..Default::default()
+                    },
+                )
+                .await?;
 
                 repo.local_path = Some(path_str.clone());
                 path_str
             }
         };
 
-        self.reindex_from_local(job_id, &repo, &project, &local_path).await
+        self.reindex_from_local(job_id, &repo, &project, &local_path)
+            .await
     }
 
     /// Reindex using local clone - indexes all files in the repository.
@@ -958,12 +1046,12 @@ impl JobWorker {
 
         // Pull latest changes first
         let path = PathBuf::from(local_path);
-        if let Err(e) = self.inner.git_local.pull_repo(
-            &path,
-            &repo.branch,
-            &repo.access_token,
-            &repo.provider,
-        ).await {
+        if let Err(e) = self
+            .inner
+            .git_local
+            .pull_repo(&path, &repo.branch, &repo.access_token, &repo.provider)
+            .await
+        {
             warn!(
                 job_id,
                 repo = %repo.full_name(),
@@ -985,11 +1073,16 @@ impl JobWorker {
         indexed_project.root_path = Some(local_path.to_string());
 
         // Use the indexer service for local file indexing
-        match self.inner.indexer.index_project(
-            &indexed_project,
-            Some("system"),
-            None, // No progress callback
-        ).await {
+        match self
+            .inner
+            .indexer
+            .index_project(
+                &indexed_project,
+                Some("system"),
+                None, // No progress callback
+            )
+            .await
+        {
             Ok(result) => {
                 self.log_job(
                     job_id,
@@ -1001,21 +1094,24 @@ impl JobWorker {
                         result.skipped_files,
                         result.errors
                     ),
-                ).await?;
+                )
+                .await?;
 
                 db::update_job_progress(
                     &self.inner.db,
                     job_id,
                     result.indexed_files as i32,
                     result.errors as i32,
-                ).await?;
+                )
+                .await?;
             }
             Err(e) => {
                 self.log_job(
                     job_id,
                     LogLevel::Error,
                     &format!("Local reindex failed: {}", e),
-                ).await?;
+                )
+                .await?;
                 return Err(e);
             }
         }
@@ -1027,7 +1123,9 @@ impl JobWorker {
     async fn process_index_history(&self, job_id: &str) -> Result<()> {
         let job = db::get_job(&self.inner.db, job_id).await?;
 
-        let repo_id = job.repository_id.as_ref()
+        let repo_id = job
+            .repository_id
+            .as_ref()
             .ok_or_else(|| Error::Internal("Job missing repository_id".to_string()))?;
 
         let repo = db::get_repository(&self.inner.db, repo_id).await?;
@@ -1043,8 +1141,17 @@ impl JobWorker {
         let token = &repo.access_token;
 
         // Get recent commits
-        let commits = self.inner.github
-            .get_commits(&repo.owner, &repo.repo, Some(&repo.branch), None, 100, token)
+        let commits = self
+            .inner
+            .github
+            .get_commits(
+                &repo.owner,
+                &repo.repo,
+                Some(&repo.branch),
+                None,
+                100,
+                token,
+            )
             .await
             .map_err(|e| Error::Internal(format!("Failed to get commits: {}", e)))?;
 
@@ -1090,7 +1197,9 @@ impl JobWorker {
     async fn process_sync_metadata(&self, job_id: &str) -> Result<()> {
         let job = db::get_job(&self.inner.db, job_id).await?;
 
-        let repo_id = job.repository_id.as_ref()
+        let repo_id = job
+            .repository_id
+            .as_ref()
             .ok_or_else(|| Error::Internal("Job missing repository_id".to_string()))?;
 
         let repo = db::get_repository(&self.inner.db, repo_id).await?;

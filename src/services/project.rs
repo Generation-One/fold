@@ -25,12 +25,12 @@ pub struct ProjectService {
 
 impl ProjectService {
     /// Create a new project service.
-    pub fn new(
-        db: DbPool,
-        qdrant: Arc<QdrantService>,
-        embeddings: Arc<EmbeddingService>,
-    ) -> Self {
-        Self { db, qdrant, embeddings }
+    pub fn new(db: DbPool, qdrant: Arc<QdrantService>, embeddings: Arc<EmbeddingService>) -> Self {
+        Self {
+            db,
+            qdrant,
+            embeddings,
+        }
     }
 
     /// Create a new project.

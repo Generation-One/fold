@@ -211,7 +211,12 @@ impl FileSourceProvider for GoogleDriveFileSource {
 
     fn supported_events(&self) -> Vec<&'static str> {
         // Google Drive can detect various file changes
-        vec!["file_created", "file_modified", "file_deleted", "file_moved"]
+        vec![
+            "file_created",
+            "file_modified",
+            "file_deleted",
+            "file_moved",
+        ]
     }
 
     async fn detect_changes(
@@ -379,7 +384,12 @@ mod tests {
         };
 
         let result = provider
-            .register_notifications(&source, "https://example.com/webhook", "secret", "fake-token")
+            .register_notifications(
+                &source,
+                "https://example.com/webhook",
+                "secret",
+                "fake-token",
+            )
             .await;
 
         assert!(result.is_ok());
@@ -403,9 +413,7 @@ mod tests {
             metadata: serde_json::json!({}),
         };
 
-        let result = provider
-            .detect_changes(&source, None, "fake-token")
-            .await;
+        let result = provider.detect_changes(&source, None, "fake-token").await;
 
         assert!(result.is_ok());
         let changes = result.unwrap();

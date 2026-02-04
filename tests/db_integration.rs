@@ -13,7 +13,9 @@ use fold::Result;
 
 /// Set up a fresh in-memory database with migrations applied.
 async fn setup_test_db() -> db::DbPool {
-    let pool = db::init_pool(":memory:").await.expect("Failed to init pool");
+    let pool = db::init_pool(":memory:")
+        .await
+        .expect("Failed to init pool");
     db::migrate(&pool).await.expect("Failed to run migrations");
     pool
 }
@@ -966,7 +968,10 @@ async fn test_link_create_and_get() -> Result<()> {
     assert_eq!(link.confidence, Some(0.9));
 
     let fetched = db::get_link(&pool, "link-1").await?;
-    assert_eq!(fetched.context, Some("Referenced in discussion".to_string()));
+    assert_eq!(
+        fetched.context,
+        Some("Referenced in discussion".to_string())
+    );
 
     Ok(())
 }

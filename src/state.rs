@@ -11,8 +11,8 @@ use crate::services::{
     LinkerService, LlmService, MemoryService, MetaStorageService, ProjectService, ProviderRegistry,
     QdrantService,
 };
-use std::path::PathBuf;
 use crate::{config, Result};
+use std::path::PathBuf;
 
 /// Application state shared across all handlers.
 #[derive(Clone)]
@@ -76,8 +76,13 @@ impl AppState {
         let providers = Arc::new(ProviderRegistry::with_defaults());
 
         // Initialize filesystem storage services
-        let meta_storage = Arc::new(MetaStorageService::new(PathBuf::from(&config.storage.fold_path)));
-        let content_resolver = Arc::new(ContentResolverService::new(db.clone(), meta_storage.clone()));
+        let meta_storage = Arc::new(MetaStorageService::new(PathBuf::from(
+            &config.storage.fold_path,
+        )));
+        let content_resolver = Arc::new(ContentResolverService::new(
+            db.clone(),
+            meta_storage.clone(),
+        ));
         let fold_storage = Arc::new(FoldStorageService::new());
 
         // Initialize high-level services with agentic memory
@@ -89,11 +94,7 @@ impl AppState {
             fold_storage.clone(),
         );
 
-        let project = ProjectService::new(
-            db.clone(),
-            qdrant.clone(),
-            embeddings.clone(),
-        );
+        let project = ProjectService::new(db.clone(), qdrant.clone(), embeddings.clone());
 
         // Initialize git service for auto-commit and sync
         let git_service = Arc::new(GitService::new(
@@ -105,11 +106,8 @@ impl AppState {
         ));
 
         // Initialize indexer with git service for auto-commit
-        let indexer = IndexerService::with_git_service(
-            memory.clone(),
-            llm.clone(),
-            git_service.clone(),
-        );
+        let indexer =
+            IndexerService::with_git_service(memory.clone(), llm.clone(), git_service.clone());
 
         let git_sync = GitSyncService::new(
             db.clone(),

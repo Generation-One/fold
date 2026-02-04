@@ -30,10 +30,7 @@ async fn test_mcp_tools_list_requires_authentication() {
         .unwrap();
 
     // No auth header - should fail at middleware
-    assert!(!request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(!request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -56,10 +53,7 @@ async fn test_mcp_tools_list_with_valid_token() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 // ============================================================================
@@ -87,10 +81,7 @@ async fn test_mcp_project_list_requires_authentication() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(!request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(!request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -116,10 +107,7 @@ async fn test_mcp_project_list_returns_only_accessible_projects() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -145,10 +133,7 @@ async fn test_mcp_project_list_admin_sees_all() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 // ============================================================================
@@ -179,10 +164,7 @@ async fn test_mcp_memory_add_requires_authentication() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(!request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(!request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -213,10 +195,7 @@ async fn test_mcp_memory_add_requires_project_write_access() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -248,10 +227,7 @@ async fn test_mcp_memory_add_with_valid_project_access() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 // ============================================================================
@@ -282,10 +258,7 @@ async fn test_mcp_memory_search_requires_authentication() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(!request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(!request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -315,10 +288,7 @@ async fn test_mcp_memory_search_requires_project_read_access() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -348,10 +318,7 @@ async fn test_mcp_memory_search_returns_only_accessible_results() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 // ============================================================================
@@ -381,10 +348,7 @@ async fn test_mcp_memory_list_requires_authentication() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(!request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(!request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -413,10 +377,7 @@ async fn test_mcp_memory_list_requires_project_read_access() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 // ============================================================================
@@ -448,10 +409,7 @@ async fn test_mcp_memory_context_requires_authentication() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(!request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(!request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -480,10 +438,7 @@ async fn test_mcp_memory_context_requires_project_read_access() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 // ============================================================================
@@ -516,10 +471,7 @@ async fn test_mcp_memory_link_add_requires_authentication() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(!request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(!request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -550,10 +502,7 @@ async fn test_mcp_memory_link_add_requires_project_write_access() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 // ============================================================================
@@ -583,10 +532,7 @@ async fn test_mcp_codebase_index_requires_authentication() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(!request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(!request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -615,10 +561,7 @@ async fn test_mcp_codebase_index_requires_project_write_access() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -645,10 +588,7 @@ async fn test_mcp_codebase_search_requires_authentication() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(!request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(!request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -677,10 +617,7 @@ async fn test_mcp_codebase_search_requires_project_read_access() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 // ============================================================================
@@ -707,10 +644,7 @@ async fn test_mcp_invalid_method_returns_method_not_found() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -739,8 +673,5 @@ async fn test_mcp_token_scoping_affects_all_tools() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }

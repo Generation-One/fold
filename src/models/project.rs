@@ -60,7 +60,12 @@ pub struct ProjectMember {
 }
 
 impl ProjectMember {
-    pub fn new(user_id: String, project_id: String, role: ProjectRole, added_by: Option<String>) -> Self {
+    pub fn new(
+        user_id: String,
+        project_id: String,
+        role: ProjectRole,
+        added_by: Option<String>,
+    ) -> Self {
         Self {
             user_id,
             project_id,
@@ -375,14 +380,22 @@ impl Project {
             // Metadata storage is always enabled (internal mode)
             metadata_repo_enabled: true,
             metadata_repo_mode: Some(mode.to_string()),
-            metadata_repo_provider: data.meta_source_config.as_ref()
-                .and_then(|c| c.get("provider").and_then(|v| v.as_str().map(|s| s.to_string()))),
-            metadata_repo_owner: data.meta_source_config.as_ref()
-                .and_then(|c| c.get("owner").and_then(|v| v.as_str().map(|s| s.to_string()))),
-            metadata_repo_name: data.meta_source_config.as_ref()
-                .and_then(|c| c.get("repo").and_then(|v| v.as_str().map(|s| s.to_string()))),
-            metadata_repo_branch: data.meta_source_config.as_ref()
-                .and_then(|c| c.get("branch").and_then(|v| v.as_str().map(|s| s.to_string()))),
+            metadata_repo_provider: data.meta_source_config.as_ref().and_then(|c| {
+                c.get("provider")
+                    .and_then(|v| v.as_str().map(|s| s.to_string()))
+            }),
+            metadata_repo_owner: data.meta_source_config.as_ref().and_then(|c| {
+                c.get("owner")
+                    .and_then(|v| v.as_str().map(|s| s.to_string()))
+            }),
+            metadata_repo_name: data.meta_source_config.as_ref().and_then(|c| {
+                c.get("repo")
+                    .and_then(|v| v.as_str().map(|s| s.to_string()))
+            }),
+            metadata_repo_branch: data.meta_source_config.as_ref().and_then(|c| {
+                c.get("branch")
+                    .and_then(|v| v.as_str().map(|s| s.to_string()))
+            }),
             metadata_repo_token: None, // Set separately for security
             metadata_repo_source_id: data.meta_source_id,
             metadata_repo_path_prefix: data.meta_path.or_else(|| Some(".fold/".to_string())),
@@ -485,7 +498,9 @@ impl Project {
 
     /// Get the meta storage base path
     pub fn meta_base_path(&self) -> String {
-        self.metadata_repo_path_prefix.clone().unwrap_or_else(|| ".fold/".to_string())
+        self.metadata_repo_path_prefix
+            .clone()
+            .unwrap_or_else(|| ".fold/".to_string())
     }
 
     /// Check if metadata repo sync is enabled

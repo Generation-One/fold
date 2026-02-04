@@ -37,14 +37,13 @@ use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
 use crate::db::{
-    create_llm_provider, create_embedding_provider, create_provider_oauth_state,
-    delete_llm_provider, delete_embedding_provider, delete_provider_oauth_state,
-    get_llm_provider, get_llm_provider_by_name, get_embedding_provider,
-    get_embedding_provider_by_name, get_valid_provider_oauth_state,
-    list_llm_providers, list_embedding_providers, seed_claudecode_provider_async,
-    update_llm_provider, update_embedding_provider, CreateLlmProvider,
-    CreateEmbeddingProvider, CreateProviderOAuthState, LlmProviderRow,
-    UpdateLlmProvider, UpdateEmbeddingProvider,
+    create_embedding_provider, create_llm_provider, create_provider_oauth_state,
+    delete_embedding_provider, delete_llm_provider, delete_provider_oauth_state,
+    get_embedding_provider, get_embedding_provider_by_name, get_llm_provider,
+    get_llm_provider_by_name, get_valid_provider_oauth_state, list_embedding_providers,
+    list_llm_providers, seed_claudecode_provider_async, update_embedding_provider,
+    update_llm_provider, CreateEmbeddingProvider, CreateLlmProvider, CreateProviderOAuthState,
+    LlmProviderRow, UpdateEmbeddingProvider, UpdateLlmProvider,
 };
 use crate::services::{ClaudeCodeInfo, ClaudeCodeService};
 use crate::{AppState, Error, Result};
@@ -80,20 +79,22 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         // LLM provider routes
         .route("/llm", get(list_llm).post(create_llm))
-        .route(
-            "/llm/:id",
-            get(get_llm).put(update_llm).delete(delete_llm),
-        )
+        .route("/llm/:id", get(get_llm).put(update_llm).delete(delete_llm))
         .route("/llm/:id/test", post(test_llm))
         // Claude Code token management
         .route("/llm/claudecode/status", get(claudecode_status))
         .route("/llm/claudecode/import", post(import_claudecode_token))
-        .route("/llm/claudecode/auto-import", post(auto_import_claudecode_token))
+        .route(
+            "/llm/claudecode/auto-import",
+            post(auto_import_claudecode_token),
+        )
         // Embedding provider routes
         .route("/embedding", get(list_embedding).post(create_embedding))
         .route(
             "/embedding/:id",
-            get(get_embedding).put(update_embedding).delete(delete_embedding),
+            get(get_embedding)
+                .put(update_embedding)
+                .delete(delete_embedding),
         )
         .route("/embedding/:id/test", post(test_embedding))
 }
@@ -102,7 +103,10 @@ pub fn routes() -> Router<AppState> {
 /// These routes initiate OAuth flows and handle callbacks.
 pub fn oauth_routes() -> Router<AppState> {
     Router::new()
-        .route("/:provider_type/:provider_name/oauth/authorize", get(oauth_authorize))
+        .route(
+            "/:provider_type/:provider_name/oauth/authorize",
+            get(oauth_authorize),
+        )
         .route("/oauth/callback", get(oauth_callback))
 }
 
@@ -171,6 +175,7 @@ pub struct ImportClaudeCodeTokenRequest {
     /// The OAuth access token from Claude Code
     pub access_token: String,
     /// Optional refresh token
+    #[allow(dead_code)]
     pub refresh_token: Option<String>,
     /// Optional subscription type (max, pro)
     pub subscription_type: Option<String>,
@@ -494,7 +499,10 @@ async fn test_llm(
         .ok_or_else(|| Error::NotFound(format!("LLM provider not found: {}", id)))?;
 
     // Check if provider has credentials
-    let api_key = provider.api_key.as_ref().or(provider.oauth_access_token.as_ref());
+    let api_key = provider
+        .api_key
+        .as_ref()
+        .or(provider.oauth_access_token.as_ref());
     if api_key.is_none() {
         return Ok(Json(ProviderTestResponse {
             success: false,
@@ -510,7 +518,9 @@ async fn test_llm(
     let api_key = api_key.unwrap();
 
     // Get model with default fallback
-    let model = provider.model().unwrap_or_else(|| default_model_for_provider(&provider.name));
+    let model = provider
+        .model()
+        .unwrap_or_else(|| default_model_for_provider(&provider.name));
 
     let client = reqwest::Client::new();
     let start = Instant::now();
@@ -522,36 +532,35 @@ async fn test_llm(
         "anthropic" => test_anthropic_llm(&client, api_key, &model).await,
         "claudecode" => test_claudecode_llm(&client, api_key, &model).await,
         "openrouter" => test_openrouter_llm(&client, api_key, &model).await,
-        _ => Err(("UNSUPPORTED_PROVIDER".to_string(), format!("Unknown provider: {}", provider.name))),
+        _ => Err((
+            "UNSUPPORTED_PROVIDER".to_string(),
+            format!("Unknown provider: {}", provider.name),
+        )),
     };
 
     let latency_ms = start.elapsed().as_millis() as u64;
 
     match result {
-        Ok((response_preview, usage)) => {
-            Ok(Json(ProviderTestResponse {
-                success: true,
-                message: format!("Provider '{}' is working correctly", provider.name),
-                latency_ms: Some(latency_ms),
-                model: Some(model),
-                response_preview: Some(response_preview),
-                error_code: None,
-                error_details: None,
-                usage: Some(usage),
-            }))
-        }
-        Err((error_code, error_details)) => {
-            Ok(Json(ProviderTestResponse {
-                success: false,
-                message: format!("Provider '{}' test failed", provider.name),
-                latency_ms: Some(latency_ms),
-                model: Some(model),
-                response_preview: None,
-                error_code: Some(error_code),
-                error_details: Some(error_details),
-                usage: None,
-            }))
-        }
+        Ok((response_preview, usage)) => Ok(Json(ProviderTestResponse {
+            success: true,
+            message: format!("Provider '{}' is working correctly", provider.name),
+            latency_ms: Some(latency_ms),
+            model: Some(model),
+            response_preview: Some(response_preview),
+            error_code: None,
+            error_details: None,
+            usage: Some(usage),
+        })),
+        Err((error_code, error_details)) => Ok(Json(ProviderTestResponse {
+            success: false,
+            message: format!("Provider '{}' test failed", provider.name),
+            latency_ms: Some(latency_ms),
+            model: Some(model),
+            response_preview: None,
+            error_code: Some(error_code),
+            error_details: Some(error_details),
+            usage: None,
+        })),
     }
 }
 
@@ -605,7 +614,11 @@ async fn test_gemini_llm(
         }
     });
 
-    let response = client.post(&url).json(&body).send().await
+    let response = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
         .map_err(|e| ("REQUEST_FAILED".to_string(), e.to_string()))?;
 
     if !response.status().is_success() {
@@ -614,7 +627,9 @@ async fn test_gemini_llm(
         return Err((format!("HTTP_{}", status), error_text));
     }
 
-    let json: JsonValue = response.json().await
+    let json: JsonValue = response
+        .json()
+        .await
         .map_err(|e| ("PARSE_ERROR".to_string(), e.to_string()))?;
 
     let text = json["candidates"][0]["content"]["parts"][0]["text"]
@@ -657,7 +672,9 @@ async fn test_openai_llm(
         return Err((format!("HTTP_{}", status), error_text));
     }
 
-    let json: JsonValue = response.json().await
+    let json: JsonValue = response
+        .json()
+        .await
         .map_err(|e| ("PARSE_ERROR".to_string(), e.to_string()))?;
 
     let text = json["choices"][0]["message"]["content"]
@@ -702,7 +719,9 @@ async fn test_anthropic_llm(
         return Err((format!("HTTP_{}", status), error_text));
     }
 
-    let json: JsonValue = response.json().await
+    let json: JsonValue = response
+        .json()
+        .await
         .map_err(|e| ("PARSE_ERROR".to_string(), e.to_string()))?;
 
     let text = json["content"][0]["text"]
@@ -714,8 +733,8 @@ async fn test_anthropic_llm(
         input_tokens: json["usage"]["input_tokens"].as_i64(),
         output_tokens: json["usage"]["output_tokens"].as_i64(),
         total_tokens: Some(
-            json["usage"]["input_tokens"].as_i64().unwrap_or(0) +
-            json["usage"]["output_tokens"].as_i64().unwrap_or(0)
+            json["usage"]["input_tokens"].as_i64().unwrap_or(0)
+                + json["usage"]["output_tokens"].as_i64().unwrap_or(0),
         ),
     };
 
@@ -738,7 +757,10 @@ async fn test_claudecode_llm(
         .post("https://api.anthropic.com/v1/messages")
         .header("Authorization", format!("Bearer {}", oauth_token))
         .header("anthropic-version", "2023-06-01")
-        .header("anthropic-beta", "oauth-2025-04-20, claude-code-20250219, interleaved-thinking-2025-05-14")
+        .header(
+            "anthropic-beta",
+            "oauth-2025-04-20, claude-code-20250219, interleaved-thinking-2025-05-14",
+        )
         .header("content-type", "application/json")
         .json(&body)
         .send()
@@ -751,7 +773,9 @@ async fn test_claudecode_llm(
         return Err((format!("HTTP_{}", status), error_text));
     }
 
-    let json: JsonValue = response.json().await
+    let json: JsonValue = response
+        .json()
+        .await
         .map_err(|e| ("PARSE_ERROR".to_string(), e.to_string()))?;
 
     let text = json["content"][0]["text"]
@@ -763,8 +787,8 @@ async fn test_claudecode_llm(
         input_tokens: json["usage"]["input_tokens"].as_i64(),
         output_tokens: json["usage"]["output_tokens"].as_i64(),
         total_tokens: Some(
-            json["usage"]["input_tokens"].as_i64().unwrap_or(0) +
-            json["usage"]["output_tokens"].as_i64().unwrap_or(0)
+            json["usage"]["input_tokens"].as_i64().unwrap_or(0)
+                + json["usage"]["output_tokens"].as_i64().unwrap_or(0),
         ),
     };
 
@@ -798,7 +822,9 @@ async fn test_openrouter_llm(
         return Err((format!("HTTP_{}", status), error_text));
     }
 
-    let json: JsonValue = response.json().await
+    let json: JsonValue = response
+        .json()
+        .await
         .map_err(|e| ("PARSE_ERROR".to_string(), e.to_string()))?;
 
     let text = json["choices"][0]["message"]["content"]
@@ -1028,7 +1054,10 @@ async fn test_embedding(
         .ok_or_else(|| Error::NotFound(format!("Embedding provider not found: {}", id)))?;
 
     // Check if provider has credentials
-    let api_key = provider.api_key.as_ref().or(provider.oauth_access_token.as_ref());
+    let api_key = provider
+        .api_key
+        .as_ref()
+        .or(provider.oauth_access_token.as_ref());
     if api_key.is_none() {
         return Ok(Json(ProviderTestResponse {
             success: false,
@@ -1044,8 +1073,12 @@ async fn test_embedding(
     let api_key = api_key.unwrap();
 
     // Get model and dimension with defaults
-    let model = provider.model().unwrap_or_else(|| default_embedding_model_for_provider(&provider.name));
-    let dimension = provider.dimension().unwrap_or_else(|| default_dimension_for_provider(&provider.name));
+    let model = provider
+        .model()
+        .unwrap_or_else(|| default_embedding_model_for_provider(&provider.name));
+    let dimension = provider
+        .dimension()
+        .unwrap_or_else(|| default_dimension_for_provider(&provider.name));
 
     let client = reqwest::Client::new();
     let start = Instant::now();
@@ -1054,7 +1087,10 @@ async fn test_embedding(
     let result = match provider.name.as_str() {
         "gemini" => test_gemini_embedding(&client, api_key, &model).await,
         "openai" => test_openai_embedding(&client, api_key, &model).await,
-        _ => Err(("UNSUPPORTED_PROVIDER".to_string(), format!("Unknown provider: {}", provider.name))),
+        _ => Err((
+            "UNSUPPORTED_PROVIDER".to_string(),
+            format!("Unknown provider: {}", provider.name),
+        )),
     };
 
     let latency_ms = start.elapsed().as_millis() as u64;
@@ -1066,7 +1102,11 @@ async fn test_embedding(
                 "Embedding dimension: {} (expected: {}){}",
                 embedding_dim,
                 dimension,
-                if dimension_match { " ✓" } else { " ✗ MISMATCH" }
+                if dimension_match {
+                    " ✓"
+                } else {
+                    " ✗ MISMATCH"
+                }
             );
 
             Ok(Json(ProviderTestResponse {
@@ -1082,23 +1122,25 @@ async fn test_embedding(
                 latency_ms: Some(latency_ms),
                 model: Some(model),
                 response_preview: Some(preview),
-                error_code: if dimension_match { None } else { Some("DIMENSION_MISMATCH".to_string()) },
+                error_code: if dimension_match {
+                    None
+                } else {
+                    Some("DIMENSION_MISMATCH".to_string())
+                },
                 error_details: None,
                 usage: Some(usage),
             }))
         }
-        Err((error_code, error_details)) => {
-            Ok(Json(ProviderTestResponse {
-                success: false,
-                message: format!("Provider '{}' test failed", provider.name),
-                latency_ms: Some(latency_ms),
-                model: Some(model),
-                response_preview: None,
-                error_code: Some(error_code),
-                error_details: Some(error_details),
-                usage: None,
-            }))
-        }
+        Err((error_code, error_details)) => Ok(Json(ProviderTestResponse {
+            success: false,
+            message: format!("Provider '{}' test failed", provider.name),
+            latency_ms: Some(latency_ms),
+            model: Some(model),
+            response_preview: None,
+            error_code: Some(error_code),
+            error_details: Some(error_details),
+            usage: None,
+        })),
     }
 }
 
@@ -1120,7 +1162,11 @@ async fn test_gemini_embedding(
         }
     });
 
-    let response = client.post(&url).json(&body).send().await
+    let response = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
         .map_err(|e| ("REQUEST_FAILED".to_string(), e.to_string()))?;
 
     if !response.status().is_success() {
@@ -1129,12 +1175,17 @@ async fn test_gemini_embedding(
         return Err((format!("HTTP_{}", status), error_text));
     }
 
-    let json: JsonValue = response.json().await
+    let json: JsonValue = response
+        .json()
+        .await
         .map_err(|e| ("PARSE_ERROR".to_string(), e.to_string()))?;
 
-    let embedding = json["embedding"]["values"]
-        .as_array()
-        .ok_or_else(|| ("INVALID_RESPONSE".to_string(), "No embedding values in response".to_string()))?;
+    let embedding = json["embedding"]["values"].as_array().ok_or_else(|| {
+        (
+            "INVALID_RESPONSE".to_string(),
+            "No embedding values in response".to_string(),
+        )
+    })?;
 
     let usage = ProviderTestUsage {
         input_tokens: Some(1), // Gemini doesn't return token count for embeddings
@@ -1170,12 +1221,17 @@ async fn test_openai_embedding(
         return Err((format!("HTTP_{}", status), error_text));
     }
 
-    let json: JsonValue = response.json().await
+    let json: JsonValue = response
+        .json()
+        .await
         .map_err(|e| ("PARSE_ERROR".to_string(), e.to_string()))?;
 
-    let embedding = json["data"][0]["embedding"]
-        .as_array()
-        .ok_or_else(|| ("INVALID_RESPONSE".to_string(), "No embedding in response".to_string()))?;
+    let embedding = json["data"][0]["embedding"].as_array().ok_or_else(|| {
+        (
+            "INVALID_RESPONSE".to_string(),
+            "No embedding in response".to_string(),
+        )
+    })?;
 
     let usage = ProviderTestUsage {
         input_tokens: json["usage"]["prompt_tokens"].as_i64(),
@@ -1368,11 +1424,15 @@ async fn oauth_callback(
         .map_err(|e| Error::Internal(format!("Failed to parse token response: {}", e)))?;
 
     // Calculate token expiry
-    let expires_at = tokens.expires_in.map(|secs| Utc::now() + chrono::Duration::seconds(secs));
+    let expires_at = tokens
+        .expires_in
+        .map(|secs| Utc::now() + chrono::Duration::seconds(secs));
 
     // Update provider with OAuth tokens
     if oauth_state.provider_type == "llm" {
-        if let Some(provider) = get_llm_provider_by_name(&state.db, &oauth_state.provider_name).await? {
+        if let Some(provider) =
+            get_llm_provider_by_name(&state.db, &oauth_state.provider_name).await?
+        {
             update_llm_provider(
                 &state.db,
                 &provider.id,
@@ -1386,7 +1446,9 @@ async fn oauth_callback(
             .await?;
         }
     } else if oauth_state.provider_type == "embedding" {
-        if let Some(provider) = get_embedding_provider_by_name(&state.db, &oauth_state.provider_name).await? {
+        if let Some(provider) =
+            get_embedding_provider_by_name(&state.db, &oauth_state.provider_name).await?
+        {
             update_embedding_provider(
                 &state.db,
                 &provider.id,
@@ -1501,13 +1563,15 @@ async fn auto_import_claudecode_token(
     }
 
     // Read credentials
-    let creds = claudecode_service.read_credentials().map_err(|e| {
-        Error::Internal(format!("Failed to read Claude Code credentials: {}", e))
-    })?;
+    let creds = claudecode_service
+        .read_credentials()
+        .map_err(|e| Error::Internal(format!("Failed to read Claude Code credentials: {}", e)))?;
 
     // Get access token
     let access_token = creds.access_token().ok_or_else(|| {
-        Error::Validation("Claude Code token is expired. Please run 'claude login' again.".to_string())
+        Error::Validation(
+            "Claude Code token is expired. Please run 'claude login' again.".to_string(),
+        )
     })?;
 
     info!(
@@ -1516,12 +1580,8 @@ async fn auto_import_claudecode_token(
     );
 
     // Create or update the claudecode provider
-    let provider = seed_claudecode_provider_async(
-        &state.db,
-        access_token,
-        creds.subscription_type(),
-    )
-    .await?;
+    let provider =
+        seed_claudecode_provider_async(&state.db, access_token, creds.subscription_type()).await?;
 
     info!(
         provider_id = %provider.id,

@@ -229,10 +229,7 @@ pub enum ChangeEvent {
     BranchDeleted { branch: String },
 
     /// A tag was created.
-    TagCreated {
-        tag: String,
-        sha: String,
-    },
+    TagCreated { tag: String, sha: String },
 
     /// A sync/refresh completed (for polling providers).
     SyncCompleted {

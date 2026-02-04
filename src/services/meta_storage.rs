@@ -102,12 +102,14 @@ impl MetaStorageService {
     /// Ensure project directory structure exists.
     pub async fn ensure_project_dirs(&self, project_slug: &str) -> Result<()> {
         let project_path = self.project_path(project_slug);
-        fs::create_dir_all(project_path.join("memories")).await.map_err(|e| {
-            Error::Internal(format!("Failed to create project directories: {}", e))
-        })?;
-        fs::create_dir_all(project_path.join("attachments")).await.map_err(|e| {
-            Error::Internal(format!("Failed to create attachments directory: {}", e))
-        })?;
+        fs::create_dir_all(project_path.join("memories"))
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to create project directories: {}", e)))?;
+        fs::create_dir_all(project_path.join("attachments"))
+            .await
+            .map_err(|e| {
+                Error::Internal(format!("Failed to create attachments directory: {}", e))
+            })?;
         Ok(())
     }
 
@@ -123,12 +125,12 @@ impl MetaStorageService {
 
         // Use atomic write: write to temp file then rename
         let temp_path = path.with_extension("tmp");
-        fs::write(&temp_path, content).await.map_err(|e| {
-            Error::Internal(format!("Failed to write memory file: {}", e))
-        })?;
-        fs::rename(&temp_path, &path).await.map_err(|e| {
-            Error::Internal(format!("Failed to rename memory file: {}", e))
-        })?;
+        fs::write(&temp_path, content)
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to write memory file: {}", e)))?;
+        fs::rename(&temp_path, &path)
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to rename memory file: {}", e)))?;
 
         Ok(())
     }
@@ -152,12 +154,12 @@ impl MetaStorageService {
             updated_at: Some(memory.updated_at),
         };
 
-        let yaml = serde_yaml::to_string(&frontmatter).map_err(|e| {
-            Error::Internal(format!("Failed to serialize frontmatter: {}", e))
-        })?;
+        let yaml = serde_yaml::to_string(&frontmatter)
+            .map_err(|e| Error::Internal(format!("Failed to serialize frontmatter: {}", e)))?;
 
         let file_content = format!("---\n{}---\n\n{}", yaml, content);
-        self.write_memory(project_slug, &memory.id, &file_content).await
+        self.write_memory(project_slug, &memory.id, &file_content)
+            .await
     }
 
     /// Read raw memory content from the filesystem (includes frontmatter if present).
@@ -166,9 +168,9 @@ impl MetaStorageService {
         if !path.exists() {
             return Ok(None);
         }
-        let content = fs::read_to_string(&path).await.map_err(|e| {
-            Error::Internal(format!("Failed to read memory file: {}", e))
-        })?;
+        let content = fs::read_to_string(&path)
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to read memory file: {}", e)))?;
         Ok(Some(content))
     }
 
@@ -252,9 +254,8 @@ impl MetaStorageService {
             }
         };
 
-        let frontmatter: MemoryFrontmatter = serde_yaml::from_str(yaml_str).map_err(|e| {
-            Error::Internal(format!("Failed to parse frontmatter: {}", e))
-        })?;
+        let frontmatter: MemoryFrontmatter = serde_yaml::from_str(yaml_str)
+            .map_err(|e| Error::Internal(format!("Failed to parse frontmatter: {}", e)))?;
 
         Ok(MemoryFileContent {
             id: frontmatter.id,
@@ -294,9 +295,9 @@ impl MetaStorageService {
     pub async fn delete_memory(&self, project_slug: &str, memory_id: &str) -> Result<()> {
         let path = self.memory_path(project_slug, memory_id);
         if path.exists() {
-            fs::remove_file(&path).await.map_err(|e| {
-                Error::Internal(format!("Failed to delete memory file: {}", e))
-            })?;
+            fs::remove_file(&path)
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to delete memory file: {}", e)))?;
         }
         Ok(())
     }
@@ -308,14 +309,16 @@ impl MetaStorageService {
             return Ok(vec![]);
         }
 
-        let mut entries = fs::read_dir(&memories_path).await.map_err(|e| {
-            Error::Internal(format!("Failed to read memories directory: {}", e))
-        })?;
+        let mut entries = fs::read_dir(&memories_path)
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to read memories directory: {}", e)))?;
 
         let mut ids = Vec::new();
-        while let Some(entry) = entries.next_entry().await.map_err(|e| {
-            Error::Internal(format!("Failed to read directory entry: {}", e))
-        })? {
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to read directory entry: {}", e)))?
+        {
             if let Some(name) = entry.file_name().to_str() {
                 if name.ends_with(".md") {
                     ids.push(name.trim_end_matches(".md").to_string());
@@ -334,10 +337,16 @@ mod tests {
     #[test]
     fn test_strip_frontmatter() {
         let with_fm = "---\nid: test\ntype: session\n---\n\nContent here";
-        assert_eq!(MetaStorageService::strip_frontmatter(with_fm), "Content here");
+        assert_eq!(
+            MetaStorageService::strip_frontmatter(with_fm),
+            "Content here"
+        );
 
         let without_fm = "Just content";
-        assert_eq!(MetaStorageService::strip_frontmatter(without_fm), "Just content");
+        assert_eq!(
+            MetaStorageService::strip_frontmatter(without_fm),
+            "Just content"
+        );
 
         let empty_content = "---\nid: test\n---\n";
         assert_eq!(MetaStorageService::strip_frontmatter(empty_content), "");

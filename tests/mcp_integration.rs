@@ -143,8 +143,14 @@ async fn extract_json(response: axum::response::Response) -> Value {
 fn verify_success_response(response: &Value, expected_id: i64) {
     assert_eq!(response["jsonrpc"], "2.0", "jsonrpc version should be 2.0");
     assert_eq!(response["id"], expected_id, "id should match request");
-    assert!(response["result"].is_object() || response["result"].is_array(), "result should be present");
-    assert!(response["error"].is_null(), "error should be null on success");
+    assert!(
+        response["result"].is_object() || response["result"].is_array(),
+        "result should be present"
+    );
+    assert!(
+        response["error"].is_null(),
+        "error should be null on success"
+    );
 }
 
 /// Verify JSON-RPC error response structure.
@@ -152,9 +158,15 @@ fn verify_success_response(response: &Value, expected_id: i64) {
 fn verify_error_response(response: &Value, expected_id: i64, expected_code: i32) {
     assert_eq!(response["jsonrpc"], "2.0", "jsonrpc version should be 2.0");
     assert_eq!(response["id"], expected_id, "id should match request");
-    assert!(response["result"].is_null(), "result should be null on error");
+    assert!(
+        response["result"].is_null(),
+        "result should be null on error"
+    );
     assert!(response["error"].is_object(), "error should be present");
-    assert_eq!(response["error"]["code"], expected_code, "error code should match");
+    assert_eq!(
+        response["error"]["code"], expected_code,
+        "error code should match"
+    );
 }
 
 /// Verify MCP tool call response structure.
@@ -185,7 +197,9 @@ async fn test_mcp_requires_auth() {
         .method("POST")
         .uri("/mcp")
         .header("Content-Type", "application/json")
-        .body(Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#))
+        .body(Body::from(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+        ))
         .unwrap();
 
     // Without a real app router, we verify the token validation logic
@@ -193,7 +207,10 @@ async fn test_mcp_requires_auth() {
     let token = "invalid_token";
 
     // This tests the token format validation
-    assert!(!token.starts_with("fold_"), "Invalid token should not have fold_ prefix");
+    assert!(
+        !token.starts_with("fold_"),
+        "Invalid token should not have fold_ prefix"
+    );
 }
 
 /// Test JSON-RPC version validation.
@@ -207,7 +224,10 @@ async fn test_jsonrpc_version_validation() {
         "params": {}
     });
 
-    assert_ne!(invalid_request["jsonrpc"], "2.0", "Test setup: version should be invalid");
+    assert_ne!(
+        invalid_request["jsonrpc"], "2.0",
+        "Test setup: version should be invalid"
+    );
 }
 
 /// Test JSON-RPC error codes are correct.
@@ -476,7 +496,9 @@ async fn test_files_upload_schema() {
     assert!(required.contains(&json!("project")));
     assert!(required.contains(&json!("files")));
 
-    let file_item_required = schema["properties"]["files"]["items"]["required"].as_array().unwrap();
+    let file_item_required = schema["properties"]["files"]["items"]["required"]
+        .as_array()
+        .unwrap();
     assert!(file_item_required.contains(&json!("path")));
     assert!(file_item_required.contains(&json!("content")));
 }
@@ -493,7 +515,10 @@ async fn test_resources_list_empty() {
     });
 
     assert!(expected_response["resources"].is_array());
-    assert!(expected_response["resources"].as_array().unwrap().is_empty());
+    assert!(expected_response["resources"]
+        .as_array()
+        .unwrap()
+        .is_empty());
 }
 
 // ============================================================================
@@ -587,34 +612,31 @@ async fn test_memory_list_filters() -> Result<()> {
     .await?;
 
     // List all memories for project
-    let all_memories: Vec<(String,)> = sqlx::query_as(
-        "SELECT id FROM memories WHERE project_id = ?"
-    )
-    .bind("proj-mem")
-    .fetch_all(&pool)
-    .await?;
+    let all_memories: Vec<(String,)> =
+        sqlx::query_as("SELECT id FROM memories WHERE project_id = ?")
+            .bind("proj-mem")
+            .fetch_all(&pool)
+            .await?;
 
     assert_eq!(all_memories.len(), 3);
 
     // List session memories only
-    let session_memories: Vec<(String,)> = sqlx::query_as(
-        "SELECT id FROM memories WHERE project_id = ? AND type = ?"
-    )
-    .bind("proj-mem")
-    .bind("session")
-    .fetch_all(&pool)
-    .await?;
+    let session_memories: Vec<(String,)> =
+        sqlx::query_as("SELECT id FROM memories WHERE project_id = ? AND type = ?")
+            .bind("proj-mem")
+            .bind("session")
+            .fetch_all(&pool)
+            .await?;
 
     assert_eq!(session_memories.len(), 2);
 
     // List memories by author
-    let user1_memories: Vec<(String,)> = sqlx::query_as(
-        "SELECT id FROM memories WHERE project_id = ? AND author = ?"
-    )
-    .bind("proj-mem")
-    .bind("user1")
-    .fetch_all(&pool)
-    .await?;
+    let user1_memories: Vec<(String,)> =
+        sqlx::query_as("SELECT id FROM memories WHERE project_id = ? AND author = ?")
+            .bind("proj-mem")
+            .bind("user1")
+            .fetch_all(&pool)
+            .await?;
 
     assert_eq!(user1_memories.len(), 2);
 
@@ -684,7 +706,10 @@ async fn test_team_status_update() -> Result<()> {
 
     assert_eq!(status.username, "charlie");
     assert_eq!(status.status, "active");
-    assert_eq!(status.current_task.as_deref(), Some("Implementing MCP tests"));
+    assert_eq!(
+        status.current_task.as_deref(),
+        Some("Implementing MCP tests")
+    );
 
     // Update existing status
     let updated = db::upsert_team_status(
@@ -762,12 +787,11 @@ async fn test_api_token_validation() -> Result<()> {
     assert!(token_body.len() >= 9); // prefix (8) + separator/secret (1+)
 
     // Verify token exists in database
-    let token: Option<(String, String)> = sqlx::query_as(
-        "SELECT id, token_prefix FROM api_tokens WHERE id = ?"
-    )
-    .bind(&token_id)
-    .fetch_optional(&pool)
-    .await?;
+    let token: Option<(String, String)> =
+        sqlx::query_as("SELECT id, token_prefix FROM api_tokens WHERE id = ?")
+            .bind(&token_id)
+            .fetch_optional(&pool)
+            .await?;
 
     assert!(token.is_some());
     let (id, prefix) = token.unwrap();
@@ -787,7 +811,10 @@ async fn test_unknown_tool_error() {
     });
 
     assert_eq!(expected_error["code"], -32601);
-    assert!(expected_error["message"].as_str().unwrap().contains("Tool not found"));
+    assert!(expected_error["message"]
+        .as_str()
+        .unwrap()
+        .contains("Tool not found"));
 }
 
 /// Test invalid params returns error.
@@ -800,7 +827,10 @@ async fn test_invalid_params_error() {
     });
 
     assert_eq!(expected_error["code"], -32602);
-    assert!(expected_error["message"].as_str().unwrap().contains("Invalid params"));
+    assert!(expected_error["message"]
+        .as_str()
+        .unwrap()
+        .contains("Invalid params"));
 }
 
 /// Test method not found for unknown JSON-RPC method.
@@ -813,7 +843,10 @@ async fn test_method_not_found_error() {
     });
 
     assert_eq!(expected_error["code"], -32601);
-    assert!(expected_error["message"].as_str().unwrap().contains("Method not found"));
+    assert!(expected_error["message"]
+        .as_str()
+        .unwrap()
+        .contains("Method not found"));
 }
 
 // ============================================================================
@@ -1102,14 +1135,18 @@ async fn test_token_hash_consistency() {
 /// Test decay calculation with fresh memory.
 #[tokio::test]
 async fn test_decay_fresh_memory_strength() {
-    use fold::services::decay::{calculate_strength, MIN_STRENGTH, MAX_STRENGTH};
     use chrono::Utc;
+    use fold::services::decay::{calculate_strength, MAX_STRENGTH, MIN_STRENGTH};
 
     let now = Utc::now();
     let strength = calculate_strength(now, None, 0, 30.0);
 
     // Fresh memory should have strength close to 1.0
-    assert!(strength > 0.95, "Fresh memory should have high strength: {}", strength);
+    assert!(
+        strength > 0.95,
+        "Fresh memory should have high strength: {}",
+        strength
+    );
     assert!(strength <= MAX_STRENGTH, "Strength should not exceed max");
     assert!(strength >= MIN_STRENGTH, "Strength should not go below min");
 }
@@ -1117,8 +1154,8 @@ async fn test_decay_fresh_memory_strength() {
 /// Test decay with old memory.
 #[tokio::test]
 async fn test_decay_old_memory_strength() {
-    use fold::services::decay::calculate_strength;
     use chrono::{Duration, Utc};
+    use fold::services::decay::calculate_strength;
 
     let now = Utc::now();
     let thirty_days_ago = now - Duration::days(30);
@@ -1126,15 +1163,18 @@ async fn test_decay_old_memory_strength() {
     let strength = calculate_strength(thirty_days_ago, None, 0, 30.0);
 
     // After one half-life (30 days), strength should be approximately 0.5
-    assert!(strength > 0.45 && strength < 0.55,
-            "30-day old memory strength should be ~0.5: {}", strength);
+    assert!(
+        strength > 0.45 && strength < 0.55,
+        "30-day old memory strength should be ~0.5: {}",
+        strength
+    );
 }
 
 /// Test access frequency boost.
 #[tokio::test]
 async fn test_decay_access_boost() {
-    use fold::services::decay::calculate_strength;
     use chrono::{Duration, Utc};
+    use fold::services::decay::calculate_strength;
 
     let now = Utc::now();
     let thirty_days_ago = now - Duration::days(30);
@@ -1153,8 +1193,8 @@ async fn test_decay_access_boost() {
 /// Test recent access resets decay timer.
 #[tokio::test]
 async fn test_decay_recent_access_reset() {
-    use fold::services::decay::calculate_strength;
     use chrono::{Duration, Utc};
+    use fold::services::decay::calculate_strength;
 
     let now = Utc::now();
     let thirty_days_ago = now - Duration::days(30);
@@ -1178,25 +1218,32 @@ async fn test_decay_score_blending() {
 
     // Pure semantic (weight = 0)
     let pure_semantic = blend_scores(0.9, 0.3, 0.0);
-    assert!((pure_semantic - 0.9).abs() < 0.001,
-            "Pure semantic should equal relevance score");
+    assert!(
+        (pure_semantic - 0.9).abs() < 0.001,
+        "Pure semantic should equal relevance score"
+    );
 
     // Pure strength (weight = 1)
     let pure_strength = blend_scores(0.9, 0.3, 1.0);
-    assert!((pure_strength - 0.3).abs() < 0.001,
-            "Pure strength should equal strength score");
+    assert!(
+        (pure_strength - 0.3).abs() < 0.001,
+        "Pure strength should equal strength score"
+    );
 
     // Default weight (0.3)
     // combined = 0.7 * 0.9 + 0.3 * 0.5 = 0.63 + 0.15 = 0.78
     let blended = blend_scores(0.9, 0.5, 0.3);
-    assert!((blended - 0.78).abs() < 0.001,
-            "Blended score should be 0.78: {}", blended);
+    assert!(
+        (blended - 0.78).abs() < 0.001,
+        "Blended score should be 0.78: {}",
+        blended
+    );
 }
 
 /// Test SearchParams builder pattern.
 #[tokio::test]
 async fn test_search_params_builder() {
-    use fold::models::{SearchParams, MemoryType};
+    use fold::models::{MemoryType, SearchParams};
 
     let params = SearchParams::new("test query")
         .with_type(MemoryType::Session)
@@ -1268,16 +1315,24 @@ async fn test_memory_search_decay_response_structure() {
     // Verify results include decay fields
     let results = response["results"].as_array().unwrap();
     for result in results {
-        assert!(result["relevance"].is_number(), "relevance should be present");
+        assert!(
+            result["relevance"].is_number(),
+            "relevance should be present"
+        );
         assert!(result["strength"].is_number(), "strength should be present");
-        assert!(result["combined_score"].is_number(), "combined_score should be present");
+        assert!(
+            result["combined_score"].is_number(),
+            "combined_score should be present"
+        );
     }
 
     // Verify ordering by combined_score (recent memory should come first despite lower relevance)
     let first_combined = results[0]["combined_score"].as_f64().unwrap();
     let second_combined = results[1]["combined_score"].as_f64().unwrap();
-    assert!(first_combined >= second_combined,
-            "Results should be ordered by combined_score");
+    assert!(
+        first_combined >= second_combined,
+        "Results should be ordered by combined_score"
+    );
 }
 
 /// Test codebase search response includes decay fields.
@@ -1316,8 +1371,8 @@ async fn test_codebase_search_decay_response_structure() {
 /// Test very old memory minimum strength.
 #[tokio::test]
 async fn test_decay_minimum_strength_floor() {
-    use fold::services::decay::{calculate_strength, MIN_STRENGTH};
     use chrono::{Duration, Utc};
+    use fold::services::decay::{calculate_strength, MIN_STRENGTH};
 
     let now = Utc::now();
     let one_year_ago = now - Duration::days(365);
@@ -1325,15 +1380,18 @@ async fn test_decay_minimum_strength_floor() {
     let strength = calculate_strength(one_year_ago, None, 0, 30.0);
 
     // Even very old memories should not go below minimum
-    assert!(strength >= MIN_STRENGTH,
-            "Very old memory should not go below MIN_STRENGTH: {}", strength);
+    assert!(
+        strength >= MIN_STRENGTH,
+        "Very old memory should not go below MIN_STRENGTH: {}",
+        strength
+    );
 }
 
 /// Test high access count memory maximum strength.
 #[tokio::test]
 async fn test_decay_maximum_strength_cap() {
-    use fold::services::decay::{calculate_strength, MAX_STRENGTH};
     use chrono::Utc;
+    use fold::services::decay::{calculate_strength, MAX_STRENGTH};
 
     let now = Utc::now();
 
@@ -1341,6 +1399,9 @@ async fn test_decay_maximum_strength_cap() {
     let strength = calculate_strength(now, Some(now), 1000, 30.0);
 
     // Should not exceed maximum
-    assert!(strength <= MAX_STRENGTH,
-            "Highly accessed memory should not exceed MAX_STRENGTH: {}", strength);
+    assert!(
+        strength <= MAX_STRENGTH,
+        "Highly accessed memory should not exceed MAX_STRENGTH: {}",
+        strength
+    );
 }

@@ -148,9 +148,7 @@ impl ApiToken {
 
     /// Check if token has expired
     pub fn is_expired(&self) -> bool {
-        self.expires_at
-            .map(|exp| exp < Utc::now())
-            .unwrap_or(false)
+        self.expires_at.map(|exp| exp < Utc::now()).unwrap_or(false)
     }
 
     /// Check if token has a specific scope

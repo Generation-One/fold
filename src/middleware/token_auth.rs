@@ -129,8 +129,7 @@ pub async fn require_token(
     next: Next,
 ) -> Result<Response, Error> {
     // Extract token from Authorization header or query string
-    let token = extract_token_from_request(&req)
-        .ok_or(Error::Unauthenticated)?;
+    let token = extract_token_from_request(&req).ok_or(Error::Unauthenticated)?;
 
     // Validate token and get context
     let auth_context = validate_token(&state, &token).await?;
@@ -181,13 +180,13 @@ pub async fn require_project_access(
     next: Next,
 ) -> Result<Response, Error> {
     // Get the project from path params
-    let project_id = params
+    let _project_id = params
         .get("project")
         .or_else(|| params.get("project_id"))
         .ok_or_else(|| Error::Internal("Missing project path parameter".into()))?;
 
     // Get AuthContext from extensions (set by require_token)
-    let auth_context = req
+    let _auth_context = req
         .extensions()
         .get::<AuthContext>()
         .ok_or(Error::Unauthenticated)?;
@@ -342,7 +341,8 @@ pub async fn require_project_member(
     let project = crate::db::get_project_by_id_or_slug(&state.db, project_id_or_slug).await?;
 
     // Check membership in project_members table
-    let member = crate::db::get_project_member(&state.db, &project.id, &auth_context.user_id).await?;
+    let member =
+        crate::db::get_project_member(&state.db, &project.id, &auth_context.user_id).await?;
 
     let project_access = match member {
         Some(m) => ProjectAccess {
@@ -370,15 +370,11 @@ pub async fn require_project_member(
 /// # Errors
 ///
 /// Returns 403 Forbidden if the user only has read access (viewer role).
-pub async fn require_project_write(
-    req: Request<Body>,
-    next: Next,
-) -> Result<Response, Error> {
+pub async fn require_project_write(req: Request<Body>, next: Next) -> Result<Response, Error> {
     // Get ProjectAccess from extensions (set by require_project_member)
-    let project_access = req
-        .extensions()
-        .get::<ProjectAccess>()
-        .ok_or_else(|| Error::Internal("require_project_write must be used after require_project_member".into()))?;
+    let project_access = req.extensions().get::<ProjectAccess>().ok_or_else(|| {
+        Error::Internal("require_project_write must be used after require_project_member".into())
+    })?;
 
     if !project_access.can_write {
         return Err(Error::Forbidden);

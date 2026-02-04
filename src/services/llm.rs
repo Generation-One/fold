@@ -6,8 +6,8 @@
 //! Providers are loaded from the database with fallback to environment variables
 //! for initial seeding.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use reqwest::Client;
@@ -17,6 +17,7 @@ use tokio::sync::RwLock;
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
+use super::ClaudeCodeService;
 use crate::config::LlmConfig;
 use crate::db::{
     list_enabled_llm_providers, seed_claudecode_provider_async, seed_llm_providers_from_env,
@@ -24,7 +25,6 @@ use crate::db::{
 };
 use crate::error::{Error, Result};
 use crate::models::{CodeSummary, CommitInfo, Memory, SuggestedLink};
-use super::ClaudeCodeService;
 
 /// Maximum retries per provider before fallback
 const MAX_RETRIES: u32 = 2;
@@ -137,7 +137,7 @@ struct LlmServiceInner {
 #[derive(Debug, Deserialize)]
 struct LlmResponse {
     choices: Option<Vec<Choice>>,
-    candidates: Option<Vec<Candidate>>, // Gemini format
+    candidates: Option<Vec<Candidate>>,     // Gemini format
     content: Option<Vec<AnthropicContent>>, // Anthropic format
     error: Option<LlmError>,
 }
@@ -243,12 +243,9 @@ impl LlmService {
                 if let Ok(creds) = claudecode_service.read_credentials() {
                     if let Some(token) = creds.access_token() {
                         // Refresh the token in case it was updated
-                        let _ = seed_claudecode_provider_async(
-                            &db,
-                            token,
-                            creds.subscription_type(),
-                        )
-                        .await;
+                        let _ =
+                            seed_claudecode_provider_async(&db, token, creds.subscription_type())
+                                .await;
                     }
                 }
             }
@@ -524,7 +521,9 @@ impl LlmService {
 
         let (url, body) = match provider.name.as_str() {
             "gemini" => self.build_gemini_request(provider, prompt, max_tokens),
-            "anthropic" | "claudecode" => self.build_anthropic_request(provider, prompt, max_tokens),
+            "anthropic" | "claudecode" => {
+                self.build_anthropic_request(provider, prompt, max_tokens)
+            }
             _ => self.build_openai_request(provider, prompt, max_tokens),
         };
 
@@ -702,10 +701,7 @@ impl LlmService {
             }
         }
 
-        Err(Error::Llm(format!(
-            "No content in {} response",
-            provider
-        )))
+        Err(Error::Llm(format!("No content in {} response", provider)))
     }
 
     /// Extract JSON from LLM response text
@@ -724,7 +720,10 @@ impl LlmService {
         if let Some(start) = text.find("```") {
             let start = start + 3;
             // Skip language identifier if present
-            let start = text[start..].find('\n').map(|i| start + i + 1).unwrap_or(start);
+            let start = text[start..]
+                .find('\n')
+                .map(|i| start + i + 1)
+                .unwrap_or(start);
             if let Some(end) = text[start..].find("```") {
                 if let Ok(json) = serde_json::from_str(&text[start..start + end]) {
                     return Some(json);
@@ -799,7 +798,11 @@ Generate a detailed JSON object with:
 
 Respond with ONLY a valid JSON object, no markdown or explanation."#,
             path = path,
-            language = if language.is_empty() { "unknown" } else { language },
+            language = if language.is_empty() {
+                "unknown"
+            } else {
+                language
+            },
             lines = content.lines().count(),
             content = &content[..content.len().min(4000)]
         );
@@ -813,11 +816,19 @@ Respond with ONLY a valid JSON object, no markdown or explanation."#,
             summary: json["summary"].as_str().unwrap_or("").to_string(),
             keywords: json["keywords"]
                 .as_array()
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default(),
             tags: json["tags"]
                 .as_array()
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default(),
             language: if language.is_empty() {
                 None
@@ -826,11 +837,19 @@ Respond with ONLY a valid JSON object, no markdown or explanation."#,
             },
             exports: json["exports"]
                 .as_array()
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default(),
             dependencies: json["dependencies"]
                 .as_array()
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default(),
             created_date: json["created_date"]
                 .as_str()
@@ -984,7 +1003,12 @@ Focus on actionable insights for developers reviewing or searching this change l
                     i,
                     m.id,
                     m.title.as_deref().unwrap_or("Untitled"),
-                    m.content.as_deref().unwrap_or("").chars().take(200).collect::<String>()
+                    m.content
+                        .as_deref()
+                        .unwrap_or("")
+                        .chars()
+                        .take(200)
+                        .collect::<String>()
                 )
             })
             .collect::<Vec<_>>()
@@ -1013,7 +1037,13 @@ Example: [{{"target_id": "abc123", "link_type": "references", "confidence": 0.8,
             source_id = memory.id,
             source_type = memory.memory_type,
             source_title = memory.title.as_deref().unwrap_or("Untitled"),
-            source_content = memory.content.as_deref().unwrap_or("").chars().take(500).collect::<String>(),
+            source_content = memory
+                .content
+                .as_deref()
+                .unwrap_or("")
+                .chars()
+                .take(500)
+                .collect::<String>(),
             candidates = candidates_text
         );
 
@@ -1077,11 +1107,19 @@ Respond with ONLY a valid JSON object, no markdown or explanation."#,
             title: json["title"].as_str().unwrap_or("").to_string(),
             keywords: json["keywords"]
                 .as_array()
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default(),
             tags: json["tags"]
                 .as_array()
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default(),
             context: json["context"].as_str().unwrap_or("").to_string(),
         })

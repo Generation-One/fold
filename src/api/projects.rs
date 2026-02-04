@@ -43,6 +43,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
 #[derive(Debug, Deserialize, Default)]
 pub struct ListProjectsQuery {
     /// Filter by name (partial match)
+    #[allow(dead_code)]
     pub name: Option<String>,
     /// Pagination offset
     #[serde(default)]
@@ -52,9 +53,11 @@ pub struct ListProjectsQuery {
     pub limit: u32,
     /// Sort field
     #[serde(default)]
+    #[allow(dead_code)]
     pub sort_by: ProjectSortField,
     /// Sort direction
     #[serde(default)]
+    #[allow(dead_code)]
     pub sort_dir: SortDirection,
 }
 
@@ -147,12 +150,9 @@ async fn list_projects(
     // Admin users see all projects
     if auth.is_admin() {
         // Fetch all projects from database
-        let projects = crate::db::list_projects_paginated(
-            &state.db,
-            limit as i64,
-            query.offset as i64,
-        )
-        .await?;
+        let projects =
+            crate::db::list_projects_paginated(&state.db, limit as i64, query.offset as i64)
+                .await?;
 
         // Get total count
         let total = crate::db::count_projects(&state.db).await.unwrap_or(0) as u32;
@@ -160,7 +160,8 @@ async fn list_projects(
         let project_responses: Vec<ProjectResponse> = projects
             .into_iter()
             .map(|p| {
-                let ignored_authors = p.ignored_commit_authors
+                let ignored_authors = p
+                    .ignored_commit_authors
                     .as_ref()
                     .and_then(|s| serde_json::from_str(s).ok())
                     .unwrap_or_default();
@@ -193,8 +194,7 @@ async fn list_projects(
 
     // Fetch all projects and filter to accessible ones
     let all_projects = crate::db::list_projects_paginated(
-        &state.db,
-        10000, // Large number to get all
+        &state.db, 10000, // Large number to get all
         0,
     )
     .await?;
@@ -218,7 +218,8 @@ async fn list_projects(
     let project_responses: Vec<ProjectResponse> = paginated
         .into_iter()
         .map(|p| {
-            let ignored_authors = p.ignored_commit_authors
+            let ignored_authors = p
+                .ignored_commit_authors
                 .as_ref()
                 .and_then(|s| serde_json::from_str(s).ok())
                 .unwrap_or_default();
@@ -271,15 +272,19 @@ async fn create_project(
     let project = crate::db::create_project(&state.db, input).await?;
 
     // Initialize Qdrant collection for project (non-blocking)
-    match state.qdrant.create_collection(
-        &project.slug,
-        state.embeddings.dimension().await,
-    ).await {
+    match state
+        .qdrant
+        .create_collection(&project.slug, state.embeddings.dimension().await)
+        .await
+    {
         Ok(()) => info!(slug = %project.slug, "Created Qdrant collection"),
-        Err(e) => warn!(error = %e, slug = %project.slug, "Failed to create Qdrant collection, search unavailable"),
+        Err(e) => {
+            warn!(error = %e, slug = %project.slug, "Failed to create Qdrant collection, search unavailable")
+        }
     }
 
-    let ignored_authors = project.ignored_commit_authors
+    let ignored_authors = project
+        .ignored_commit_authors
         .as_ref()
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();
@@ -308,7 +313,8 @@ async fn get_project(
 ) -> Result<Json<ProjectResponse>> {
     let project = crate::db::get_project_by_id_or_slug(&state.db, &id).await?;
 
-    let ignored_authors = project.ignored_commit_authors
+    let ignored_authors = project
+        .ignored_commit_authors
         .as_ref()
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();
@@ -340,7 +346,8 @@ async fn update_project(
     let existing = crate::db::get_project_by_id_or_slug(&state.db, &id).await?;
 
     // Serialize ignored_commit_authors if provided
-    let ignored_authors_json = request.ignored_commit_authors
+    let ignored_authors_json = request
+        .ignored_commit_authors
         .map(|authors| serde_json::to_string(&authors).ok())
         .flatten();
 
@@ -353,7 +360,8 @@ async fn update_project(
 
     let project = crate::db::update_project(&state.db, &existing.id, input).await?;
 
-    let ignored_authors = project.ignored_commit_authors
+    let ignored_authors = project
+        .ignored_commit_authors
         .as_ref()
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();
@@ -404,6 +412,7 @@ async fn delete_project(
 // ============================================================================
 
 /// Parse a project ID from either UUID or slug format.
+#[allow(dead_code)]
 fn parse_project_id(id: &str) -> Result<ProjectIdent> {
     if let Ok(uuid) = Uuid::parse_str(id) {
         Ok(ProjectIdent::Id(uuid))
@@ -414,6 +423,7 @@ fn parse_project_id(id: &str) -> Result<ProjectIdent> {
 
 /// Project identifier - either UUID or slug.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum ProjectIdent {
     Id(Uuid),
     Slug(String),
@@ -439,7 +449,10 @@ fn is_valid_slug(s: &str) -> bool {
 pub fn members_routes() -> Router<AppState> {
     Router::new()
         .route("/:project_id/members", get(list_members).post(add_member))
-        .route("/:project_id/members/:user_id", get(get_member).put(update_member).delete(remove_member))
+        .route(
+            "/:project_id/members/:user_id",
+            get(get_member).put(update_member).delete(remove_member),
+        )
 }
 
 // ============================================================================
@@ -624,9 +637,10 @@ async fn update_member(
         ));
     }
 
-    let member = crate::db::update_project_member_role(&state.db, &project.id, &user_id, &request.role)
-        .await?
-        .ok_or_else(|| Error::NotFound(format!("Member not found: {}", user_id)))?;
+    let member =
+        crate::db::update_project_member_role(&state.db, &project.id, &user_id, &request.role)
+            .await?
+            .ok_or_else(|| Error::NotFound(format!("Member not found: {}", user_id)))?;
 
     Ok(Json(MemberResponse {
         user_id: member.user_id,
@@ -673,8 +687,10 @@ async fn remove_member(
 ///
 /// These are mounted under /projects/:project_id/config
 pub fn config_routes() -> Router<AppState> {
-    Router::new()
-        .route("/algorithm", get(get_algorithm_config).put(update_algorithm_config))
+    Router::new().route(
+        "/algorithm",
+        get(get_algorithm_config).put(update_algorithm_config),
+    )
 }
 
 // ============================================================================
@@ -722,7 +738,8 @@ async fn get_algorithm_config(
 ) -> Result<Json<AlgorithmConfigResponse>> {
     let project = crate::db::get_project_by_id_or_slug(&state.db, &project_id).await?;
 
-    let ignored_authors = project.ignored_commit_authors
+    let ignored_authors = project
+        .ignored_commit_authors
         .as_ref()
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();
@@ -769,14 +786,16 @@ async fn update_algorithm_config(
     let input = crate::db::UpdateAlgorithmConfig {
         decay_strength_weight: request.strength_weight,
         decay_half_life_days: request.decay_half_life_days,
-        ignored_commit_authors: request.ignored_commit_authors
+        ignored_commit_authors: request
+            .ignored_commit_authors
             .map(|authors| serde_json::to_string(&authors).ok())
             .flatten(),
     };
 
     let updated = crate::db::update_algorithm_config(&state.db, &project.id, input).await?;
 
-    let ignored_authors = updated.ignored_commit_authors
+    let ignored_authors = updated
+        .ignored_commit_authors
         .as_ref()
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();

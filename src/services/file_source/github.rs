@@ -64,9 +64,10 @@ impl FileSourceProvider for GitHubFileSource {
     }
 
     async fn connect(&self, config: SourceConfig, token: &str) -> Result<SourceInfo> {
-        let owner = config.owner.as_deref().ok_or_else(|| {
-            Error::Validation("GitHub requires owner in config".to_string())
-        })?;
+        let owner = config
+            .owner
+            .as_deref()
+            .ok_or_else(|| Error::Validation("GitHub requires owner in config".to_string()))?;
 
         let repo_info = self.github.get_repo(owner, &config.name, token).await?;
 
@@ -205,9 +206,9 @@ impl FileSourceProvider for GitHubFileSource {
     ) -> Result<()> {
         let (owner, repo) = self.owner_repo(source);
 
-        let webhook_id: i64 = notification_id.parse().map_err(|_| {
-            Error::Validation(format!("Invalid webhook ID: {}", notification_id))
-        })?;
+        let webhook_id: i64 = notification_id
+            .parse()
+            .map_err(|_| Error::Validation(format!("Invalid webhook ID: {}", notification_id)))?;
 
         self.github
             .delete_webhook(owner, repo, webhook_id, token)
@@ -484,7 +485,13 @@ mod tests {
         let events = provider.parse_push_event(payload).unwrap();
         assert_eq!(events.len(), 1);
 
-        if let ChangeEvent::Commit { sha, message, files, .. } = &events[0] {
+        if let ChangeEvent::Commit {
+            sha,
+            message,
+            files,
+            ..
+        } = &events[0]
+        {
             assert_eq!(sha, "abc123");
             assert_eq!(message, "Test commit");
             assert_eq!(files.len(), 2);
@@ -512,7 +519,13 @@ mod tests {
         let events = provider.parse_pull_request_event(payload).unwrap();
         assert_eq!(events.len(), 1);
 
-        if let ChangeEvent::PullRequest { number, action, title, .. } = &events[0] {
+        if let ChangeEvent::PullRequest {
+            number,
+            action,
+            title,
+            ..
+        } = &events[0]
+        {
             assert_eq!(*number, 42);
             assert_eq!(*action, PullRequestAction::Opened);
             assert_eq!(title, "Add feature X");

@@ -277,9 +277,11 @@ impl EmbeddingProvider {
 
     /// Get dimension from config
     pub fn dimension(&self) -> Option<usize> {
-        self.config_json()
-            .ok()
-            .and_then(|c| c.get("dimension").and_then(|d| d.as_u64()).map(|d| d as usize))
+        self.config_json().ok().and_then(|c| {
+            c.get("dimension")
+                .and_then(|d| d.as_u64())
+                .map(|d| d as usize)
+        })
     }
 
     /// Get endpoint from config
@@ -312,7 +314,7 @@ pub struct ProviderOAuthState {
     pub id: String,
     pub state: String,
     pub provider_type: String, // "llm" | "embedding"
-    pub provider_name: String,  // "gemini", "openai", etc.
+    pub provider_name: String, // "gemini", "openai", etc.
     pub pkce_verifier: Option<String>,
     pub redirect_uri: Option<String>,
     pub created_at: DateTime<Utc>,

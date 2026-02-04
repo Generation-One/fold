@@ -208,8 +208,10 @@ impl EmbeddingService {
                 info!("Seeding embedding providers from environment variables");
                 seed_embedding_providers_from_env(&db, &config.providers).await?;
                 let seeded = list_enabled_embedding_providers(&db).await?;
-                let providers: Vec<RuntimeEmbeddingProvider> =
-                    seeded.into_iter().map(RuntimeEmbeddingProvider::from).collect();
+                let providers: Vec<RuntimeEmbeddingProvider> = seeded
+                    .into_iter()
+                    .map(RuntimeEmbeddingProvider::from)
+                    .collect();
 
                 // Determine dimension from first provider
                 let dim = providers
@@ -222,8 +224,10 @@ impl EmbeddingService {
                 (Vec::new(), config.dimension)
             }
         } else {
-            let providers: Vec<RuntimeEmbeddingProvider> =
-                db_providers.into_iter().map(RuntimeEmbeddingProvider::from).collect();
+            let providers: Vec<RuntimeEmbeddingProvider> = db_providers
+                .into_iter()
+                .map(RuntimeEmbeddingProvider::from)
+                .collect();
 
             // Determine dimension from first provider
             let dim = providers
@@ -389,7 +393,10 @@ impl EmbeddingService {
 
         // Use hash fallback if no providers
         if providers.is_empty() {
-            debug!(count = texts.len(), "Generating hash-based placeholder embeddings");
+            debug!(
+                count = texts.len(),
+                "Generating hash-based placeholder embeddings"
+            );
             let dim = *self.inner.dimension.read().await;
             return Ok(texts.iter().map(|t| self.hash_embed(t, dim)).collect());
         }
@@ -428,9 +435,8 @@ impl EmbeddingService {
 
         // When providers are configured but ALL fail, return error (don't use hash fallback)
         // This ensures indexing stops and waits for providers to come back online
-        Err(last_error.unwrap_or_else(|| {
-            Error::Internal("All embedding providers failed".to_string())
-        }))
+        Err(last_error
+            .unwrap_or_else(|| Error::Internal("All embedding providers failed".to_string())))
     }
 
     /// Generate embedding for a single text.
@@ -475,9 +481,8 @@ impl EmbeddingService {
         }
 
         // When providers are configured but ALL fail, return error
-        Err(last_error.unwrap_or_else(|| {
-            Error::Internal("All embedding providers failed".to_string())
-        }))
+        Err(last_error
+            .unwrap_or_else(|| Error::Internal("All embedding providers failed".to_string())))
     }
 
     /// Generate embeddings in batches for large inputs.
@@ -684,10 +689,9 @@ impl EmbeddingService {
             .map_err(|e| Error::Internal(format!("Gemini batch request failed: {}", e)))?;
 
         let status = response.status();
-        let resp: GeminiBatchResponse = response
-            .json()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to parse Gemini batch response: {}", e)))?;
+        let resp: GeminiBatchResponse = response.json().await.map_err(|e| {
+            Error::Internal(format!("Failed to parse Gemini batch response: {}", e))
+        })?;
 
         if let Some(error) = resp.error {
             return Err(Error::Internal(format!(
@@ -771,10 +775,9 @@ impl EmbeddingService {
             .await
             .map_err(|e| Error::Internal(format!("OpenAI batch request failed: {}", e)))?;
 
-        let resp: OpenAIEmbedResponse = response
-            .json()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to parse OpenAI batch response: {}", e)))?;
+        let resp: OpenAIEmbedResponse = response.json().await.map_err(|e| {
+            Error::Internal(format!("Failed to parse OpenAI batch response: {}", e))
+        })?;
 
         if let Some(error) = resp.error {
             return Err(Error::Internal(format!(

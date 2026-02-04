@@ -215,11 +215,7 @@ impl GitService {
     /// This is called after indexing operations to automatically commit
     /// any new or modified memory files and sync them to the remote.
     /// If there are conflicts, uses rebase with remote-wins strategy.
-    pub async fn auto_commit_fold(
-        &self,
-        repo_path: &Path,
-        message: &str,
-    ) -> Result<CommitResult> {
+    pub async fn auto_commit_fold(&self, repo_path: &Path, message: &str) -> Result<CommitResult> {
         // Check if this is a git repository
         if !Self::is_git_repo(repo_path) {
             return Ok(CommitResult {
@@ -295,10 +291,7 @@ impl GitService {
     ///
     /// This pulls the latest changes and imports any new memory files
     /// that don't exist in the local database.
-    pub async fn sync_from_remote(
-        &self,
-        project: &Project,
-    ) -> Result<SyncStats> {
+    pub async fn sync_from_remote(&self, project: &Project) -> Result<SyncStats> {
         let mut stats = SyncStats::default();
 
         // Get the project root path
@@ -353,18 +346,14 @@ impl GitService {
             }
 
             // Read memory file from filesystem using hash-based storage
-            match self
-                .fold_storage
-                .read_memory(&repo_path, &memory_id)
-                .await
-            {
+            match self.fold_storage.read_memory(&repo_path, &memory_id).await {
                 Ok((mut memory, content)) => {
                     // Set project_id (not in frontmatter)
                     memory.project_id = project.id.clone();
 
                     // Create memory through the service
-                    let memory_type = MemoryType::from_str(&memory.memory_type)
-                        .unwrap_or(MemoryType::General);
+                    let memory_type =
+                        MemoryType::from_str(&memory.memory_type).unwrap_or(MemoryType::General);
 
                     let create = MemoryCreate {
                         memory_type,
@@ -376,7 +365,10 @@ impl GitService {
                         context: memory.context.clone(),
                         file_path: memory.file_path.clone(),
                         language: memory.language.clone(),
-                        source: memory.source.as_ref().and_then(|s| crate::models::MemorySource::from_str(s)),
+                        source: memory
+                            .source
+                            .as_ref()
+                            .and_then(|s| crate::models::MemorySource::from_str(s)),
                         ..Default::default()
                     };
 

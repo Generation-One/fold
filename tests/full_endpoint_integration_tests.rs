@@ -106,10 +106,7 @@ async fn test_create_user_as_non_admin_returns_403() {
     let request = create_post_request("/admin/users", body, Some(member_token));
 
     assert_eq!(request.method(), "POST");
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -144,10 +141,7 @@ async fn test_get_user_as_non_admin_returns_403() {
     let request = create_get_request("/admin/users/user-123", Some(member_token));
 
     assert_eq!(request.method(), "GET");
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -240,10 +234,7 @@ async fn test_list_groups_with_valid_token() {
     let request = create_get_request("/api/groups", Some(token));
 
     assert_eq!(request.method(), "GET");
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -321,11 +312,7 @@ async fn test_create_api_key_requires_authentication() {
         "name": "My API Key"
     });
 
-    let request = create_post_request(
-        &format!("/api/users/{}/api-keys", user_id),
-        body,
-        None,
-    );
+    let request = create_post_request(&format!("/api/users/{}/api-keys", user_id), body, None);
 
     assert_eq!(request.method(), "POST");
     assert!(request.headers().get("Authorization").is_none());
@@ -516,10 +503,7 @@ async fn test_list_projects_user_sees_only_accessible() {
     let request = create_get_request("/projects", Some(token));
 
     assert_eq!(request.method(), "GET");
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -529,10 +513,7 @@ async fn test_list_projects_admin_sees_all() {
     let request = create_get_request("/projects", Some(admin_token));
 
     assert_eq!(request.method(), "GET");
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -554,10 +535,7 @@ async fn test_list_memories_requires_project_read_access() {
     let project_id = "project-123";
     let token = "fold_user_without_access";
 
-    let request = create_get_request(
-        &format!("/projects/{}/memories", project_id),
-        Some(token),
-    );
+    let request = create_get_request(&format!("/projects/{}/memories", project_id), Some(token));
 
     assert_eq!(request.method(), "GET");
 }

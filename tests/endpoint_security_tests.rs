@@ -28,10 +28,7 @@ async fn test_post_users_requires_authentication() {
         .unwrap();
 
     // Without token header, should be rejected at middleware
-    assert!(!request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(!request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -50,10 +47,7 @@ async fn test_list_users_requires_authentication() {
         .body(Body::empty())
         .unwrap();
 
-    assert!(!request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(!request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -62,15 +56,9 @@ async fn test_get_user_profile_requires_authentication() {
     let user_id = "user-123";
     let uri = format!("/users/{}", user_id);
 
-    let request = Request::builder()
-        .uri(&uri)
-        .body(Body::empty())
-        .unwrap();
+    let request = Request::builder().uri(&uri).body(Body::empty()).unwrap();
 
-    assert!(!request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(!request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -87,10 +75,7 @@ async fn test_update_own_user_profile() {
     let request = put_json(&uri, token, request_body.clone());
 
     // Request should be properly formed with auth header
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 
     // And contain the update data
     assert_eq!(request_body["display_name"], "Updated Name");
@@ -195,10 +180,7 @@ async fn test_list_groups_requires_authentication() {
         .body(Body::empty())
         .unwrap();
 
-    assert!(!request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(!request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -244,10 +226,7 @@ async fn test_create_api_key_requires_authentication() {
         .unwrap();
 
     // No auth header
-    assert!(!request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(!request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -265,10 +244,7 @@ async fn test_user_can_create_own_api_key() {
     let request = post_json(&uri, token, request_body.clone());
 
     // Request should have auth and valid body
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
     assert_eq!(request_body["name"], "My API Key");
 }
 
@@ -302,10 +278,7 @@ async fn test_admin_can_create_api_key_for_user() {
     let request = post_json(&uri, admin_token, request_body.clone());
 
     // Admin can create keys for any user
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]

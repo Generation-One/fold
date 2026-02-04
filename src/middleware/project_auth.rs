@@ -13,7 +13,7 @@ use serde::Deserialize;
 use sqlx::FromRow;
 use tracing::{debug, warn};
 
-use crate::{error::Error, services::PermissionService, AppState, middleware::token_auth};
+use crate::{error::Error, middleware::token_auth, services::PermissionService, AppState};
 
 /// Context injected into requests for project-scoped operations.
 #[derive(Clone, Debug)]
@@ -192,10 +192,7 @@ pub async fn require_project_write(
 ///
 /// Checks if the user has the `admin` global role.
 /// Returns 403 Forbidden if the user is not an admin.
-pub async fn require_admin(
-    mut req: Request<Body>,
-    next: Next,
-) -> Result<Response, Error> {
+pub async fn require_admin(mut req: Request<Body>, next: Next) -> Result<Response, Error> {
     let auth_user = req
         .extensions()
         .get::<crate::middleware::AuthUser>()

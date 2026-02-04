@@ -64,7 +64,9 @@ impl MetadataSyncService {
         let repo_path = self.ensure_repo_cloned(repo).await?;
 
         // Generate MD files
-        let changes = self.generate_metadata_files(&repo_path, &memories, &links).await?;
+        let changes = self
+            .generate_metadata_files(&repo_path, &memories, &links)
+            .await?;
 
         if changes.is_empty() {
             debug!(repo = %repo.full_name(), "No changes to commit");
@@ -78,12 +80,10 @@ impl MetadataSyncService {
         // Commit and push
         let commit_sha = self.commit_and_push(&repo_path, repo, &changes).await?;
 
-        let (created, updated) = changes
-            .iter()
-            .fold((0, 0), |(c, u), change| match change {
-                FileChange::Created(_) => (c + 1, u),
-                FileChange::Updated(_) => (c, u + 1),
-            });
+        let (created, updated) = changes.iter().fold((0, 0), |(c, u), change| match change {
+            FileChange::Created(_) => (c + 1, u),
+            FileChange::Updated(_) => (c, u + 1),
+        });
 
         info!(
             repo = %repo.full_name(),
@@ -163,7 +163,8 @@ impl MetadataSyncService {
             let mut builder = git2::build::RepoBuilder::new();
             builder.fetch_options(fetch_options);
 
-            builder.clone(&clone_url, &repo_dir)
+            builder
+                .clone(&clone_url, &repo_dir)
                 .map_err(|e| Error::Internal(format!("Git clone failed: {}", e)))?;
 
             Ok::<_, Error>(())
@@ -189,7 +190,8 @@ impl MetadataSyncService {
             let git_repo = Git2Repo::open(&repo_dir)
                 .map_err(|e| Error::Internal(format!("Failed to open repo: {}", e)))?;
 
-            let mut remote = git_repo.find_remote("origin")
+            let mut remote = git_repo
+                .find_remote("origin")
                 .map_err(|e| Error::Internal(format!("Failed to find remote: {}", e)))?;
 
             // Create callbacks inside the blocking task
@@ -201,7 +203,12 @@ impl MetadataSyncService {
             let mut fetch_options = git2::FetchOptions::new();
             fetch_options.remote_callbacks(callbacks);
 
-            remote.fetch(&["refs/heads/*:refs/remotes/origin/*"], Some(&mut fetch_options), None)
+            remote
+                .fetch(
+                    &["refs/heads/*:refs/remotes/origin/*"],
+                    Some(&mut fetch_options),
+                    None,
+                )
                 .map_err(|e| Error::Internal(format!("Fetch failed: {}", e)))?;
 
             // Fast-forward if possible
@@ -210,10 +217,13 @@ impl MetadataSyncService {
                     if let Ok((analysis, _)) = git_repo.merge_analysis(&[&fetch_commit]) {
                         if analysis.is_fast_forward() {
                             if let Ok(head) = git_repo.head() {
-                                let refname = format!("refs/heads/{}", head.shorthand().unwrap_or("main"));
+                                let refname =
+                                    format!("refs/heads/{}", head.shorthand().unwrap_or("main"));
                                 if let Ok(mut reference) = git_repo.find_reference(&refname) {
                                     let _ = reference.set_target(fetch_commit.id(), "Fast-forward");
-                                    let _ = git_repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()));
+                                    let _ = git_repo.checkout_head(Some(
+                                        git2::build::CheckoutBuilder::default().force(),
+                                    ));
                                 }
                             }
                         }
@@ -240,7 +250,8 @@ impl MetadataSyncService {
         let files_dir = fold_dir.join("files");
 
         // Ensure directories exist
-        tokio::fs::create_dir_all(&files_dir).await
+        tokio::fs::create_dir_all(&files_dir)
+            .await
             .map_err(|e| Error::Internal(format!("Failed to create .fold dir: {}", e)))?;
 
         let mut changes = Vec::new();
@@ -255,7 +266,10 @@ impl MetadataSyncService {
 
         // Generate MD for each file
         for (file_path, file_memories) in &by_file {
-            let md_path = files_dir.join(format!("{}.md", file_path.replace('/', "_").replace('\\', "_")));
+            let md_path = files_dir.join(format!(
+                "{}.md",
+                file_path.replace('/', "_").replace('\\', "_")
+            ));
             let content = self.generate_file_md(file_path, file_memories, links);
 
             let is_new = !md_path.exists();
@@ -263,15 +277,19 @@ impl MetadataSyncService {
                 true
             } else {
                 // Check if content changed
-                let existing = tokio::fs::read_to_string(&md_path).await.unwrap_or_default();
+                let existing = tokio::fs::read_to_string(&md_path)
+                    .await
+                    .unwrap_or_default();
                 existing != content
             };
 
             if should_write {
-                tokio::fs::write(&md_path, &content).await
+                tokio::fs::write(&md_path, &content)
+                    .await
                     .map_err(|e| Error::Internal(format!("Failed to write MD file: {}", e)))?;
 
-                let relative_path = md_path.strip_prefix(repo_dir)
+                let relative_path = md_path
+                    .strip_prefix(repo_dir)
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_else(|_| md_path.to_string_lossy().to_string());
 
@@ -291,12 +309,15 @@ impl MetadataSyncService {
         let readme_should_write = if readme_is_new {
             true
         } else {
-            let existing = tokio::fs::read_to_string(&readme_path).await.unwrap_or_default();
+            let existing = tokio::fs::read_to_string(&readme_path)
+                .await
+                .unwrap_or_default();
             existing != readme_content
         };
 
         if readme_should_write {
-            tokio::fs::write(&readme_path, &readme_content).await
+            tokio::fs::write(&readme_path, &readme_content)
+                .await
                 .map_err(|e| Error::Internal(format!("Failed to write README: {}", e)))?;
 
             if readme_is_new {
@@ -345,11 +366,7 @@ impl MetadataSyncService {
                 if !memory_links.is_empty() {
                     md.push_str("## Links\n\n");
                     for link in memory_links {
-                        md.push_str(&format!(
-                            "- **{}**: {}\n",
-                            link.link_type,
-                            link.target_id
-                        ));
+                        md.push_str(&format!("- **{}**: {}\n", link.link_type, link.target_id));
                     }
                     md.push('\n');
                 }
@@ -371,11 +388,14 @@ impl MetadataSyncService {
         let mut md = String::new();
 
         md.push_str("# Fold Metadata\n\n");
-        md.push_str("This directory contains auto-generated metadata from [Fold](https://fold.dev).\n\n");
+        md.push_str(
+            "This directory contains auto-generated metadata from [Fold](https://fold.dev).\n\n",
+        );
         md.push_str("> **Note**: Do not edit these files manually. They are automatically updated by Fold.\n\n");
 
         // Stats
-        let file_count = memories.iter()
+        let file_count = memories
+            .iter()
             .filter_map(|m| m.file_path.as_ref())
             .collect::<std::collections::HashSet<_>>()
             .len();
@@ -383,7 +403,10 @@ impl MetadataSyncService {
         md.push_str("## Statistics\n\n");
         md.push_str(&format!("- **Files indexed**: {}\n", file_count));
         md.push_str(&format!("- **Total memories**: {}\n", memories.len()));
-        md.push_str(&format!("- **Last sync**: {}\n\n", Utc::now().format("%Y-%m-%dT%H:%M:%SZ")));
+        md.push_str(&format!(
+            "- **Last sync**: {}\n\n",
+            Utc::now().format("%Y-%m-%dT%H:%M:%SZ")
+        ));
 
         // Structure
         md.push_str("## Structure\n\n");
@@ -413,7 +436,10 @@ impl MetadataSyncService {
         let message = if file_count == 1 {
             "chore(fold): update metadata for 1 file\n\nSynced by fold-meta-bot".to_string()
         } else {
-            format!("chore(fold): update metadata for {} files\n\nSynced by fold-meta-bot", file_count)
+            format!(
+                "chore(fold): update metadata for {} files\n\nSynced by fold-meta-bot",
+                file_count
+            )
         };
 
         let changes: Vec<String> = changes.iter().map(|c| c.path().to_string()).collect();
@@ -423,43 +449,52 @@ impl MetadataSyncService {
                 .map_err(|e| Error::Internal(format!("Failed to open repo: {}", e)))?;
 
             // Stage all changes
-            let mut index = git_repo.index()
+            let mut index = git_repo
+                .index()
                 .map_err(|e| Error::Internal(format!("Failed to get index: {}", e)))?;
 
             for file_path in &changes {
                 // Normalize path separators for git
                 let normalized = file_path.replace('\\', "/");
-                index.add_path(Path::new(&normalized))
-                    .map_err(|e| Error::Internal(format!("Failed to stage {}: {}", file_path, e)))?;
+                index.add_path(Path::new(&normalized)).map_err(|e| {
+                    Error::Internal(format!("Failed to stage {}: {}", file_path, e))
+                })?;
             }
 
-            index.write()
+            index
+                .write()
                 .map_err(|e| Error::Internal(format!("Failed to write index: {}", e)))?;
 
-            let tree_id = index.write_tree()
+            let tree_id = index
+                .write_tree()
                 .map_err(|e| Error::Internal(format!("Failed to write tree: {}", e)))?;
-            let tree = git_repo.find_tree(tree_id)
+            let tree = git_repo
+                .find_tree(tree_id)
                 .map_err(|e| Error::Internal(format!("Failed to find tree: {}", e)))?;
 
             // Create commit
             let signature = Signature::now(BOT_NAME, BOT_EMAIL)
                 .map_err(|e| Error::Internal(format!("Failed to create signature: {}", e)))?;
 
-            let parent_commit = git_repo.head()
+            let parent_commit = git_repo
+                .head()
                 .and_then(|r| r.peel_to_commit())
                 .map_err(|e| Error::Internal(format!("Failed to get HEAD commit: {}", e)))?;
 
-            let commit_oid = git_repo.commit(
-                Some("HEAD"),
-                &signature,
-                &signature,
-                &message,
-                &tree,
-                &[&parent_commit],
-            ).map_err(|e| Error::Internal(format!("Failed to create commit: {}", e)))?;
+            let commit_oid = git_repo
+                .commit(
+                    Some("HEAD"),
+                    &signature,
+                    &signature,
+                    &message,
+                    &tree,
+                    &[&parent_commit],
+                )
+                .map_err(|e| Error::Internal(format!("Failed to create commit: {}", e)))?;
 
             // Push to remote
-            let mut remote = git_repo.find_remote("origin")
+            let mut remote = git_repo
+                .find_remote("origin")
                 .map_err(|e| Error::Internal(format!("Failed to find remote: {}", e)))?;
 
             // Create callbacks inside the blocking task
@@ -471,7 +506,8 @@ impl MetadataSyncService {
             let mut push_options = PushOptions::new();
             push_options.remote_callbacks(callbacks);
 
-            let head_ref = git_repo.head()
+            let head_ref = git_repo
+                .head()
                 .map_err(|e| Error::Internal(format!("Failed to get HEAD: {}", e)))?;
             let refspec = format!(
                 "refs/heads/{}:refs/heads/{}",
@@ -479,7 +515,8 @@ impl MetadataSyncService {
                 head_ref.shorthand().unwrap_or("main")
             );
 
-            remote.push(&[&refspec], Some(&mut push_options))
+            remote
+                .push(&[&refspec], Some(&mut push_options))
                 .map_err(|e| Error::Internal(format!("Failed to push: {}", e)))?;
 
             Ok::<_, Error>(commit_oid.to_string())

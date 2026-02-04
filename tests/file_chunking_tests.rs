@@ -155,12 +155,7 @@ export const createHandler = (db: Database) => new UserHandler(db);
     // 4. Method "process" (lines 14-16)
     // 5. Function "createHandler" (lines 18)
 
-    let expected_types = vec![
-        "interface",
-        "class",
-        "method",
-        "function",
-    ];
+    let expected_types = vec!["interface", "class", "method", "function"];
 
     for expected_type in expected_types {
         assert!(!expected_type.is_empty());
@@ -252,15 +247,28 @@ fn test_chunk_line_numbers_accuracy() {
 
     assert!(start > 0, "start_line should be 1-indexed");
     assert!(end >= start, "end_line should be >= start_line");
-    assert!(end - start < 200, "chunk too large (>200 lines suggests poor chunking)");
+    assert!(
+        end - start < 200,
+        "chunk too large (>200 lines suggests poor chunking)"
+    );
 }
 
 #[test]
 fn test_chunk_node_type_values() {
     // Verify chunks have standard node_type values
     let valid_types = vec![
-        "function", "class", "struct", "enum", "trait", "interface",
-        "method", "module", "macro", "impl", "heading", "paragraph",
+        "function",
+        "class",
+        "struct",
+        "enum",
+        "trait",
+        "interface",
+        "method",
+        "module",
+        "macro",
+        "impl",
+        "heading",
+        "paragraph",
     ];
 
     for node_type in valid_types {
@@ -311,8 +319,8 @@ fn test_chunk_minimum_size_constraint() {
         "end_line": 12  // 3 lines: 10, 11, 12
     });
 
-    let lines = valid_chunk["end_line"].as_i64().unwrap()
-        - valid_chunk["start_line"].as_i64().unwrap() + 1;
+    let lines =
+        valid_chunk["end_line"].as_i64().unwrap() - valid_chunk["start_line"].as_i64().unwrap() + 1;
 
     assert!(lines >= 3, "chunk should be at least 3 lines");
 }
@@ -326,8 +334,8 @@ fn test_chunk_maximum_size_constraint() {
         "end_line": 200
     });
 
-    let lines = valid_chunk["end_line"].as_i64().unwrap()
-        - valid_chunk["start_line"].as_i64().unwrap() + 1;
+    let lines =
+        valid_chunk["end_line"].as_i64().unwrap() - valid_chunk["start_line"].as_i64().unwrap() + 1;
 
     assert!(lines <= 200, "chunk should not exceed 200 lines");
 }
@@ -478,7 +486,10 @@ fn test_chunks_ranked_by_similarity() {
 
     // Verify ranking (descending by score)
     for i in 0..chunks.len() - 1 {
-        assert!(chunks[i].0 >= chunks[i + 1].0, "chunks should be ranked by score");
+        assert!(
+            chunks[i].0 >= chunks[i + 1].0,
+            "chunks should be ranked by score"
+        );
     }
 }
 
@@ -542,12 +553,7 @@ fn test_supported_file_extensions() {
 #[test]
 fn test_unsupported_file_types_fallback_to_line_chunking() {
     // Files without AST support should use line-based chunking
-    let unsupported_files = vec![
-        "legacy.java",
-        "config.sql",
-        "style.css",
-        "unknown.xyz",
-    ];
+    let unsupported_files = vec!["legacy.java", "config.sql", "style.css", "unknown.xyz"];
 
     for filename in unsupported_files {
         // Should fall back to line-based chunking (50 lines per chunk)
@@ -667,7 +673,10 @@ fn test_large_file_chunking_performance() {
     let chunk_size = 50;
 
     let expected_chunks = large_file_size_lines / chunk_size;
-    assert!(expected_chunks > 100, "large file should produce many chunks");
+    assert!(
+        expected_chunks > 100,
+        "large file should produce many chunks"
+    );
 }
 
 #[test]

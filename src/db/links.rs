@@ -150,7 +150,9 @@ impl MemoryLink {
 
     /// Get the change type as enum.
     pub fn change_type_enum(&self) -> Option<ChangeType> {
-        self.change_type.as_ref().and_then(|ct| ChangeType::from_str(ct))
+        self.change_type
+            .as_ref()
+            .and_then(|ct| ChangeType::from_str(ct))
     }
 }
 
@@ -211,7 +213,9 @@ pub async fn create_link(pool: &DbPool, input: CreateLink) -> Result<MemoryLink>
         sqlx::Error::Database(ref db_err) if db_err.is_unique_violation() => {
             Error::AlreadyExists(format!(
                 "Link already exists: {} -> {} ({})",
-                input.source_id, input.target_id, input.link_type.as_str()
+                input.source_id,
+                input.target_id,
+                input.link_type.as_str()
             ))
         }
         _ => Error::Database(e),
@@ -269,26 +273,22 @@ pub async fn delete_link_by_endpoints(
     target_id: &str,
     link_type: &LinkType,
 ) -> Result<()> {
-    sqlx::query(
-        "DELETE FROM memory_links WHERE source_id = ? AND target_id = ? AND link_type = ?",
-    )
-    .bind(source_id)
-    .bind(target_id)
-    .bind(link_type.as_str())
-    .execute(pool)
-    .await?;
+    sqlx::query("DELETE FROM memory_links WHERE source_id = ? AND target_id = ? AND link_type = ?")
+        .bind(source_id)
+        .bind(target_id)
+        .bind(link_type.as_str())
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
 /// Delete all links for a memory (as source or target).
 pub async fn delete_memory_links(pool: &DbPool, memory_id: &str) -> Result<u64> {
-    let result = sqlx::query(
-        "DELETE FROM memory_links WHERE source_id = ? OR target_id = ?",
-    )
-    .bind(memory_id)
-    .bind(memory_id)
-    .execute(pool)
-    .await?;
+    let result = sqlx::query("DELETE FROM memory_links WHERE source_id = ? OR target_id = ?")
+        .bind(memory_id)
+        .bind(memory_id)
+        .execute(pool)
+        .await?;
     Ok(result.rows_affected())
 }
 
@@ -406,12 +406,10 @@ pub async fn list_ai_links_above_threshold(
 
 /// Count links for a project.
 pub async fn count_project_links(pool: &DbPool, project_id: &str) -> Result<i64> {
-    let (count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM memory_links WHERE project_id = ?",
-    )
-    .bind(project_id)
-    .fetch_one(pool)
-    .await?;
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM memory_links WHERE project_id = ?")
+        .bind(project_id)
+        .fetch_one(pool)
+        .await?;
     Ok(count)
 }
 
@@ -604,19 +602,23 @@ pub async fn create_memory_link(pool: &DbPool, input: CreateMemoryLink) -> Resul
     // Determine project from source memory
     let source_memory = crate::db::get_memory(pool, &input.source_id).await?;
 
-    create_link(pool, CreateLink {
-        id: input.id,
-        project_id: source_memory.project_id,
-        source_id: input.source_id,
-        target_id: input.target_id,
-        link_type: LinkType::from_str(&input.link_type),
-        created_by: LinkCreator::User,
-        confidence: None,
-        context: input.context,
-        change_type: None,
-        additions: None,
-        deletions: None,
-    }).await
+    create_link(
+        pool,
+        CreateLink {
+            id: input.id,
+            project_id: source_memory.project_id,
+            source_id: input.source_id,
+            target_id: input.target_id,
+            link_type: LinkType::from_str(&input.link_type),
+            created_by: LinkCreator::User,
+            confidence: None,
+            context: input.context,
+            change_type: None,
+            additions: None,
+            deletions: None,
+        },
+    )
+    .await
 }
 
 /// Get all links for a memory (outgoing only, for API use).
@@ -644,39 +646,51 @@ pub async fn create_links_batch(pool: &DbPool, links: Vec<CreateLink>) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{init_pool, migrate, create_project, CreateProject, create_memory, CreateMemory, MemoryType};
+    use crate::db::{
+        create_memory, create_project, init_pool, migrate, CreateMemory, CreateProject, MemoryType,
+    };
 
     async fn setup_test_db() -> DbPool {
         let pool = init_pool(":memory:").await.unwrap();
         migrate(&pool).await.unwrap();
 
-        create_project(&pool, CreateProject {
-            id: "proj-1".to_string(),
-            slug: "test".to_string(),
-            name: "Test".to_string(),
-            description: None,
-        }).await.unwrap();
+        create_project(
+            &pool,
+            CreateProject {
+                id: "proj-1".to_string(),
+                slug: "test".to_string(),
+                name: "Test".to_string(),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
 
         // Create test memories
         for i in 1..=3 {
-            create_memory(&pool, CreateMemory {
-                id: format!("mem-{}", i),
-                project_id: "proj-1".to_string(),
-                repository_id: None,
-                memory_type: MemoryType::General,
-                source: None,
-                title: Some(format!("Memory {}", i)),
-                content: Some(format!("Content {}", i)),
-                content_hash: None,
-                content_storage: "filesystem".to_string(),
-                file_path: None,
-                language: None,
-                git_branch: None,
-                git_commit_sha: None,
-                author: None,
-                keywords: None,
-                tags: None,
-            }).await.unwrap();
+            create_memory(
+                &pool,
+                CreateMemory {
+                    id: format!("mem-{}", i),
+                    project_id: "proj-1".to_string(),
+                    repository_id: None,
+                    memory_type: MemoryType::General,
+                    source: None,
+                    title: Some(format!("Memory {}", i)),
+                    content: Some(format!("Content {}", i)),
+                    content_hash: None,
+                    content_storage: "filesystem".to_string(),
+                    file_path: None,
+                    language: None,
+                    git_branch: None,
+                    git_commit_sha: None,
+                    author: None,
+                    keywords: None,
+                    tags: None,
+                },
+            )
+            .await
+            .unwrap();
         }
 
         pool
@@ -686,19 +700,24 @@ mod tests {
     async fn test_create_and_get_link() {
         let pool = setup_test_db().await;
 
-        let link = create_link(&pool, CreateLink {
-            id: "link-1".to_string(),
-            project_id: "proj-1".to_string(),
-            source_id: "mem-1".to_string(),
-            target_id: "mem-2".to_string(),
-            link_type: LinkType::References,
-            created_by: LinkCreator::User,
-            confidence: None,
-            context: Some("Test link".to_string()),
-            change_type: None,
-            additions: None,
-            deletions: None,
-        }).await.unwrap();
+        let link = create_link(
+            &pool,
+            CreateLink {
+                id: "link-1".to_string(),
+                project_id: "proj-1".to_string(),
+                source_id: "mem-1".to_string(),
+                target_id: "mem-2".to_string(),
+                link_type: LinkType::References,
+                created_by: LinkCreator::User,
+                confidence: None,
+                context: Some("Test link".to_string()),
+                change_type: None,
+                additions: None,
+                deletions: None,
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(link.id, "link-1");
         assert_eq!(link.link_type, "references");
@@ -712,33 +731,43 @@ mod tests {
         let pool = setup_test_db().await;
 
         // Create chain: mem-1 -> mem-2 -> mem-3
-        create_link(&pool, CreateLink {
-            id: "link-1".to_string(),
-            project_id: "proj-1".to_string(),
-            source_id: "mem-1".to_string(),
-            target_id: "mem-2".to_string(),
-            link_type: LinkType::References,
-            created_by: LinkCreator::System,
-            confidence: None,
-            context: None,
-            change_type: None,
-            additions: None,
-            deletions: None,
-        }).await.unwrap();
+        create_link(
+            &pool,
+            CreateLink {
+                id: "link-1".to_string(),
+                project_id: "proj-1".to_string(),
+                source_id: "mem-1".to_string(),
+                target_id: "mem-2".to_string(),
+                link_type: LinkType::References,
+                created_by: LinkCreator::System,
+                confidence: None,
+                context: None,
+                change_type: None,
+                additions: None,
+                deletions: None,
+            },
+        )
+        .await
+        .unwrap();
 
-        create_link(&pool, CreateLink {
-            id: "link-2".to_string(),
-            project_id: "proj-1".to_string(),
-            source_id: "mem-2".to_string(),
-            target_id: "mem-3".to_string(),
-            link_type: LinkType::References,
-            created_by: LinkCreator::System,
-            confidence: None,
-            context: None,
-            change_type: None,
-            additions: None,
-            deletions: None,
-        }).await.unwrap();
+        create_link(
+            &pool,
+            CreateLink {
+                id: "link-2".to_string(),
+                project_id: "proj-1".to_string(),
+                source_id: "mem-2".to_string(),
+                target_id: "mem-3".to_string(),
+                link_type: LinkType::References,
+                created_by: LinkCreator::System,
+                confidence: None,
+                context: None,
+                change_type: None,
+                additions: None,
+                deletions: None,
+            },
+        )
+        .await
+        .unwrap();
 
         let nodes = traverse_graph(&pool, "mem-1", 3, None).await.unwrap();
         assert_eq!(nodes.len(), 2);
@@ -751,33 +780,43 @@ mod tests {
         let pool = setup_test_db().await;
 
         // Create path: mem-1 -> mem-2 -> mem-3
-        create_link(&pool, CreateLink {
-            id: "link-1".to_string(),
-            project_id: "proj-1".to_string(),
-            source_id: "mem-1".to_string(),
-            target_id: "mem-2".to_string(),
-            link_type: LinkType::References,
-            created_by: LinkCreator::System,
-            confidence: None,
-            context: None,
-            change_type: None,
-            additions: None,
-            deletions: None,
-        }).await.unwrap();
+        create_link(
+            &pool,
+            CreateLink {
+                id: "link-1".to_string(),
+                project_id: "proj-1".to_string(),
+                source_id: "mem-1".to_string(),
+                target_id: "mem-2".to_string(),
+                link_type: LinkType::References,
+                created_by: LinkCreator::System,
+                confidence: None,
+                context: None,
+                change_type: None,
+                additions: None,
+                deletions: None,
+            },
+        )
+        .await
+        .unwrap();
 
-        create_link(&pool, CreateLink {
-            id: "link-2".to_string(),
-            project_id: "proj-1".to_string(),
-            source_id: "mem-2".to_string(),
-            target_id: "mem-3".to_string(),
-            link_type: LinkType::References,
-            created_by: LinkCreator::System,
-            confidence: None,
-            context: None,
-            change_type: None,
-            additions: None,
-            deletions: None,
-        }).await.unwrap();
+        create_link(
+            &pool,
+            CreateLink {
+                id: "link-2".to_string(),
+                project_id: "proj-1".to_string(),
+                source_id: "mem-2".to_string(),
+                target_id: "mem-3".to_string(),
+                link_type: LinkType::References,
+                created_by: LinkCreator::System,
+                confidence: None,
+                context: None,
+                change_type: None,
+                additions: None,
+                deletions: None,
+            },
+        )
+        .await
+        .unwrap();
 
         let path = find_path(&pool, "mem-1", "mem-3", 5).await.unwrap();
         assert!(path.is_some());

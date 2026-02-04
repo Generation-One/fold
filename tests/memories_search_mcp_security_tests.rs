@@ -5,7 +5,7 @@ mod common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use common::{post_json};
+use common::post_json;
 use serde_json::json;
 
 // ============================================================================
@@ -27,10 +27,7 @@ async fn test_memories_list_requires_project_read_access() {
         .unwrap();
 
     // Request should have auth header
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -46,10 +43,7 @@ async fn test_memories_list_without_auth_returns_401() {
         .unwrap();
 
     // No auth header
-    assert!(!request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(!request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -67,10 +61,7 @@ async fn test_user_with_project_read_can_list_memories() {
         .unwrap();
 
     // Request should be properly formed
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -111,10 +102,7 @@ async fn test_memories_update_requires_project_write_access() {
         .unwrap();
 
     // Request should be properly formed with auth header
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -133,10 +121,7 @@ async fn test_memories_delete_requires_project_write_access() {
         .unwrap();
 
     // Request should have auth header
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -153,10 +138,7 @@ async fn test_user_without_project_access_cannot_view_memories() {
         .body(Body::empty())
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -173,10 +155,7 @@ async fn test_admin_can_access_any_project_memories() {
         .body(Body::empty())
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 // ============================================================================
@@ -219,10 +198,7 @@ async fn test_search_memories_without_auth_returns_401() {
         .unwrap();
 
     // No auth header
-    assert!(!request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(!request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -241,10 +217,7 @@ async fn test_user_with_read_access_can_search() {
     let request = post_json(&uri, token, request_body.clone());
 
     // Request should have auth and valid body
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
     assert_eq!(request_body["query"], "search term");
 }
 
@@ -279,10 +252,7 @@ async fn test_search_respects_group_membership() {
 
     let request = post_json(&uri, token, request_body);
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -299,10 +269,7 @@ async fn test_admin_search_returns_results_from_all_projects() {
 
     let request = post_json(&uri, admin_token, request_body);
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -352,10 +319,7 @@ async fn test_mcp_requires_authentication() {
         .unwrap();
 
     // No auth header
-    assert!(!request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(!request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -379,10 +343,7 @@ async fn test_mcp_with_valid_token_succeeds() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -409,10 +370,7 @@ async fn test_mcp_respects_token_project_scoping() {
         .unwrap();
 
     // Token format should be valid
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -458,10 +416,7 @@ async fn test_mcp_with_expired_token_returns_401() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -484,10 +439,7 @@ async fn test_mcp_with_revoked_token_returns_401() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -502,10 +454,7 @@ async fn test_mcp_sse_requires_authentication() {
         .unwrap();
 
     // No auth header
-    assert!(!request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(!request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -521,10 +470,7 @@ async fn test_mcp_sse_with_valid_token_establishes_stream() {
         .body(Body::empty())
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -551,10 +497,7 @@ async fn test_mcp_respects_user_role_permissions() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 // ============================================================================
@@ -592,10 +535,7 @@ async fn test_memory_access_via_group_membership() {
         .body(Body::empty())
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -647,8 +587,5 @@ async fn test_direct_and_group_membership_combine() {
         .body(Body::empty())
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }

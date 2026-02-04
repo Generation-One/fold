@@ -5,10 +5,10 @@
 //! - Group membership (user -> group -> project)
 //! - Global admin role (bypass all project checks)
 
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::db::DbPool;
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 /// Project-level access role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,14 +192,16 @@ impl PermissionService {
     ///
     /// Returns projects where the user has direct membership, group membership,
     /// or is an admin.
-    pub async fn get_accessible_projects(&self, user_id: &str, user_role: &str) -> Result<Vec<String>> {
+    pub async fn get_accessible_projects(
+        &self,
+        user_id: &str,
+        user_role: &str,
+    ) -> Result<Vec<String>> {
         // Admins have access to all projects
         if user_role == "admin" {
-            let projects: Vec<(String,)> = sqlx::query_as(
-                "SELECT id FROM projects"
-            )
-            .fetch_all(&self.db)
-            .await?;
+            let projects: Vec<(String,)> = sqlx::query_as("SELECT id FROM projects")
+                .fetch_all(&self.db)
+                .await?;
             return Ok(projects.into_iter().map(|(id,)| id).collect());
         }
 

@@ -34,10 +34,7 @@ use crate::{AppState, Result};
 fn parse_datetime(s: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&Utc))
-        .or_else(|_| {
-            NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-                .map(|ndt| ndt.and_utc())
-        })
+        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|ndt| ndt.and_utc()))
         .unwrap_or_else(|_| Utc::now())
 }
 
@@ -53,7 +50,10 @@ pub fn init_startup_time() {
 
 /// Get uptime in seconds since server start.
 fn get_uptime_seconds() -> u64 {
-    STARTUP_TIME.get().map(|start| start.elapsed().as_secs()).unwrap_or(0)
+    STARTUP_TIME
+        .get()
+        .map(|start| start.elapsed().as_secs())
+        .unwrap_or(0)
 }
 
 /// Increment request counter.
@@ -386,39 +386,55 @@ async fn list_jobs(
     });
 
     // Convert query job_type to db job_type
-    let db_job_type = query.job_type.as_ref().and_then(|t| crate::db::JobType::from_str(t));
+    let db_job_type = query
+        .job_type
+        .as_ref()
+        .and_then(|t| crate::db::JobType::from_str(t));
 
     // Fetch jobs from database
     let jobs = crate::db::list_jobs(&state.db, db_status, db_job_type, limit, offset).await?;
 
     // Convert to API response format
-    let job_infos: Vec<JobInfo> = jobs.into_iter().map(|j| JobInfo {
-        id: Uuid::parse_str(&j.id).unwrap_or_else(|_| Uuid::new_v4()),
-        job_type: j.job_type,
-        status: match j.status.as_str() {
-            "pending" => JobStatus::Pending,
-            "running" => JobStatus::Running,
-            "completed" => JobStatus::Completed,
-            "failed" => JobStatus::Failed,
-            "retry" => JobStatus::Retry,
-            "cancelled" => JobStatus::Cancelled,
-            "paused" => JobStatus::Paused,
-            _ => JobStatus::Pending,
-        },
-        progress: j.total_items.map(|total| {
-            if total == 0 { 100 } else { ((j.processed_items as f64 / total as f64) * 100.0) as u32 }
-        }),
-        created_at: parse_datetime(&j.created_at),
-        started_at: j.started_at.map(|s| parse_datetime(&s)),
-        completed_at: j.completed_at.map(|s| parse_datetime(&s)),
-        error: j.error,
-        metadata: j.payload.and_then(|p| serde_json::from_str(&p).ok()).unwrap_or(serde_json::json!({})),
-    }).collect();
+    let job_infos: Vec<JobInfo> = jobs
+        .into_iter()
+        .map(|j| JobInfo {
+            id: Uuid::parse_str(&j.id).unwrap_or_else(|_| Uuid::new_v4()),
+            job_type: j.job_type,
+            status: match j.status.as_str() {
+                "pending" => JobStatus::Pending,
+                "running" => JobStatus::Running,
+                "completed" => JobStatus::Completed,
+                "failed" => JobStatus::Failed,
+                "retry" => JobStatus::Retry,
+                "cancelled" => JobStatus::Cancelled,
+                "paused" => JobStatus::Paused,
+                _ => JobStatus::Pending,
+            },
+            progress: j.total_items.map(|total| {
+                if total == 0 {
+                    100
+                } else {
+                    ((j.processed_items as f64 / total as f64) * 100.0) as u32
+                }
+            }),
+            created_at: parse_datetime(&j.created_at),
+            started_at: j.started_at.map(|s| parse_datetime(&s)),
+            completed_at: j.completed_at.map(|s| parse_datetime(&s)),
+            error: j.error,
+            metadata: j
+                .payload
+                .and_then(|p| serde_json::from_str(&p).ok())
+                .unwrap_or(serde_json::json!({})),
+        })
+        .collect();
 
     // Get total count for pagination
-    let total = crate::db::count_jobs_by_status(&state.db, db_status.unwrap_or(crate::db::JobStatus::Pending))
-        .await
-        .unwrap_or(job_infos.len() as i64) as u32;
+    let total = crate::db::count_jobs_by_status(
+        &state.db,
+        db_status.unwrap_or(crate::db::JobStatus::Pending),
+    )
+    .await
+    .unwrap_or(job_infos.len() as i64) as u32;
 
     Ok(Json(ListJobsResponse {
         jobs: job_infos,
@@ -453,13 +469,20 @@ async fn get_job(
             _ => JobStatus::Pending,
         },
         progress: job.total_items.map(|total| {
-            if total == 0 { 100 } else { ((job.processed_items as f64 / total as f64) * 100.0) as u32 }
+            if total == 0 {
+                100
+            } else {
+                ((job.processed_items as f64 / total as f64) * 100.0) as u32
+            }
         }),
         created_at: parse_datetime(&job.created_at),
         started_at: job.started_at.map(|s| parse_datetime(&s)),
         completed_at: job.completed_at.map(|s| parse_datetime(&s)),
         error: job.error,
-        metadata: job.payload.and_then(|p| serde_json::from_str(&p).ok()).unwrap_or(serde_json::json!({})),
+        metadata: job
+            .payload
+            .and_then(|p| serde_json::from_str(&p).ok())
+            .unwrap_or(serde_json::json!({})),
     }))
 }
 
@@ -579,10 +602,7 @@ fold_up 1
 
     (
         StatusCode::OK,
-        [(
-            "Content-Type",
-            "text/plain; version=0.0.4; charset=utf-8",
-        )],
+        [("Content-Type", "text/plain; version=0.0.4; charset=utf-8")],
         metrics,
     )
 }
@@ -635,7 +655,10 @@ async fn check_qdrant(state: &AppState) -> DependencyCheck {
             if err_str.contains("Not found") || err_str.contains("doesn't exist") {
                 (HealthStatus::Healthy, None)
             } else {
-                (HealthStatus::Unhealthy, Some(format!("Qdrant error: {}", e)))
+                (
+                    HealthStatus::Unhealthy,
+                    Some(format!("Qdrant error: {}", e)),
+                )
             }
         }
     };
@@ -661,7 +684,10 @@ async fn check_embeddings(state: &AppState) -> DependencyCheck {
         (HealthStatus::Healthy, None)
     } else {
         // Degraded - will use hash-based fallback
-        (HealthStatus::Degraded, Some("No embedding providers configured, using fallback".to_string()))
+        (
+            HealthStatus::Degraded,
+            Some("No embedding providers configured, using fallback".to_string()),
+        )
     };
 
     DependencyCheck {
@@ -694,7 +720,9 @@ async fn get_database_status(state: &AppState) -> Result<DatabaseStatus> {
 /// Get Qdrant status.
 async fn get_qdrant_status(state: &AppState) -> Result<QdrantStatus> {
     // Get list of projects to count collections and total points
-    let projects = crate::db::list_projects(&state.db).await.unwrap_or_default();
+    let projects = crate::db::list_projects(&state.db)
+        .await
+        .unwrap_or_default();
 
     let mut collections = 0u32;
     let mut total_points = 0u64;
@@ -720,7 +748,10 @@ async fn get_qdrant_status(state: &AppState) -> Result<QdrantStatus> {
 
     // If no projects exist, try a health check on a dummy collection
     if projects.is_empty() {
-        connected = state.qdrant.collection_info("_health_check").await
+        connected = state
+            .qdrant
+            .collection_info("_health_check")
+            .await
             .map(|_| true)
             .unwrap_or_else(|e| e.to_string().contains("Not found"));
     }

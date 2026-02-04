@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use reqwest::{Client, header};
+use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -151,10 +151,7 @@ impl GitHubService {
             header::ACCEPT,
             "application/vnd.github+json".parse().unwrap(),
         );
-        headers.insert(
-            "X-GitHub-Api-Version",
-            "2022-11-28".parse().unwrap(),
-        );
+        headers.insert("X-GitHub-Api-Version", "2022-11-28".parse().unwrap());
         headers
     }
 
@@ -173,7 +170,10 @@ impl GitHubService {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(Error::GitHub(format!("GitHub API error {}: {}", status, text)));
+            return Err(Error::GitHub(format!(
+                "GitHub API error {}: {}",
+                status, text
+            )));
         }
 
         response
@@ -214,7 +214,10 @@ impl GitHubService {
                 return Err(Error::NotFound(format!("File not found: {}", path)));
             }
             let text = response.text().await.unwrap_or_default();
-            return Err(Error::GitHub(format!("GitHub API error {}: {}", status, text)));
+            return Err(Error::GitHub(format!(
+                "GitHub API error {}: {}",
+                status, text
+            )));
         }
 
         let mut file_content: FileContent = response
@@ -275,7 +278,10 @@ impl GitHubService {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(Error::GitHub(format!("GitHub API error {}: {}", status, text)));
+            return Err(Error::GitHub(format!(
+                "GitHub API error {}: {}",
+                status, text
+            )));
         }
 
         response
@@ -308,7 +314,10 @@ impl GitHubService {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(Error::GitHub(format!("GitHub API error {}: {}", status, text)));
+            return Err(Error::GitHub(format!(
+                "GitHub API error {}: {}",
+                status, text
+            )));
         }
 
         response
@@ -374,7 +383,10 @@ impl GitHubService {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(Error::GitHub(format!("GitHub API error {}: {}", status, text)));
+            return Err(Error::GitHub(format!(
+                "GitHub API error {}: {}",
+                status, text
+            )));
         }
 
         let webhook: GitHubWebhook = response
@@ -416,7 +428,10 @@ impl GitHubService {
         if !response.status().is_success() && response.status().as_u16() != 404 {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(Error::GitHub(format!("GitHub API error {}: {}", status, text)));
+            return Err(Error::GitHub(format!(
+                "GitHub API error {}: {}",
+                status, text
+            )));
         }
 
         info!(
@@ -449,7 +464,10 @@ impl GitHubService {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(Error::GitHub(format!("GitHub API error {}: {}", status, text)));
+            return Err(Error::GitHub(format!(
+                "GitHub API error {}: {}",
+                status, text
+            )));
         }
 
         response
@@ -482,7 +500,10 @@ impl GitHubService {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(Error::GitHub(format!("GitHub API error {}: {}", status, text)));
+            return Err(Error::GitHub(format!(
+                "GitHub API error {}: {}",
+                status, text
+            )));
         }
 
         response

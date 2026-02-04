@@ -143,17 +143,17 @@ pub struct Job {
     pub created_at: String,
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
-    pub result: Option<String>,  // JSON
+    pub result: Option<String>, // JSON
     pub error: Option<String>,
     // New fields for enhanced queue
-    pub payload: Option<String>,      // JSON payload for job-specific data
-    pub priority: Option<i32>,        // Higher = more urgent
-    pub max_retries: Option<i32>,     // Maximum retry attempts
-    pub retry_count: Option<i32>,     // Current retry count
-    pub locked_at: Option<String>,    // When job was claimed
-    pub locked_by: Option<String>,    // Worker ID that claimed it
+    pub payload: Option<String>,   // JSON payload for job-specific data
+    pub priority: Option<i32>,     // Higher = more urgent
+    pub max_retries: Option<i32>,  // Maximum retry attempts
+    pub retry_count: Option<i32>,  // Current retry count
+    pub locked_at: Option<String>, // When job was claimed
+    pub locked_by: Option<String>, // Worker ID that claimed it
     pub scheduled_at: Option<String>, // For delayed jobs
-    pub last_error: Option<String>,   // Last error message for retries
+    pub last_error: Option<String>, // Last error message for retries
 }
 
 impl Job {
@@ -190,7 +190,9 @@ impl Job {
 
     /// Parse result JSON.
     pub fn result_json<T: serde::de::DeserializeOwned>(&self) -> Option<T> {
-        self.result.as_ref().and_then(|r| serde_json::from_str(r).ok())
+        self.result
+            .as_ref()
+            .and_then(|r| serde_json::from_str(r).ok())
     }
 }
 
@@ -314,7 +316,7 @@ pub struct JobLog {
     pub job_id: String,
     pub level: String,
     pub message: String,
-    pub metadata: Option<String>,  // JSON
+    pub metadata: Option<String>, // JSON
     pub created_at: String,
 }
 
@@ -326,7 +328,9 @@ impl JobLog {
 
     /// Parse metadata JSON.
     pub fn metadata_json<T: serde::de::DeserializeOwned>(&self) -> Option<T> {
-        self.metadata.as_ref().and_then(|m| serde_json::from_str(m).ok())
+        self.metadata
+            .as_ref()
+            .and_then(|m| serde_json::from_str(m).ok())
     }
 }
 
@@ -388,8 +392,13 @@ pub struct JobExecution {
 
 /// Create a new job.
 pub async fn create_job(pool: &DbPool, input: CreateJob) -> Result<Job> {
-    let payload_json = input.payload.map(|p| serde_json::to_string(&p).unwrap_or_default());
-    let priority = input.priority.map(|p| p.as_i32()).unwrap_or(JobPriority::Normal.as_i32());
+    let payload_json = input
+        .payload
+        .map(|p| serde_json::to_string(&p).unwrap_or_default());
+    let priority = input
+        .priority
+        .map(|p| p.as_i32())
+        .unwrap_or(JobPriority::Normal.as_i32());
 
     sqlx::query_as::<_, Job>(
         r#"
@@ -419,7 +428,11 @@ pub async fn enqueue_job(
     payload: Option<serde_json::Value>,
 ) -> Result<Job> {
     let id = nanoid::nanoid!();
-    create_job(pool, CreateJob::new(id, job_type).with_payload(payload.unwrap_or(serde_json::json!({})))).await
+    create_job(
+        pool,
+        CreateJob::new(id, job_type).with_payload(payload.unwrap_or(serde_json::json!({}))),
+    )
+    .await
 }
 
 /// Get a job by ID.
@@ -547,7 +560,8 @@ pub async fn retry_job(pool: &DbPool, job_id: &str, error: &str) -> Result<Optio
     }
 
     // Calculate exponential backoff delay
-    let delay_secs = (BASE_RETRY_DELAY_SECS * 2_i64.pow(retry_count as u32)).min(MAX_RETRY_DELAY_SECS);
+    let delay_secs =
+        (BASE_RETRY_DELAY_SECS * 2_i64.pow(retry_count as u32)).min(MAX_RETRY_DELAY_SECS);
 
     let job = sqlx::query_as::<_, Job>(
         r#"
@@ -661,7 +675,11 @@ pub async fn increment_job_progress(
 }
 
 /// Update job metadata/result field mid-execution.
-pub async fn update_job_metadata(pool: &DbPool, id: &str, metadata: &serde_json::Value) -> Result<Job> {
+pub async fn update_job_metadata(
+    pool: &DbPool,
+    id: &str,
+    metadata: &serde_json::Value,
+) -> Result<Job> {
     let metadata_json = serde_json::to_string(metadata).unwrap_or_default();
 
     sqlx::query_as::<_, Job>(
@@ -815,12 +833,10 @@ pub async fn list_paused_jobs(pool: &DbPool) -> Result<Vec<Job>> {
 
 /// Count paused jobs.
 pub async fn count_paused_jobs(pool: &DbPool) -> Result<i64> {
-    let result: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM jobs WHERE status = 'paused'",
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(Error::Database)?;
+    let result: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM jobs WHERE status = 'paused'")
+        .fetch_one(pool)
+        .await
+        .map_err(Error::Database)?;
 
     Ok(result.0)
 }
@@ -1012,23 +1028,17 @@ pub struct QueueStats {
 }
 
 pub async fn get_queue_stats(pool: &DbPool) -> Result<QueueStats> {
-    let (pending,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM jobs WHERE status = 'pending'",
-    )
-    .fetch_one(pool)
-    .await?;
+    let (pending,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM jobs WHERE status = 'pending'")
+        .fetch_one(pool)
+        .await?;
 
-    let (running,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM jobs WHERE status = 'running'",
-    )
-    .fetch_one(pool)
-    .await?;
+    let (running,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM jobs WHERE status = 'running'")
+        .fetch_one(pool)
+        .await?;
 
-    let (retry,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM jobs WHERE status = 'retry'",
-    )
-    .fetch_one(pool)
-    .await?;
+    let (retry,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM jobs WHERE status = 'retry'")
+        .fetch_one(pool)
+        .await?;
 
     let (completed_24h,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM jobs WHERE status = 'completed' AND completed_at >= datetime('now', '-1 day')",
@@ -1096,12 +1106,10 @@ pub async fn get_running_repo_job(
 
 /// Count jobs by status.
 pub async fn count_jobs_by_status(pool: &DbPool, status: JobStatus) -> Result<i64> {
-    let (count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM jobs WHERE status = ?",
-    )
-    .bind(status.as_str())
-    .fetch_one(pool)
-    .await?;
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM jobs WHERE status = ?")
+        .bind(status.as_str())
+        .fetch_one(pool)
+        .await?;
     Ok(count)
 }
 
@@ -1126,7 +1134,9 @@ pub async fn cleanup_old_jobs(pool: &DbPool, days: i64) -> Result<u64> {
 
 /// Create a job log entry.
 pub async fn create_job_log(pool: &DbPool, input: CreateJobLog) -> Result<JobLog> {
-    let metadata_json = input.metadata.map(|m| serde_json::to_string(&m).unwrap_or_default());
+    let metadata_json = input
+        .metadata
+        .map(|m| serde_json::to_string(&m).unwrap_or_default());
 
     sqlx::query_as::<_, JobLog>(
         r#"
@@ -1193,12 +1203,11 @@ pub async fn list_job_logs_by_level(
 
 /// Count errors in job logs.
 pub async fn count_job_errors(pool: &DbPool, job_id: &str) -> Result<i64> {
-    let (count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM job_logs WHERE job_id = ? AND level = 'error'",
-    )
-    .bind(job_id)
-    .fetch_one(pool)
-    .await?;
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM job_logs WHERE job_id = ? AND level = 'error'")
+            .bind(job_id)
+            .fetch_one(pool)
+            .await?;
     Ok(count)
 }
 
@@ -1224,7 +1233,10 @@ pub async fn get_latest_job_logs(pool: &DbPool, job_id: &str, limit: i64) -> Res
 // ============================================================================
 
 /// Create a webhook delivery.
-pub async fn create_webhook_delivery(pool: &DbPool, input: CreateWebhookDelivery) -> Result<WebhookDelivery> {
+pub async fn create_webhook_delivery(
+    pool: &DbPool,
+    input: CreateWebhookDelivery,
+) -> Result<WebhookDelivery> {
     let payload_json = serde_json::to_string(&input.payload)?;
 
     sqlx::query_as::<_, WebhookDelivery>(
@@ -1285,7 +1297,10 @@ pub async fn update_webhook_delivery_attempt(
 
 /// List pending webhook deliveries ready for retry.
 /// Uses idx_webhook_deliveries_next index.
-pub async fn list_pending_webhook_deliveries(pool: &DbPool, limit: i64) -> Result<Vec<WebhookDelivery>> {
+pub async fn list_pending_webhook_deliveries(
+    pool: &DbPool,
+    limit: i64,
+) -> Result<Vec<WebhookDelivery>> {
     sqlx::query_as::<_, WebhookDelivery>(
         r#"
         SELECT * FROM webhook_deliveries
@@ -1319,18 +1334,23 @@ pub async fn cleanup_old_webhook_deliveries(pool: &DbPool, days: i64) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{init_pool, migrate, create_project, CreateProject};
+    use crate::db::{create_project, init_pool, migrate, CreateProject};
 
     async fn setup_test_db() -> DbPool {
         let pool = init_pool(":memory:").await.unwrap();
         migrate(&pool).await.unwrap();
 
-        create_project(&pool, CreateProject {
-            id: "proj-1".to_string(),
-            slug: "test".to_string(),
-            name: "Test".to_string(),
-            description: None,
-        }).await.unwrap();
+        create_project(
+            &pool,
+            CreateProject {
+                id: "proj-1".to_string(),
+                slug: "test".to_string(),
+                name: "Test".to_string(),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
 
         pool
     }
@@ -1340,10 +1360,14 @@ mod tests {
         let pool = setup_test_db().await;
 
         // Create job using builder pattern
-        let job = create_job(&pool, CreateJob::new("job-1".to_string(), JobType::IndexRepo)
-            .with_project("proj-1")
-            .with_total_items(100)
-        ).await.unwrap();
+        let job = create_job(
+            &pool,
+            CreateJob::new("job-1".to_string(), JobType::IndexRepo)
+                .with_project("proj-1")
+                .with_total_items(100),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(job.status, "pending");
         assert_eq!(job.processed_items, 0);
@@ -1376,23 +1400,38 @@ mod tests {
         let pool = setup_test_db().await;
 
         // Create jobs with different priorities
-        create_job(&pool, CreateJob::new("job-low".to_string(), JobType::IndexRepo)
-            .with_priority(JobPriority::Low)
-        ).await.unwrap();
+        create_job(
+            &pool,
+            CreateJob::new("job-low".to_string(), JobType::IndexRepo)
+                .with_priority(JobPriority::Low),
+        )
+        .await
+        .unwrap();
 
-        create_job(&pool, CreateJob::new("job-high".to_string(), JobType::IndexRepo)
-            .with_priority(JobPriority::High)
-        ).await.unwrap();
+        create_job(
+            &pool,
+            CreateJob::new("job-high".to_string(), JobType::IndexRepo)
+                .with_priority(JobPriority::High),
+        )
+        .await
+        .unwrap();
 
-        create_job(&pool, CreateJob::new("job-normal".to_string(), JobType::IndexRepo)
-            .with_priority(JobPriority::Normal)
-        ).await.unwrap();
+        create_job(
+            &pool,
+            CreateJob::new("job-normal".to_string(), JobType::IndexRepo)
+                .with_priority(JobPriority::Normal),
+        )
+        .await
+        .unwrap();
 
         // Claim should get highest priority first
         let claimed = claim_job(&pool, "worker-1").await.unwrap();
         assert!(claimed.is_some());
         assert_eq!(claimed.as_ref().unwrap().id, "job-high");
-        assert_eq!(claimed.as_ref().unwrap().locked_by.as_deref(), Some("worker-1"));
+        assert_eq!(
+            claimed.as_ref().unwrap().locked_by.as_deref(),
+            Some("worker-1")
+        );
 
         // Next claim should get normal priority
         let claimed = claim_job(&pool, "worker-2").await.unwrap();
@@ -1414,9 +1453,12 @@ mod tests {
         let pool = setup_test_db().await;
 
         // Create job with max 2 retries
-        create_job(&pool, CreateJob::new("job-1".to_string(), JobType::IndexRepo)
-            .with_max_retries(2)
-        ).await.unwrap();
+        create_job(
+            &pool,
+            CreateJob::new("job-1".to_string(), JobType::IndexRepo).with_max_retries(2),
+        )
+        .await
+        .unwrap();
 
         // Claim and fail
         claim_job(&pool, "worker-1").await.unwrap();
@@ -1431,7 +1473,9 @@ mod tests {
         // Note: We need to wait for scheduled_at or skip it for testing
         // For now, just update the job to be ready
         sqlx::query("UPDATE jobs SET scheduled_at = NULL WHERE id = 'job-1'")
-            .execute(&pool).await.unwrap();
+            .execute(&pool)
+            .await
+            .unwrap();
 
         claim_job(&pool, "worker-2").await.unwrap();
 
@@ -1442,7 +1486,9 @@ mod tests {
 
         // Reset scheduled_at
         sqlx::query("UPDATE jobs SET scheduled_at = NULL WHERE id = 'job-1'")
-            .execute(&pool).await.unwrap();
+            .execute(&pool)
+            .await
+            .unwrap();
 
         claim_job(&pool, "worker-3").await.unwrap();
 
@@ -1459,8 +1505,12 @@ mod tests {
     async fn test_release_job() {
         let pool = setup_test_db().await;
 
-        create_job(&pool, CreateJob::new("job-1".to_string(), JobType::IndexRepo))
-            .await.unwrap();
+        create_job(
+            &pool,
+            CreateJob::new("job-1".to_string(), JobType::IndexRepo),
+        )
+        .await
+        .unwrap();
 
         // Claim job
         let claimed = claim_job(&pool, "worker-1").await.unwrap();
@@ -1484,8 +1534,12 @@ mod tests {
 
         // Create various jobs
         for i in 1..=3 {
-            create_job(&pool, CreateJob::new(format!("pending-{}", i), JobType::IndexRepo))
-                .await.unwrap();
+            create_job(
+                &pool,
+                CreateJob::new(format!("pending-{}", i), JobType::IndexRepo),
+            )
+            .await
+            .unwrap();
         }
 
         // Claim one (makes it running)
@@ -1507,23 +1561,37 @@ mod tests {
     async fn test_job_logs() {
         let pool = setup_test_db().await;
 
-        create_job(&pool, CreateJob::new("job-1".to_string(), JobType::IndexRepo))
-            .await.unwrap();
+        create_job(
+            &pool,
+            CreateJob::new("job-1".to_string(), JobType::IndexRepo),
+        )
+        .await
+        .unwrap();
 
         // Add logs
-        create_job_log(&pool, CreateJobLog {
-            job_id: "job-1".to_string(),
-            level: LogLevel::Info,
-            message: "Starting job".to_string(),
-            metadata: None,
-        }).await.unwrap();
+        create_job_log(
+            &pool,
+            CreateJobLog {
+                job_id: "job-1".to_string(),
+                level: LogLevel::Info,
+                message: "Starting job".to_string(),
+                metadata: None,
+            },
+        )
+        .await
+        .unwrap();
 
-        create_job_log(&pool, CreateJobLog {
-            job_id: "job-1".to_string(),
-            level: LogLevel::Error,
-            message: "Failed to process file".to_string(),
-            metadata: Some(serde_json::json!({"file": "test.rs"})),
-        }).await.unwrap();
+        create_job_log(
+            &pool,
+            CreateJobLog {
+                job_id: "job-1".to_string(),
+                level: LogLevel::Error,
+                message: "Failed to process file".to_string(),
+                metadata: Some(serde_json::json!({"file": "test.rs"})),
+            },
+        )
+        .await
+        .unwrap();
 
         let logs = list_job_logs(&pool, "job-1").await.unwrap();
         assert_eq!(logs.len(), 2);
@@ -1537,8 +1605,12 @@ mod tests {
         let pool = setup_test_db().await;
 
         for i in 1..=3 {
-            create_job(&pool, CreateJob::new(format!("job-{}", i), JobType::IndexRepo))
-                .await.unwrap();
+            create_job(
+                &pool,
+                CreateJob::new(format!("job-{}", i), JobType::IndexRepo),
+            )
+            .await
+            .unwrap();
         }
 
         // Start one job
@@ -1547,7 +1619,9 @@ mod tests {
         let pending = list_pending_jobs(&pool, 10).await.unwrap();
         assert_eq!(pending.len(), 2);
 
-        let running = list_jobs_by_status(&pool, JobStatus::Running).await.unwrap();
+        let running = list_jobs_by_status(&pool, JobStatus::Running)
+            .await
+            .unwrap();
         assert_eq!(running.len(), 1);
     }
 
@@ -1561,13 +1635,18 @@ mod tests {
             "commit_sha": "abc123"
         });
 
-        let job = create_job(&pool, CreateJob::new("job-1".to_string(), JobType::IndexRepo)
-            .with_payload(payload.clone())
-            .with_priority(JobPriority::High)
-        ).await.unwrap();
+        let job = create_job(
+            &pool,
+            CreateJob::new("job-1".to_string(), JobType::IndexRepo)
+                .with_payload(payload.clone())
+                .with_priority(JobPriority::High),
+        )
+        .await
+        .unwrap();
 
         assert!(job.payload.is_some());
-        let stored_payload: serde_json::Value = serde_json::from_str(job.payload.as_ref().unwrap()).unwrap();
+        let stored_payload: serde_json::Value =
+            serde_json::from_str(job.payload.as_ref().unwrap()).unwrap();
         assert_eq!(stored_payload["branch"], "main");
         assert_eq!(job.priority, Some(10)); // High = 10
     }
@@ -1576,7 +1655,13 @@ mod tests {
     async fn test_enqueue_job() {
         let pool = setup_test_db().await;
 
-        let job = enqueue_job(&pool, JobType::SyncMetadata, Some(serde_json::json!({"repo": "test"}))).await.unwrap();
+        let job = enqueue_job(
+            &pool,
+            JobType::SyncMetadata,
+            Some(serde_json::json!({"repo": "test"})),
+        )
+        .await
+        .unwrap();
 
         assert!(!job.id.is_empty());
         assert_eq!(job.job_type, "sync_metadata");

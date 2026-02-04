@@ -110,12 +110,16 @@ impl Project {
 
     /// Get the metadata repo mode.
     pub fn metadata_mode(&self) -> Option<MetadataRepoMode> {
-        self.metadata_repo_mode.as_ref().and_then(|m| MetadataRepoMode::from_str(m))
+        self.metadata_repo_mode
+            .as_ref()
+            .and_then(|m| MetadataRepoMode::from_str(m))
     }
 
     /// Get the metadata repo provider.
     pub fn metadata_provider(&self) -> Option<GitProvider> {
-        self.metadata_repo_provider.as_ref().and_then(|p| GitProvider::from_str(p))
+        self.metadata_repo_provider
+            .as_ref()
+            .and_then(|p| GitProvider::from_str(p))
     }
 
     /// Check if auto-commit is enabled for fold/ directory.
@@ -441,12 +445,10 @@ pub async fn delete_project(pool: &DbPool, id: &str) -> Result<()> {
 
 /// List all projects.
 pub async fn list_projects(pool: &DbPool) -> Result<Vec<Project>> {
-    sqlx::query_as::<_, Project>(
-        "SELECT * FROM projects ORDER BY name ASC",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(Error::Database)
+    sqlx::query_as::<_, Project>("SELECT * FROM projects ORDER BY name ASC")
+        .fetch_all(pool)
+        .await
+        .map_err(Error::Database)
 }
 
 /// List projects with pagination.
@@ -497,12 +499,10 @@ pub async fn search_projects(pool: &DbPool, query: &str) -> Result<Vec<Project>>
 
 /// Check if a project slug is available.
 pub async fn is_slug_available(pool: &DbPool, slug: &str) -> Result<bool> {
-    let exists: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM projects WHERE slug = ?",
-    )
-    .bind(slug)
-    .fetch_optional(pool)
-    .await?;
+    let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM projects WHERE slug = ?")
+        .bind(slug)
+        .fetch_optional(pool)
+        .await?;
 
     Ok(exists.is_none())
 }
@@ -575,18 +575,12 @@ pub async fn add_project_member(
 }
 
 /// Remove a user from a project.
-pub async fn remove_project_member(
-    pool: &DbPool,
-    project_id: &str,
-    user_id: &str,
-) -> Result<bool> {
-    let result = sqlx::query(
-        "DELETE FROM project_members WHERE project_id = ? AND user_id = ?",
-    )
-    .bind(project_id)
-    .bind(user_id)
-    .execute(pool)
-    .await?;
+pub async fn remove_project_member(pool: &DbPool, project_id: &str, user_id: &str) -> Result<bool> {
+    let result = sqlx::query("DELETE FROM project_members WHERE project_id = ? AND user_id = ?")
+        .bind(project_id)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
 
     Ok(result.rows_affected() > 0)
 }
@@ -699,12 +693,11 @@ pub async fn update_project_member_role(
 
 /// Count members in a project.
 pub async fn count_project_members(pool: &DbPool, project_id: &str) -> Result<i64> {
-    let (count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM project_members WHERE project_id = ?",
-    )
-    .bind(project_id)
-    .fetch_one(pool)
-    .await?;
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM project_members WHERE project_id = ?")
+            .bind(project_id)
+            .fetch_one(pool)
+            .await?;
     Ok(count)
 }
 
@@ -822,13 +815,12 @@ pub async fn remove_project_group_member(
     project_id: &str,
     group_id: &str,
 ) -> Result<bool> {
-    let result = sqlx::query(
-        "DELETE FROM project_group_members WHERE project_id = ? AND group_id = ?",
-    )
-    .bind(project_id)
-    .bind(group_id)
-    .execute(pool)
-    .await?;
+    let result =
+        sqlx::query("DELETE FROM project_group_members WHERE project_id = ? AND group_id = ?")
+            .bind(project_id)
+            .bind(group_id)
+            .execute(pool)
+            .await?;
 
     Ok(result.rows_affected() > 0)
 }
@@ -850,7 +842,10 @@ pub async fn get_project_group_member(
 }
 
 /// List all group members of a project.
-pub async fn list_project_group_members(pool: &DbPool, project_id: &str) -> Result<Vec<ProjectGroupMember>> {
+pub async fn list_project_group_members(
+    pool: &DbPool,
+    project_id: &str,
+) -> Result<Vec<ProjectGroupMember>> {
     sqlx::query_as::<_, ProjectGroupMember>(
         r#"
         SELECT * FROM project_group_members
@@ -945,12 +940,17 @@ mod tests {
     async fn test_create_and_get_project() {
         let pool = setup_test_db().await;
 
-        let project = create_project(&pool, CreateProject {
-            id: "proj-1".to_string(),
-            slug: "test-project".to_string(),
-            name: "Test Project".to_string(),
-            description: Some("A test project".to_string()),
-        }).await.unwrap();
+        let project = create_project(
+            &pool,
+            CreateProject {
+                id: "proj-1".to_string(),
+                slug: "test-project".to_string(),
+                name: "Test Project".to_string(),
+                description: Some("A test project".to_string()),
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(project.id, "proj-1");
         assert_eq!(project.slug, "test-project");
@@ -963,12 +963,17 @@ mod tests {
     async fn test_get_project_by_slug() {
         let pool = setup_test_db().await;
 
-        create_project(&pool, CreateProject {
-            id: "proj-1".to_string(),
-            slug: "my-project".to_string(),
-            name: "My Project".to_string(),
-            description: None,
-        }).await.unwrap();
+        create_project(
+            &pool,
+            CreateProject {
+                id: "proj-1".to_string(),
+                slug: "my-project".to_string(),
+                name: "My Project".to_string(),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
 
         let project = get_project_by_slug(&pool, "my-project").await.unwrap();
         assert!(project.is_some());
@@ -979,19 +984,28 @@ mod tests {
     async fn test_duplicate_slug_error() {
         let pool = setup_test_db().await;
 
-        create_project(&pool, CreateProject {
-            id: "proj-1".to_string(),
-            slug: "unique-slug".to_string(),
-            name: "Project 1".to_string(),
-            description: None,
-        }).await.unwrap();
+        create_project(
+            &pool,
+            CreateProject {
+                id: "proj-1".to_string(),
+                slug: "unique-slug".to_string(),
+                name: "Project 1".to_string(),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
 
-        let result = create_project(&pool, CreateProject {
-            id: "proj-2".to_string(),
-            slug: "unique-slug".to_string(),
-            name: "Project 2".to_string(),
-            description: None,
-        }).await;
+        let result = create_project(
+            &pool,
+            CreateProject {
+                id: "proj-2".to_string(),
+                slug: "unique-slug".to_string(),
+                name: "Project 2".to_string(),
+                description: None,
+            },
+        )
+        .await;
 
         assert!(matches!(result, Err(Error::AlreadyExists(_))));
     }
@@ -1001,12 +1015,17 @@ mod tests {
         let pool = setup_test_db().await;
 
         for i in 1..=3 {
-            create_project(&pool, CreateProject {
-                id: format!("proj-{}", i),
-                slug: format!("project-{}", i),
-                name: format!("Project {}", i),
-                description: None,
-            }).await.unwrap();
+            create_project(
+                &pool,
+                CreateProject {
+                    id: format!("proj-{}", i),
+                    slug: format!("project-{}", i),
+                    name: format!("Project {}", i),
+                    description: None,
+                },
+            )
+            .await
+            .unwrap();
         }
 
         let projects = list_projects(&pool).await.unwrap();

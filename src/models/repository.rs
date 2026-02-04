@@ -79,7 +79,10 @@ impl Repository {
         match self.provider.as_str() {
             "github" => format!("https://github.com/{}/{}", self.owner, self.repo),
             "gitlab" => format!("https://gitlab.com/{}/{}", self.owner, self.repo),
-            "local" => self.local_path.clone().unwrap_or_else(|| format!("file://{}/{}", self.owner, self.repo)),
+            "local" => self
+                .local_path
+                .clone()
+                .unwrap_or_else(|| format!("file://{}/{}", self.owner, self.repo)),
             _ => format!("https://unknown/{}/{}", self.owner, self.repo),
         }
     }

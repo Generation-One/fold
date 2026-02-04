@@ -175,8 +175,7 @@ impl Config {
                 providers: Self::parse_llm_providers(),
             },
             session: SessionConfig {
-                secret: env::var("SESSION_SECRET")
-                    .unwrap_or_else(|_| nanoid::nanoid!(32)),
+                secret: env::var("SESSION_SECRET").unwrap_or_else(|_| nanoid::nanoid!(32)),
                 max_age_seconds: env_or("SESSION_MAX_AGE", "604800")
                     .parse()
                     .unwrap_or(604800), // 7 days
@@ -190,9 +189,7 @@ impl Config {
                 fold_path: env_or("FOLD_PATH", "fold"),
             },
             indexing: IndexingConfig {
-                concurrency_limit: env_or("INDEXING_CONCURRENCY", "4")
-                    .parse()
-                    .unwrap_or(4),
+                concurrency_limit: env_or("INDEXING_CONCURRENCY", "4").parse().unwrap_or(4),
             },
         }
     }
@@ -243,8 +240,8 @@ impl Config {
                 Err(_) => continue,
             };
 
-            let display_name = env::var(format!("{}DISPLAY_NAME", prefix))
-                .unwrap_or_else(|_| name.clone());
+            let display_name =
+                env::var(format!("{}DISPLAY_NAME", prefix)).unwrap_or_else(|_| name.clone());
 
             let issuer = env::var(format!("{}ISSUER", prefix)).ok();
 
@@ -374,7 +371,10 @@ impl Config {
             .parse()
             .unwrap_or(default_dim);
 
-        EmbeddingConfig { providers, dimension }
+        EmbeddingConfig {
+            providers,
+            dimension,
+        }
     }
 
     /// Get embedding dimension for known models
@@ -414,8 +414,17 @@ mod tests {
 
     #[test]
     fn test_auth_provider_type_parsing() {
-        assert_eq!("oidc".parse::<AuthProviderType>().unwrap(), AuthProviderType::Oidc);
-        assert_eq!("github".parse::<AuthProviderType>().unwrap(), AuthProviderType::GitHub);
-        assert_eq!("GITLAB".parse::<AuthProviderType>().unwrap(), AuthProviderType::GitLab);
+        assert_eq!(
+            "oidc".parse::<AuthProviderType>().unwrap(),
+            AuthProviderType::Oidc
+        );
+        assert_eq!(
+            "github".parse::<AuthProviderType>().unwrap(),
+            AuthProviderType::GitHub
+        );
+        assert_eq!(
+            "GITLAB".parse::<AuthProviderType>().unwrap(),
+            AuthProviderType::GitLab
+        );
     }
 }
