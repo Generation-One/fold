@@ -494,7 +494,12 @@ async fn create_memory(
     // Trigger full indexing pipeline: LLM summarization, semantic chunking, auto-linking
     let memory = state
         .indexer
-        .index_single_file(&project, &file_path, &request.content, request.author.as_deref())
+        .index_single_file(
+            &project,
+            &file_path,
+            &request.content,
+            request.author.as_deref(),
+        )
         .await?;
 
     Ok(Json(memory_to_response_from_model(memory)))
