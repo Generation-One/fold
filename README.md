@@ -1,6 +1,4 @@
-# Fold
-
-Fold makes knowledge searchable, connected, and persistent:
+**Fold** makes knowledge searchable, connected, and persistent:
 
 ```
 Search: "How do we handle authentication?"
