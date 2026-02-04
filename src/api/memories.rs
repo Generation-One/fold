@@ -397,26 +397,23 @@ async fn list_memories(
     // Fetch memories
     let mut memories = db::list_memories(&state.db, filter).await?;
 
-    // Resolve content from external storage
+    // Resolve content from external storage (fold/)
+    let project_root = project
+        .root_path
+        .as_ref()
+        .map(|p| std::path::PathBuf::from(p))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
     for memory in &mut memories {
         if memory.content.is_none() || memory.content.as_ref().is_some_and(|c| c.is_empty()) {
-            // Create minimal Memory for content resolution (only fields used by resolver)
-            let mut models_memory = crate::models::Memory::new_with_id(
-                memory.id.clone(),
-                memory.project_id.clone(),
-                crate::models::MemoryType::from_str(&memory.memory_type).unwrap_or_default(),
-            );
-            // Copy fields needed for resolution
-            models_memory.repository_id = memory.repository_id.clone();
-            models_memory.content_storage = memory.content_storage.clone();
-            models_memory.file_path = memory.file_path.clone();
-
-            let content = state
-                .content_resolver
-                .resolve_content(&models_memory, &project.slug, project.root_path.as_deref())
+            // Use fold storage to read memory content
+            if let Ok((_, content)) = state
+                .fold_storage
+                .read_memory(&project_root, &memory.id)
                 .await
-                .unwrap_or(None);
-            memory.content = content;
+            {
+                memory.content = Some(content);
+            }
         }
     }
 
@@ -665,22 +662,26 @@ async fn search_memories(
         )
         .await?;
 
-    // Filter by source if specified
-    let filtered_results: Vec<_> = if let Some(source) = request.source {
-        search_results
-            .into_iter()
-            .filter(|r| {
-                r.memory
+    // Filter by source and min_score
+    let filtered_results: Vec<_> = search_results
+        .into_iter()
+        .filter(|r| {
+            // Check source filter
+            if let Some(source) = request.source {
+                let matches_source = r.memory
                     .source
                     .as_deref()
                     .and_then(MemorySource::from_str)
                     .map(|s| s == source)
-                    .unwrap_or(false)
-            })
-            .collect()
-    } else {
-        search_results
-    };
+                    .unwrap_or(false);
+                if !matches_source {
+                    return false;
+                }
+            }
+            // Check min_score
+            r.score >= request.min_score
+        })
+        .collect();
 
     // Convert to API response format
     let results: Vec<SearchResult> = filtered_results

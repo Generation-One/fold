@@ -21,7 +21,7 @@ use tracing::{debug, info, warn};
 
 use crate::db::{self, DbPool};
 use crate::error::{Error, Result};
-use crate::models::{ChunkCreate, Memory, MemoryCreate, MemoryType, Project};
+use crate::models::{ChunkCreate, Memory, MemoryCreate, MemorySource, MemoryType, Project};
 
 use super::{
     ChunkerService, EmbeddingService, FoldStorageService, GitService, LinkerService, LlmService,
@@ -569,6 +569,7 @@ impl IndexerService {
             } else {
                 Some(language.clone())
             },
+            source: Some(MemorySource::File),
             metadata,
             ..Default::default()
         };
@@ -718,6 +719,7 @@ impl IndexerService {
             } else {
                 Some(language.clone())
             },
+            source: Some(MemorySource::Agent),
             metadata,
             ..Default::default()
         };

@@ -73,6 +73,7 @@ impl LlmProviderName {
 pub enum EmbeddingProviderName {
     Gemini,
     OpenAI,
+    Ollama,
 }
 
 impl EmbeddingProviderName {
@@ -80,6 +81,7 @@ impl EmbeddingProviderName {
         match self {
             EmbeddingProviderName::Gemini => "gemini",
             EmbeddingProviderName::OpenAI => "openai",
+            EmbeddingProviderName::Ollama => "ollama",
         }
     }
 
@@ -87,6 +89,7 @@ impl EmbeddingProviderName {
         match s {
             "gemini" => Some(EmbeddingProviderName::Gemini),
             "openai" => Some(EmbeddingProviderName::OpenAI),
+            "ollama" => Some(EmbeddingProviderName::Ollama),
             _ => None,
         }
     }

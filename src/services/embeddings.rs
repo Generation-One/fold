@@ -93,6 +93,7 @@ fn default_endpoint(name: &str) -> String {
     match name {
         "gemini" => "https://generativelanguage.googleapis.com/v1beta".to_string(),
         "openai" => "https://api.openai.com/v1".to_string(),
+        "ollama" => "http://localhost:11434".to_string(),
         _ => "https://api.openai.com/v1".to_string(),
     }
 }
@@ -102,6 +103,7 @@ fn default_model(name: &str) -> String {
     match name {
         "gemini" => "text-embedding-004".to_string(),
         "openai" => "text-embedding-3-small".to_string(),
+        "ollama" => "nomic-embed-text".to_string(),
         _ => "text-embedding-3-small".to_string(),
     }
 }
@@ -116,6 +118,20 @@ fn default_dimension(model: &str) -> usize {
         3072
     } else if model.contains("text-embedding-ada-002") {
         1536
+    } else if model.contains("nomic-embed-text") {
+        768
+    } else if model.contains("all-minilm") {
+        384
+    } else if model.contains("all-mpnet") {
+        768
+    } else if model.contains("bge-large") || model.contains("mxbai-embed-large") {
+        1024
+    } else if model.contains("bge-base") || model.contains("bge-small") {
+        768
+    } else if model.contains("jina-embeddings-v2-base") {
+        768
+    } else if model.contains("jina-embeddings-v2-small") {
+        512
     } else if model.contains("MiniLM-L6") {
         384
     } else if model.contains("mpnet") {
@@ -187,6 +203,20 @@ struct OpenAIError {
     #[serde(rename = "type")]
     #[allow(dead_code)]
     error_type: Option<String>,
+}
+
+/// Ollama embedding response (single)
+#[derive(Debug, Deserialize)]
+struct OllamaEmbedResponse {
+    embedding: Option<Vec<f32>>,
+    error: Option<String>,
+}
+
+/// Ollama batch embedding response
+#[derive(Debug, Deserialize)]
+struct OllamaBatchResponse {
+    embeddings: Option<Vec<Vec<f32>>>,
+    error: Option<String>,
 }
 
 impl EmbeddingService {
@@ -577,6 +607,7 @@ impl EmbeddingService {
         match provider.name.as_str() {
             "gemini" => self.call_gemini_batch(provider, texts).await,
             "openai" => self.call_openai_batch(provider, texts).await,
+            "ollama" => self.call_ollama_batch(provider, texts).await,
             _ => Err(Error::Internal(format!(
                 "Unknown embedding provider: {}",
                 provider.name
@@ -593,6 +624,7 @@ impl EmbeddingService {
         match provider.name.as_str() {
             "gemini" => self.call_gemini_single(provider, text).await,
             "openai" => self.call_openai_single(provider, text).await,
+            "ollama" => self.call_ollama_single(provider, text).await,
             _ => Err(Error::Internal(format!(
                 "Unknown embedding provider: {}",
                 provider.name
@@ -720,7 +752,8 @@ impl EmbeddingService {
 
         let body = json!({
             "model": provider.model,
-            "input": text
+            "input": text,
+            "dimensions": 768
         });
 
         let response = self
@@ -762,7 +795,8 @@ impl EmbeddingService {
 
         let body = json!({
             "model": provider.model,
-            "input": texts
+            "input": texts,
+            "dimensions": 768
         });
 
         let response = self
@@ -794,6 +828,91 @@ impl EmbeddingService {
         data.sort_by_key(|e| e.index);
 
         Ok(data.into_iter().map(|e| e.embedding).collect())
+    }
+
+    /// Call Ollama embedding API for a single text
+    async fn call_ollama_single(
+        &self,
+        provider: &RuntimeEmbeddingProvider,
+        text: &str,
+    ) -> Result<Vec<f32>> {
+        let url = format!("{}/api/embeddings", provider.base_url);
+
+        let body = json!({
+            "model": provider.model,
+            "prompt": text
+        });
+
+        let response = self
+            .inner
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| Error::Internal(format!("Ollama request failed: {}", e)))?;
+
+        let resp: OllamaEmbedResponse = response
+            .json()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to parse Ollama response: {}", e)))?;
+
+        if let Some(error) = resp.error {
+            return Err(Error::Internal(format!("Ollama error: {}", error)));
+        }
+
+        resp.embedding
+            .ok_or_else(|| Error::Internal("No embedding in Ollama response".to_string()))
+    }
+
+    /// Call Ollama batch embedding API (supports both batch and single requests)
+    async fn call_ollama_batch(
+        &self,
+        provider: &RuntimeEmbeddingProvider,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>> {
+        let url = format!("{}/api/embeddings", provider.base_url);
+
+        // Use batch API with prompts array for better performance
+        let body = json!({
+            "model": provider.model,
+            "prompts": texts
+        });
+
+        let response = self
+            .inner
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| Error::Internal(format!("Ollama batch request failed: {}", e)))?;
+
+        // Parse response flexibly to handle both batch and single formats
+        let resp: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to parse Ollama response: {}", e)))?;
+
+        // Check for error field
+        if let Some(error) = resp.get("error").and_then(|e| e.as_str()) {
+            return Err(Error::Internal(format!("Ollama error: {}", error)));
+        }
+
+        // Try batch embeddings response first
+        if let Some(embeddings) = resp.get("embeddings") {
+            return serde_json::from_value::<Vec<Vec<f32>>>(embeddings.clone())
+                .map_err(|e| Error::Internal(format!("Failed to parse embeddings: {}", e)));
+        }
+
+        // Fallback to single embedding format for compatibility
+        if let Some(embedding) = resp.get("embedding") {
+            if let Ok(emb) = serde_json::from_value::<Vec<f32>>(embedding.clone()) {
+                return Ok(vec![emb]);
+            }
+        }
+
+        Err(Error::Internal("No embeddings in Ollama response".to_string()))
     }
 
     /// Check if an error is retryable (rate limit, temporary failure)
