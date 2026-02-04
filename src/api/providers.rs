@@ -893,7 +893,7 @@ async fn create_embedding(
     Json(req): Json<CreateEmbeddingProviderRequest>,
 ) -> Result<Json<EmbeddingProviderResponse>> {
     // Validate provider name
-    let valid_names = ["gemini", "openai"];
+    let valid_names = ["gemini", "openai", "ollama"];
     if !valid_names.contains(&req.name.as_str()) {
         return Err(Error::Validation(format!(
             "Invalid embedding provider name '{}'. Must be one of: {:?}",
@@ -1053,12 +1053,12 @@ async fn test_embedding(
         .await?
         .ok_or_else(|| Error::NotFound(format!("Embedding provider not found: {}", id)))?;
 
-    // Check if provider has credentials
+    // Check if provider has credentials (Ollama doesn't need credentials)
     let api_key = provider
         .api_key
         .as_ref()
         .or(provider.oauth_access_token.as_ref());
-    if api_key.is_none() {
+    if api_key.is_none() && provider.name != "ollama" {
         return Ok(Json(ProviderTestResponse {
             success: false,
             message: "No credentials configured".to_string(),
@@ -1070,7 +1070,7 @@ async fn test_embedding(
             usage: None,
         }));
     }
-    let api_key = api_key.unwrap();
+    let api_key = api_key.map(|s| s.as_str()).unwrap_or("");
 
     // Get model and dimension with defaults
     let model = provider
@@ -1087,6 +1087,14 @@ async fn test_embedding(
     let result = match provider.name.as_str() {
         "gemini" => test_gemini_embedding(&client, api_key, &model).await,
         "openai" => test_openai_embedding(&client, api_key, &model).await,
+        "ollama" => {
+            let base_url = provider
+                .config_json()
+                .ok()
+                .and_then(|c| c.get("endpoint").and_then(|e| e.as_str()).map(String::from))
+                .unwrap_or_else(|| "http://localhost:11434".to_string());
+            test_ollama_embedding(&client, &base_url, &model).await
+        }
         _ => Err((
             "UNSUPPORTED_PROVIDER".to_string(),
             format!("Unknown provider: {}", provider.name),
@@ -1240,6 +1248,63 @@ async fn test_openai_embedding(
     };
 
     Ok((embedding.len(), usage))
+}
+
+/// Test Ollama Embedding API.
+async fn test_ollama_embedding(
+    client: &reqwest::Client,
+    base_url: &str,
+    model: &str,
+) -> std::result::Result<(usize, ProviderTestUsage), (String, String)> {
+    let url = format!("{}/api/embeddings", base_url);
+
+    let body = json!({
+        "model": model,
+        "prompt": "Hello world"
+    });
+
+    let response = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| ("REQUEST_FAILED".to_string(), e.to_string()))?;
+
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let error_text = response.text().await.unwrap_or_default();
+        return Err((format!("HTTP_{}", status), error_text));
+    }
+
+    let json: JsonValue = response
+        .json()
+        .await
+        .map_err(|e| ("PARSE_ERROR".to_string(), e.to_string()))?;
+
+    // Try batch format first
+    if let Some(embeddings) = json.get("embeddings").and_then(|e| e.as_array()) {
+        if let Some(first) = embeddings.first().and_then(|e| e.as_array()) {
+            return Ok((first.len(), ProviderTestUsage {
+                input_tokens: None,
+                output_tokens: None,
+                total_tokens: None,
+            }));
+        }
+    }
+
+    // Try single format
+    if let Some(embedding) = json.get("embedding").and_then(|e| e.as_array()) {
+        return Ok((embedding.len(), ProviderTestUsage {
+            input_tokens: None,
+            output_tokens: None,
+            total_tokens: None,
+        }));
+    }
+
+    Err((
+        "INVALID_RESPONSE".to_string(),
+        "No embedding in response".to_string(),
+    ))
 }
 
 // ============================================================================

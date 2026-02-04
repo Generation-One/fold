@@ -400,6 +400,7 @@ impl GitSyncService {
                         commit.message.lines().next().unwrap_or("")
                     )),
                     tags: vec!["commit".to_string()],
+                    source: Some(crate::models::MemorySource::Git),
                     metadata: [
                         ("sha".to_string(), serde_json::json!(commit.sha)),
                         (

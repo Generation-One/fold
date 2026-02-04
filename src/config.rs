@@ -357,6 +357,20 @@ impl Config {
             });
         }
 
+        // Ollama embeddings - local/self-hosted (priority 1 - if available, prefer local)
+        if let Ok(ollama_url) = env::var("OLLAMA_URL") {
+            let priority = env_or("OLLAMA_PRIORITY", "1")
+                .parse()
+                .unwrap_or(1);
+            providers.push(EmbeddingProvider {
+                name: "ollama".to_string(),
+                base_url: ollama_url,
+                model: env_or("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text"),
+                api_key: String::new(), // No authentication needed
+                priority,
+            });
+        }
+
         // Sort by priority
         providers.sort_by_key(|p| p.priority);
 
@@ -378,28 +392,45 @@ impl Config {
     }
 
     /// Get embedding dimension for known models
+    /// All providers standardized on 768 dimensions for compatibility and flexibility.
     fn embedding_dimension(model: &str) -> usize {
-        // Gemini models
+        // Gemini models (native 768)
         if model.contains("text-embedding-004") {
             768
         } else if model.contains("embedding-001") {
             768
         }
-        // OpenAI models
+        // OpenAI models (standardized to 768, uses dimensions parameter in API)
         else if model.contains("text-embedding-3-small") {
-            1536
+            768
         } else if model.contains("text-embedding-3-large") {
-            3072
+            768
         } else if model.contains("text-embedding-ada-002") {
-            1536
+            768
         }
-        // Sentence transformers (for reference)
+        // Ollama models (various, but all standardized to 768)
+        else if model.contains("nomic-embed-text") {
+            768
+        } else if model.contains("all-minilm") {
+            768
+        } else if model.contains("all-mpnet") {
+            768
+        } else if model.contains("bge-large") || model.contains("mxbai-embed-large") {
+            768
+        } else if model.contains("bge-base") || model.contains("bge-small") {
+            768
+        } else if model.contains("jina-embeddings-v2-base") {
+            768
+        } else if model.contains("jina-embeddings-v2-small") {
+            768
+        }
+        // Sentence transformers (for reference, standardized)
         else if model.contains("MiniLM-L6") {
-            384
+            768
         } else if model.contains("mpnet") {
             768
         } else {
-            384 // Default
+            768 // Default - universal standard
         }
     }
 }

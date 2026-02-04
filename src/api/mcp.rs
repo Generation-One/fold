@@ -337,7 +337,7 @@ async fn handle_mcp_post(
                 "resources/list" => handle_resources_list(request.id.clone()),
                 "resources/read" => handle_resources_read(request.id.clone(), request.params),
                 _ => JsonRpcResponse::error(
-                    request.id,
+                    request.id.clone(),
                     METHOD_NOT_FOUND,
                     format!("Method not found: {}", request.method),
                     None,
@@ -380,36 +380,37 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
             }),
         },
         ToolDefinition {
-            name: "project_create".into(),
-            description: "Create a new project".into(),
+            name: "github_project_create".into(),
+            description: "Create a new project from a GitHub repository".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
+                    "repo_url": { "type": "string", "description": "GitHub repository URL (https://github.com/owner/repo)" },
                     "name": { "type": "string", "description": "Project name" },
                     "description": { "type": "string", "description": "Project description" }
                 },
-                "required": ["name"]
+                "required": ["repo_url", "name"]
             }),
         },
-        ToolDefinition {
-            name: "memory_add".into(),
-            description: "Add a memory to a project".into(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "project": { "type": "string", "description": "Project ID or slug" },
-                    "content": { "type": "string", "description": "Memory content" },
-                    "title": { "type": "string", "description": "Optional title" },
-                    "author": { "type": "string", "description": "Who created this memory" },
-                    "tags": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Optional tags"
-                    }
-                },
-                "required": ["project", "content"]
-            }),
-        },
+        // ToolDefinition {
+        //     name: "memory_add".into(),
+        //     description: "Add a memory to a project".into(),
+        //     input_schema: serde_json::json!({
+        //         "type": "object",
+        //         "properties": {
+        //             "project": { "type": "string", "description": "Project ID or slug" },
+        //             "content": { "type": "string", "description": "Memory content" },
+        //             "title": { "type": "string", "description": "Optional title" },
+        //             "author": { "type": "string", "description": "Who created this memory" },
+        //             "tags": {
+        //                 "type": "array",
+        //                 "items": { "type": "string" },
+        //                 "description": "Optional tags"
+        //             }
+        //         },
+        //         "required": ["project", "content"]
+        //     }),
+        // },
         ToolDefinition {
             name: "memory_search".into(),
             description: "Search memories using semantic similarity".into(),
@@ -459,99 +460,6 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
                 "required": ["project", "memory_id"]
             }),
         },
-        ToolDefinition {
-            name: "memory_link_add".into(),
-            description: "Create a link between two memories".into(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "project": { "type": "string", "description": "Project ID or slug" },
-                    "source_id": { "type": "string", "description": "Source memory ID" },
-                    "target_id": { "type": "string", "description": "Target memory ID" },
-                    "link_type": {
-                        "type": "string",
-                        "enum": ["references", "implements", "depends_on", "related"],
-                        "description": "Type of link"
-                    },
-                    "context": { "type": "string", "description": "Optional context for the link" }
-                },
-                "required": ["project", "source_id", "target_id", "link_type"]
-            }),
-        },
-        ToolDefinition {
-            name: "memory_link_list".into(),
-            description: "List links for a memory".into(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "memory_id": { "type": "string", "description": "Memory ID" }
-                },
-                "required": ["memory_id"]
-            }),
-        },
-        ToolDefinition {
-            name: "codebase_index".into(),
-            description: "Index a project's codebase".into(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "project": { "type": "string", "description": "Project ID or slug" },
-                    "path": { "type": "string", "description": "Path to codebase (optional, uses project default)" }
-                },
-                "required": ["project"]
-            }),
-        },
-        ToolDefinition {
-            name: "codebase_search".into(),
-            description: "Search indexed codebase (file-source memories)".into(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "project": { "type": "string", "description": "Project ID or slug" },
-                    "query": { "type": "string", "description": "Search query" },
-                    "limit": { "type": "integer", "default": 10 }
-                },
-                "required": ["project", "query"]
-            }),
-        },
-        ToolDefinition {
-            name: "file_upload".into(),
-            description: "Upload and index a single file".into(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "project": { "type": "string", "description": "Project ID or slug" },
-                    "path": { "type": "string", "description": "File path (relative to project root)" },
-                    "content": { "type": "string", "description": "File content" },
-                    "author": { "type": "string", "description": "Who uploaded this file" }
-                },
-                "required": ["project", "path", "content"]
-            }),
-        },
-        ToolDefinition {
-            name: "files_upload".into(),
-            description: "Upload and index multiple files at once".into(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "project": { "type": "string", "description": "Project ID or slug" },
-                    "files": {
-                        "type": "array",
-                        "description": "Array of files to upload",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "path": { "type": "string", "description": "File path" },
-                                "content": { "type": "string", "description": "File content" }
-                            },
-                            "required": ["path", "content"]
-                        }
-                    },
-                    "author": { "type": "string", "description": "Who uploaded these files" }
-                },
-                "required": ["project", "files"]
-            }),
-        },
     ];
 
     JsonRpcResponse::success(
@@ -576,17 +484,11 @@ async fn handle_tools_call(state: &AppState, id: Option<Value>, params: Value) -
 
     let result = match call_params.name.as_str() {
         "project_list" => execute_project_list(state).await,
-        "project_create" => execute_project_create(state, call_params.arguments).await,
-        "memory_add" => execute_memory_add(state, call_params.arguments).await,
+        "github_project_create" => execute_github_project_create(state, call_params.arguments).await,
+        // "memory_add" => execute_memory_add(state, call_params.arguments).await,
         "memory_search" => execute_memory_search(state, call_params.arguments).await,
         "memory_list" => execute_memory_list(state, call_params.arguments).await,
         "memory_context" => execute_memory_context(state, call_params.arguments).await,
-        "memory_link_add" => execute_memory_link_add(state, call_params.arguments).await,
-        "memory_link_list" => execute_memory_link_list(state, call_params.arguments).await,
-        "codebase_index" => execute_codebase_index(state, call_params.arguments).await,
-        "codebase_search" => execute_codebase_search(state, call_params.arguments).await,
-        "file_upload" => execute_file_upload(state, call_params.arguments).await,
-        "files_upload" => execute_files_upload(state, call_params.arguments).await,
         _ => {
             return JsonRpcResponse::error(
                 id,
@@ -650,22 +552,34 @@ async fn execute_project_list(state: &AppState) -> Result<String> {
     }))?)
 }
 
-async fn execute_project_create(state: &AppState, args: Value) -> Result<String> {
+async fn execute_github_project_create(state: &AppState, args: Value) -> Result<String> {
     #[derive(Deserialize)]
     struct Params {
+        repo_url: String,
         name: String,
         description: Option<String>,
     }
 
     let params: Params = serde_json::from_value(args)?;
 
-    // Generate slug from name
-    let slug = params
-        .name
+    // Generate slug from repo URL + nonce (to avoid collisions)
+    // Extract owner/repo from URL
+    let repo_path = params.repo_url
+        .trim_end_matches('/')
+        .split('/').last()
+        .unwrap_or("repo")
+        .trim_end_matches(".git");
+
+    // Create base slug from repo name
+    let base_slug = repo_path
         .to_lowercase()
         .replace(|c: char| !c.is_alphanumeric() && c != '-', "-")
         .trim_matches('-')
         .to_string();
+
+    // Add nonce to slug to prevent collisions
+    let nonce = uuid::Uuid::new_v4().to_string()[..8].to_string();
+    let slug = format!("{}-{}", base_slug, nonce);
 
     // Generate ID
     let id = crate::models::new_id();
@@ -692,6 +606,7 @@ async fn execute_project_create(state: &AppState, args: Value) -> Result<String>
         "slug": project.slug,
         "name": project.name,
         "description": project.description,
+        "repo_url": params.repo_url,
         "created_at": project.created_at
     }))?)
 }
@@ -749,10 +664,16 @@ async fn execute_memory_search(state: &AppState, args: Value) -> Result<String> 
         source: Option<String>,
         #[serde(default = "default_limit")]
         limit: usize,
+        #[serde(default = "default_min_score")]
+        min_score: f32,
     }
 
     fn default_limit() -> usize {
         10
+    }
+
+    fn default_min_score() -> f32 {
+        0.5
     }
 
     let params: Params = serde_json::from_value(args)?;
@@ -766,23 +687,27 @@ async fn execute_memory_search(state: &AppState, args: Value) -> Result<String> 
         .search(&project.id, &project.slug, &params.query, params.limit)
         .await?;
 
-    // Filter by source if specified
-    let filtered_results: Vec<_> = if let Some(source_str) = &params.source {
-        let source = MemorySource::from_str(source_str);
-        results
-            .into_iter()
-            .filter(|r| {
-                r.memory
+    // Filter by source and min_score
+    let filtered_results: Vec<_> = results
+        .into_iter()
+        .filter(|r| {
+            // Check source filter
+            if let Some(source_str) = &params.source {
+                let source = MemorySource::from_str(source_str);
+                let matches_source = r.memory
                     .source
                     .as_deref()
                     .and_then(MemorySource::from_str)
                     .map(|s| Some(s) == source)
-                    .unwrap_or(false)
-            })
-            .collect()
-    } else {
-        results
-    };
+                    .unwrap_or(false);
+                if !matches_source {
+                    return false;
+                }
+            }
+            // Check min_score
+            r.score >= params.min_score
+        })
+        .collect();
 
     let results_json: Vec<_> = filtered_results
         .iter()
@@ -830,11 +755,12 @@ async fn execute_memory_list(state: &AppState, args: Value) -> Result<String> {
     // Parse source filter
     let source = params.source.as_deref().and_then(MemorySource::from_str);
 
-    // List memories via service
+    // List memories via service (with content resolved from fold/)
     let memories = state
         .memory
-        .list(
+        .list_with_content(
             &project.id,
+            &project.slug,
             None, // No memory type filter
             params.author.as_deref(),
             params.limit,
@@ -864,6 +790,7 @@ async fn execute_memory_list(state: &AppState, args: Value) -> Result<String> {
             serde_json::json!({
                 "id": m.id,
                 "title": m.title,
+                "content": m.content,
                 "author": m.author,
                 "source": m.source,
                 "file_path": m.file_path,
@@ -967,280 +894,5 @@ async fn execute_memory_context(state: &AppState, args: Value) -> Result<String>
     }))?)
 }
 
-async fn execute_memory_link_add(state: &AppState, args: Value) -> Result<String> {
-    #[derive(Deserialize)]
-    struct Params {
-        project: String,
-        source_id: String,
-        target_id: String,
-        link_type: String,
-        context: Option<String>,
-    }
 
-    let params: Params = serde_json::from_value(args)?;
 
-    // Get project (for validation)
-    let _project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
-
-    // Create the link
-    let link_id = crate::models::new_id();
-    let link = db::create_memory_link(
-        &state.db,
-        db::CreateMemoryLink {
-            id: link_id.clone(),
-            source_id: params.source_id.clone(),
-            target_id: params.target_id.clone(),
-            link_type: params.link_type.clone(),
-            context: params.context.clone(),
-        },
-    )
-    .await?;
-
-    Ok(serde_json::to_string_pretty(&serde_json::json!({
-        "id": link.id,
-        "source_id": link.source_id,
-        "target_id": link.target_id,
-        "link_type": link.link_type,
-        "context": link.context
-    }))?)
-}
-
-async fn execute_memory_link_list(state: &AppState, args: Value) -> Result<String> {
-    #[derive(Deserialize)]
-    struct Params {
-        memory_id: String,
-    }
-
-    let params: Params = serde_json::from_value(args)?;
-
-    let links = db::get_memory_links(&state.db, &params.memory_id).await?;
-
-    let links_json: Vec<_> = links
-        .iter()
-        .map(|l| {
-            serde_json::json!({
-                "id": l.id,
-                "target_id": l.target_id,
-                "link_type": l.link_type,
-                "context": l.context
-            })
-        })
-        .collect();
-
-    Ok(serde_json::to_string_pretty(&serde_json::json!({
-        "memory_id": params.memory_id,
-        "count": links_json.len(),
-        "links": links_json
-    }))?)
-}
-
-async fn execute_codebase_index(state: &AppState, args: Value) -> Result<String> {
-    #[derive(Deserialize)]
-    struct Params {
-        project: String,
-        path: Option<String>,
-    }
-
-    let params: Params = serde_json::from_value(args)?;
-
-    // Get project
-    let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
-
-    // Create a background job for indexing
-    let job_id = crate::models::new_id();
-
-    let job = db::create_job(
-        &state.db,
-        db::CreateJob::new(job_id.clone(), db::JobType::IndexRepo).with_project(project.id.clone()),
-    )
-    .await?;
-
-    Ok(serde_json::to_string_pretty(&serde_json::json!({
-        "message": "Indexing job created",
-        "job_id": job.id,
-        "status": job.status,
-        "project": project.slug,
-        "path": params.path
-    }))?)
-}
-
-async fn execute_codebase_search(state: &AppState, args: Value) -> Result<String> {
-    #[derive(Deserialize)]
-    struct Params {
-        project: String,
-        query: String,
-        #[serde(default = "default_limit")]
-        limit: usize,
-    }
-
-    fn default_limit() -> usize {
-        10
-    }
-
-    let params: Params = serde_json::from_value(args)?;
-
-    // Get project
-    let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
-
-    // Search for file-source memories
-    let results = state
-        .memory
-        .search(&project.id, &project.slug, &params.query, params.limit * 2)
-        .await?;
-
-    // Filter to only file-source memories
-    let file_results: Vec<_> = results
-        .into_iter()
-        .filter(|r| {
-            r.memory
-                .source
-                .as_deref()
-                .and_then(MemorySource::from_str)
-                .map(|s| s == MemorySource::File)
-                .unwrap_or(false)
-        })
-        .take(params.limit)
-        .collect();
-
-    let results_json: Vec<_> = file_results
-        .iter()
-        .map(|r| {
-            serde_json::json!({
-                "id": r.memory.id,
-                "file_path": r.memory.file_path,
-                "language": r.memory.language,
-                "title": r.memory.title,
-                "content": r.memory.content.as_deref().unwrap_or("").chars().take(500).collect::<String>(),
-                "score": r.score
-            })
-        })
-        .collect();
-
-    Ok(serde_json::to_string_pretty(&serde_json::json!({
-        "project": project.slug,
-        "query": params.query,
-        "count": results_json.len(),
-        "results": results_json
-    }))?)
-}
-
-async fn execute_file_upload(state: &AppState, args: Value) -> Result<String> {
-    #[derive(Deserialize)]
-    struct Params {
-        project: String,
-        path: String,
-        content: String,
-        author: Option<String>,
-    }
-
-    let params: Params = serde_json::from_value(args)?;
-
-    // Get project
-    let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
-
-    // Detect language from file extension
-    let language = std::path::Path::new(&params.path)
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_lowercase());
-
-    // Create memory via service (handles DB + Qdrant)
-    let memory = state
-        .memory
-        .add(
-            &project.id,
-            &project.slug,
-            MemoryCreate {
-                memory_type: MemoryType::Codebase,
-                content: params.content,
-                author: params.author,
-                title: Some(params.path.clone()),
-                file_path: Some(params.path.clone()),
-                language,
-                source: Some(MemorySource::File),
-                ..Default::default()
-            },
-            true,
-        )
-        .await?;
-
-    Ok(serde_json::to_string_pretty(&serde_json::json!({
-        "message": "File uploaded and indexed",
-        "memory_id": memory.id,
-        "path": params.path,
-        "source": "file"
-    }))?)
-}
-
-async fn execute_files_upload(state: &AppState, args: Value) -> Result<String> {
-    #[derive(Deserialize)]
-    struct FileItem {
-        path: String,
-        content: String,
-    }
-
-    #[derive(Deserialize)]
-    struct Params {
-        project: String,
-        files: Vec<FileItem>,
-        author: Option<String>,
-    }
-
-    let params: Params = serde_json::from_value(args)?;
-
-    // Get project
-    let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
-
-    let mut success_count = 0;
-    let mut failed_count = 0;
-    let mut memories = Vec::new();
-
-    for file in params.files {
-        // Detect language
-        let language = std::path::Path::new(&file.path)
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| ext.to_lowercase());
-
-        // Try to create memory
-        match state
-            .memory
-            .add(
-                &project.id,
-                &project.slug,
-                MemoryCreate {
-                    memory_type: MemoryType::Codebase,
-                    content: file.content,
-                    author: params.author.clone(),
-                    title: Some(file.path.clone()),
-                    file_path: Some(file.path.clone()),
-                    language,
-                    source: Some(MemorySource::File),
-                    ..Default::default()
-                },
-                false, // Skip auto-metadata for batch operations
-            )
-            .await
-        {
-            Ok(memory) => {
-                success_count += 1;
-                memories.push(serde_json::json!({
-                    "id": memory.id,
-                    "path": file.path
-                }));
-            }
-            Err(e) => {
-                failed_count += 1;
-                tracing::warn!(path = %file.path, error = %e, "Failed to upload file");
-            }
-        }
-    }
-
-    Ok(serde_json::to_string_pretty(&serde_json::json!({
-        "message": "Batch upload completed",
-        "project": project.slug,
-        "success_count": success_count,
-        "failed_count": failed_count,
-        "memories": memories
-    }))?)
-}

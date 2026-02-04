@@ -845,16 +845,19 @@ Return JSON:
 
         // Resolve content for each memory
         if let Ok(project) = crate::db::get_project(&self.db, project_id).await {
-            if let Some(root_path) = &project.root_path {
-                let project_root = std::path::PathBuf::from(root_path);
-                for memory in &mut memories {
-                    if let Ok((_, content)) = self
-                        .fold_storage
-                        .read_memory(&project_root, &memory.id)
-                        .await
-                    {
-                        memory.content = Some(content);
-                    }
+            let project_root = project
+                .root_path
+                .as_ref()
+                .map(|p| std::path::PathBuf::from(p))
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+            for memory in &mut memories {
+                if let Ok((_, content)) = self
+                    .fold_storage
+                    .read_memory(&project_root, &memory.id)
+                    .await
+                {
+                    memory.content = Some(content);
                 }
             }
         }
