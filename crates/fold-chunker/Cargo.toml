@@ -1,0 +1,30 @@
+[package]
+name = "fold-chunker"
+version.workspace = true
+edition.workspace = true
+description = "Semantic code and text chunking using tree-sitter"
+license = "MIT"
+authors = ["Francis West <frank@generation.one>"]
+repository = "https://github.com/Generation-One/fold"
+
+[dependencies]
+# AST parsing for code chunking
+tree-sitter = "0.24"
+tree-sitter-rust = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-md = "0.3"
+
+# Regex for text chunking
+regex = "1.10"
+
+# Serialization (for potential future use)
+serde = { version = "1.0", features = ["derive"] }
+
+# Error handling
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"

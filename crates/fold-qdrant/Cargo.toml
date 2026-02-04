@@ -1,0 +1,16 @@
+[package]
+name = "fold-qdrant"
+version.workspace = true
+edition.workspace = true
+description = "Qdrant vector storage service for Fold"
+license = "MIT"
+authors = ["Francis West <frank@generation.one>"]
+repository = "https://github.com/Generation-One/fold"
+
+[dependencies]
+qdrant-client = "=1.12.1"  # Pin for Rust 1.85 compatibility
+tokio = { version = "1.0", features = ["rt-multi-thread"] }
+thiserror = "1.0"
+tracing = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

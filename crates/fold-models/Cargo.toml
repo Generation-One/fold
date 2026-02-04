@@ -1,0 +1,29 @@
+[package]
+name = "fold-models"
+version.workspace = true
+edition.workspace = true
+description = "Data models for Fold semantic memory system"
+license = "MIT"
+authors = ["Francis West <frank@generation.one>"]
+repository = "https://github.com/Generation-One/fold"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# For content hashing in chunks
+sha2 = "0.10"
+hex = "0.4"
+
+# Optional sqlx support for FromRow derive
+sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "chrono", "uuid"], optional = true }
+
+# Optional fold-storage support for MemoryData trait
+fold-storage = { path = "../fold-storage", optional = true }
+
+[features]
+default = []
+sqlx = ["dep:sqlx"]
+storage = ["dep:fold-storage"]
