@@ -387,6 +387,11 @@ impl SearchParams {
 }
 
 /// Content storage type for memories.
+///
+/// **DEPRECATED**: Use the `source` field instead to determine content location:
+/// - `source: "agent"` → content in fold/ directory
+/// - `source: "file"` → content (LLM summary) in SQLite
+/// - `source: "git"` → content (commit summary) in SQLite
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ContentStorage {
@@ -427,14 +432,20 @@ pub struct Memory {
     #[serde(rename = "type")]
     #[cfg_attr(feature = "sqlx", sqlx(rename = "type"))]
     pub memory_type: String,
-    /// Source of the memory: 'agent', 'file', 'git'
+    /// Source of the memory: 'agent', 'file', 'git'.
+    /// Determines where content is stored:
+    /// - 'agent': content in fold/ directory (manual/AI-created memories)
+    /// - 'file': content (LLM summary) in SQLite (indexed source files)
+    /// - 'git': content (commit summary) in SQLite (git history)
     pub source: Option<String>,
-    /// Content is stored externally, this field may be empty.
-    /// Use ContentResolverService to get actual content.
+    /// Memory content.
+    /// - For agent memories: NULL here, content in fold/ directory
+    /// - For file/git memories: LLM summary stored here in SQLite
     #[serde(default)]
     pub content: Option<String>,
     /// SHA256 hash prefix for change detection
     pub content_hash: Option<String>,
+    /// **DEPRECATED**: Use `source` field instead.
     /// Where content is stored: 'filesystem' or 'source_file'
     #[serde(default)]
     pub content_storage: Option<String>,

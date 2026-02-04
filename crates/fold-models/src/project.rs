@@ -184,23 +184,78 @@ pub struct ProjectCreate {
 
 fn default_index_patterns() -> Vec<String> {
     vec![
-        "**/*.py".to_string(),
-        "**/*.ts".to_string(),
-        "**/*.js".to_string(),
-        "**/*.tsx".to_string(),
-        "**/*.jsx".to_string(),
-        "**/*.cs".to_string(),
-        "**/*.java".to_string(),
-        "**/*.go".to_string(),
+        // Systems languages
         "**/*.rs".to_string(),
-        "**/*.rb".to_string(),
-        "**/*.swift".to_string(),
-        "**/*.kt".to_string(),
         "**/*.c".to_string(),
-        "**/*.cpp".to_string(),
         "**/*.h".to_string(),
+        "**/*.cpp".to_string(),
+        "**/*.cc".to_string(),
+        "**/*.cxx".to_string(),
         "**/*.hpp".to_string(),
+        "**/*.hxx".to_string(),
+        "**/*.zig".to_string(),
+        // JVM languages
+        "**/*.java".to_string(),
+        "**/*.kt".to_string(),
+        "**/*.kts".to_string(),
+        "**/*.scala".to_string(),
+        // .NET languages
+        "**/*.cs".to_string(),
+        "**/*.fs".to_string(),
+        // Scripting languages
+        "**/*.py".to_string(),
+        "**/*.rb".to_string(),
+        "**/*.php".to_string(),
+        "**/*.lua".to_string(),
+        "**/*.ex".to_string(),
+        "**/*.exs".to_string(),
+        "**/*.sh".to_string(),
+        // Web languages
+        "**/*.js".to_string(),
+        "**/*.mjs".to_string(),
+        "**/*.jsx".to_string(),
+        "**/*.ts".to_string(),
+        "**/*.mts".to_string(),
+        "**/*.tsx".to_string(),
+        "**/*.html".to_string(),
+        "**/*.css".to_string(),
+        "**/*.scss".to_string(),
+        "**/*.vue".to_string(),
+        "**/*.svelte".to_string(),
+        // Mobile languages
+        "**/*.swift".to_string(),
+        "**/*.m".to_string(),
+        // Other languages
+        "**/*.go".to_string(),
+        "**/*.dart".to_string(),
+        "**/*.clj".to_string(),
+        // Config/data
+        "**/*.json".to_string(),
+        "**/*.toml".to_string(),
+        "**/*.yaml".to_string(),
+        "**/*.yml".to_string(),
+        // Documentation
         "**/*.md".to_string(),
+        "**/*.mdx".to_string(),
+        "**/*.rst".to_string(),
+        "**/*.txt".to_string(),
+        // Other common files
+        "**/*.xml".to_string(),
+        "**/*.sql".to_string(),
+        "**/*.graphql".to_string(),
+        "**/*.gql".to_string(),
+        "**/*.proto".to_string(),
+        "**/*.dockerfile".to_string(),
+        "**/Dockerfile".to_string(),
+        "**/*.tf".to_string(),
+        "**/*.tfvars".to_string(),
+        "**/*.hcl".to_string(),
+        // Config files (without extension)
+        "**/Makefile".to_string(),
+        "**/Cargo.toml".to_string(),
+        "**/package.json".to_string(),
+        "**/tsconfig.json".to_string(),
+        "**/.env.example".to_string(),
     ]
 }
 

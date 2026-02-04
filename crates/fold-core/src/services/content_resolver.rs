@@ -1,17 +1,19 @@
 //! Content resolver service for memory content retrieval.
 //!
-//! Resolves memory content based on storage type:
-//! - Codebase memories: read from source file via file_path
-//! - Other memories: read from filesystem (fold/{project}/memories/{id}.md)
+//! Resolves memory content based on source:
+//! - File/Git memories: content (LLM summary) stored in SQLite
+//! - Agent memories: content stored in fold/ directory
+//!
+//! The `content_storage` field is deprecated in favour of using `source`.
 
 use crate::db::{self, DbPool};
-use crate::models::{ContentStorage, Memory};
+use crate::models::Memory;
 use crate::services::MetaStorageService;
 use crate::Result;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::fs;
-use tracing::warn;
+use tracing::{debug, warn};
 
 /// Service for resolving memory content from external storage.
 pub struct ContentResolverService {
@@ -25,31 +27,53 @@ impl ContentResolverService {
         Self { db, meta_storage }
     }
 
-    /// Resolve content for a memory based on its type and storage.
+    /// Resolve content for a memory based on its source.
     ///
-    /// Returns the content string, or None if content is unavailable
-    /// (e.g. source file deleted).
+    /// Content resolution strategy:
+    /// - If content is already populated in memory, return it
+    /// - For file/git sources: content should be in SQLite (already loaded)
+    /// - For agent sources: read from fold/ directory
+    ///
+    /// Returns the content string, or None if content is unavailable.
     pub async fn resolve_content(
         &self,
         memory: &Memory,
         project_slug: &str,
-        project_root_path: Option<&str>,
+        _project_root_path: Option<&str>,
     ) -> Result<Option<String>> {
-        let storage = memory.get_content_storage();
-
-        match storage {
-            ContentStorage::SourceFile => {
-                self.resolve_source_file_content(memory, project_root_path)
-                    .await
+        // If content is already populated, return it
+        if let Some(content) = &memory.content {
+            if !content.is_empty() {
+                return Ok(Some(content.clone()));
             }
-            ContentStorage::Filesystem => {
+        }
+
+        // Determine resolution strategy based on source
+        let source = memory.source.as_deref().unwrap_or("agent");
+
+        match source {
+            "file" | "git" => {
+                // File/Git memories: content (LLM summary) should be in SQLite
+                // If we get here with no content, it's a legacy record - try fold/
+                debug!(
+                    memory_id = %memory.id,
+                    source = %source,
+                    "File/git memory has no content in SQLite, trying fold/ (legacy)"
+                );
+                self.resolve_filesystem_content(memory, project_slug).await
+            }
+            _ => {
+                // Agent memories: content stored in fold/ directory
                 self.resolve_filesystem_content(memory, project_slug).await
             }
         }
     }
 
-    /// Resolve content from a source file (for codebase memories).
-    async fn resolve_source_file_content(
+    /// Resolve content from the original source file (for reading raw file content).
+    ///
+    /// This is different from the LLM summary - it reads the actual file content.
+    /// Useful when you need the original source, not the indexed summary.
+    pub async fn resolve_source_file_content(
         &self,
         memory: &Memory,
         project_root_path: Option<&str>,
@@ -59,7 +83,7 @@ impl ContentResolverService {
             None => {
                 warn!(
                     memory_id = %memory.id,
-                    "Codebase memory has no file_path"
+                    "Memory has no file_path for source file resolution"
                 );
                 return Ok(None);
             }
@@ -106,15 +130,15 @@ impl ContentResolverService {
         }
 
         // Content not available (file deleted or paths not configured)
-        warn!(
+        debug!(
             memory_id = %memory.id,
             file_path = %file_path,
-            "Source file not found for codebase memory"
+            "Source file not found"
         );
         Ok(None)
     }
 
-    /// Resolve content from filesystem (for non-codebase memories).
+    /// Resolve content from filesystem (fold/ directory).
     async fn resolve_filesystem_content(
         &self,
         memory: &Memory,
@@ -184,38 +208,26 @@ impl ContentResolverService {
         &self,
         memory: &Memory,
         project_slug: &str,
-        project_root_path: Option<&str>,
+        _project_root_path: Option<&str>,
     ) -> bool {
-        let storage = memory.get_content_storage();
+        // If content is already populated, it's available
+        if memory.content.as_ref().is_some_and(|c| !c.is_empty()) {
+            return true;
+        }
 
-        match storage {
-            ContentStorage::SourceFile => {
-                // Check if source file exists
-                if let Some(file_path) = &memory.file_path {
-                    // Try repository local_path
-                    if let Some(repo_id) = &memory.repository_id {
-                        if let Ok(Some(repo)) = db::get_repository_optional(&self.db, repo_id).await
-                        {
-                            if let Some(local_path) = &repo.local_path {
-                                let full_path = Path::new(local_path).join(file_path);
-                                if full_path.exists() {
-                                    return true;
-                                }
-                            }
-                        }
-                    }
+        // Determine based on source
+        let source = memory.source.as_deref().unwrap_or("agent");
 
-                    // Try project root_path
-                    if let Some(root_path) = project_root_path {
-                        let full_path = Path::new(root_path).join(file_path);
-                        if full_path.exists() {
-                            return true;
-                        }
-                    }
-                }
-                false
+        match source {
+            "file" | "git" => {
+                // File/Git memories: content should be in SQLite
+                // If not populated, check fold/ for legacy records
+                self.meta_storage.memory_exists(project_slug, &memory.id)
             }
-            ContentStorage::Filesystem => self.meta_storage.memory_exists(project_slug, &memory.id),
+            _ => {
+                // Agent memories: check fold/ directory
+                self.meta_storage.memory_exists(project_slug, &memory.id)
+            }
         }
     }
 }
