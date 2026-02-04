@@ -548,6 +548,36 @@ async fn bootstrap(
     .execute(&state.db)
     .await?;
 
+    // Ensure admin group exists
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO groups (id, name, description, is_system, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind("group_admin")
+    .bind("Admins")
+    .bind("System administrators with global access")
+    .bind(1)
+    .bind(&now)
+    .bind(&now)
+    .execute(&state.db)
+    .await?;
+
+    // Add user to admin group
+    sqlx::query(
+        r#"
+        INSERT INTO group_members (group_id, user_id, created_at)
+        VALUES (?, ?, ?)
+        "#,
+    )
+    .bind("group_admin")
+    .bind(&user_id)
+    .bind(&now)
+    .execute(&state.db)
+    .await?;
+
     Ok(Json(BootstrapResponse {
         user_id,
         api_token,

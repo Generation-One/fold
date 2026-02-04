@@ -92,6 +92,13 @@ async fn main() -> Result<()> {
     tracing::info!("  Ready to accept connections on {}", addr);
     tracing::info!("========================================");
 
+    // Check if TLS is configured
+    if let (Some(cert_path), Some(key_path)) = (&config.server.tls_cert_path, &config.server.tls_key_path) {
+        tracing::warn!("TLS configuration found ({}, {}) but is not yet implemented", cert_path, key_path);
+        tracing::info!("Running on HTTP (not HTTPS)");
+    }
+
+    // Start HTTP server
     axum::serve(listener, app).await?;
 
     Ok(())

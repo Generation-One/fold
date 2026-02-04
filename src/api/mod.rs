@@ -4,6 +4,7 @@
 //! Routes are organized by domain and apply appropriate middleware.
 
 mod auth;
+pub mod groups;
 pub mod mcp;
 mod memories;
 mod projects;
@@ -11,6 +12,7 @@ mod providers;
 mod repositories;
 mod search;
 pub mod status;
+pub mod users;
 mod webhooks;
 
 use axum::Router;
@@ -50,7 +52,11 @@ pub fn routes(state: AppState) -> Router<AppState> {
 
 /// Protected routes that require authentication.
 fn protected_routes(state: AppState) -> Router<AppState> {
-    Router::new()
+    Router::<AppState>::new()
+        // User management (admin only)
+        .nest("/users", users::routes(state.clone()))
+        // Group management
+        .nest("/groups", groups::routes(state.clone()))
         // Project CRUD
         .merge(projects::routes())
         // Nested project resources
@@ -69,7 +75,7 @@ fn protected_routes(state: AppState) -> Router<AppState> {
 /// Admin routes that require authentication (token or session).
 /// These routes manage system-wide settings like LLM providers.
 pub fn admin_routes(state: AppState) -> Router<AppState> {
-    Router::new()
+    Router::<AppState>::new()
         // Provider management (LLM and embedding providers)
         .merge(providers::routes())
         // Use token auth for API access (same as other protected routes)
@@ -78,7 +84,7 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
 
 /// Global memories routes (cross-project).
 fn global_memories_routes(state: AppState) -> Router<AppState> {
-    Router::new()
+    Router::<AppState>::new()
         .merge(memories::global_routes())
         .layer(axum::middleware::from_fn_with_state(state, require_token))
 }

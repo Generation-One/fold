@@ -750,6 +750,186 @@ pub async fn list_project_members_with_users(
     .map_err(Error::Database)
 }
 
+// ============================================================================
+// Project Group Members
+// ============================================================================
+
+/// Project group member record from the database.
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct ProjectGroupMember {
+    pub group_id: String,
+    pub project_id: String,
+    pub role: String,
+    pub added_by: Option<String>,
+    pub created_at: String,
+}
+
+impl ProjectGroupMember {
+    /// Check if this group can write (create/update/delete).
+    pub fn can_write(&self) -> bool {
+        self.role == "member"
+    }
+
+    /// Check if this group can read.
+    pub fn can_read(&self) -> bool {
+        true // Both member and viewer can read
+    }
+}
+
+/// Extended project group member info with group details.
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct ProjectGroupMemberWithGroup {
+    pub group_id: String,
+    pub project_id: String,
+    pub role: String,
+    pub added_by: Option<String>,
+    pub created_at: String,
+    // Group fields
+    pub name: String,
+    pub description: Option<String>,
+}
+
+/// Add a group to a project with a specific role.
+pub async fn add_project_group_member(
+    pool: &DbPool,
+    project_id: &str,
+    group_id: &str,
+    role: &str,
+    added_by: Option<&str>,
+) -> Result<ProjectGroupMember> {
+    sqlx::query_as::<_, ProjectGroupMember>(
+        r#"
+        INSERT INTO project_group_members (group_id, project_id, role, added_by)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT (group_id, project_id) DO UPDATE SET
+            role = excluded.role,
+            added_by = excluded.added_by
+        RETURNING *
+        "#,
+    )
+    .bind(group_id)
+    .bind(project_id)
+    .bind(role)
+    .bind(added_by)
+    .fetch_one(pool)
+    .await
+    .map_err(Error::Database)
+}
+
+/// Remove a group from a project.
+pub async fn remove_project_group_member(
+    pool: &DbPool,
+    project_id: &str,
+    group_id: &str,
+) -> Result<bool> {
+    let result = sqlx::query(
+        "DELETE FROM project_group_members WHERE project_id = ? AND group_id = ?",
+    )
+    .bind(project_id)
+    .bind(group_id)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+/// Get a group's membership in a project.
+pub async fn get_project_group_member(
+    pool: &DbPool,
+    project_id: &str,
+    group_id: &str,
+) -> Result<Option<ProjectGroupMember>> {
+    sqlx::query_as::<_, ProjectGroupMember>(
+        "SELECT * FROM project_group_members WHERE project_id = ? AND group_id = ?",
+    )
+    .bind(project_id)
+    .bind(group_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(Error::Database)
+}
+
+/// List all group members of a project.
+pub async fn list_project_group_members(pool: &DbPool, project_id: &str) -> Result<Vec<ProjectGroupMember>> {
+    sqlx::query_as::<_, ProjectGroupMember>(
+        r#"
+        SELECT * FROM project_group_members
+        WHERE project_id = ?
+        ORDER BY created_at ASC
+        "#,
+    )
+    .bind(project_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Error::Database)
+}
+
+/// List all projects a group has access to.
+pub async fn list_group_projects(pool: &DbPool, group_id: &str) -> Result<Vec<Project>> {
+    sqlx::query_as::<_, Project>(
+        r#"
+        SELECT p.* FROM projects p
+        INNER JOIN project_group_members pgm ON p.id = pgm.project_id
+        WHERE pgm.group_id = ?
+        ORDER BY p.name ASC
+        "#,
+    )
+    .bind(group_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Error::Database)
+}
+
+/// Update a group member's role in a project.
+pub async fn update_project_group_member_role(
+    pool: &DbPool,
+    project_id: &str,
+    group_id: &str,
+    role: &str,
+) -> Result<Option<ProjectGroupMember>> {
+    sqlx::query_as::<_, ProjectGroupMember>(
+        r#"
+        UPDATE project_group_members
+        SET role = ?
+        WHERE project_id = ? AND group_id = ?
+        RETURNING *
+        "#,
+    )
+    .bind(role)
+    .bind(project_id)
+    .bind(group_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(Error::Database)
+}
+
+/// List project group members with group details.
+pub async fn list_project_group_members_with_groups(
+    pool: &DbPool,
+    project_id: &str,
+) -> Result<Vec<ProjectGroupMemberWithGroup>> {
+    sqlx::query_as::<_, ProjectGroupMemberWithGroup>(
+        r#"
+        SELECT
+            pgm.group_id,
+            pgm.project_id,
+            pgm.role,
+            pgm.added_by,
+            pgm.created_at,
+            g.name,
+            g.description
+        FROM project_group_members pgm
+        INNER JOIN groups g ON pgm.group_id = g.id
+        WHERE pgm.project_id = ?
+        ORDER BY pgm.created_at ASC
+        "#,
+    )
+    .bind(project_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Error::Database)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
