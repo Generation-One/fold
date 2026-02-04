@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, warn, error};
+use tracing::{debug, info, error};
 
 use crate::db::DbPool;
 use crate::error::{Error, Result};
