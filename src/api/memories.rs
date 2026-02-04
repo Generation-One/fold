@@ -813,20 +813,8 @@ async fn list_all_memories(
     let limit = query.limit.min(100) as i64;
     let offset = query.offset as i64;
 
-    // Get projects the user has access to
-    let accessible_projects = if auth.project_ids.is_empty() {
-        // Token has access to all projects for this user
-        db::list_user_projects(&state.db, &auth.user_id).await?
-    } else {
-        // Token is scoped to specific projects
-        let mut projects = Vec::new();
-        for project_id in &auth.project_ids {
-            if let Ok(project) = db::get_project(&state.db, project_id).await {
-                projects.push(project);
-            }
-        }
-        projects
-    };
+    // Get projects the user has access to (via user/groups/projects model)
+    let accessible_projects = db::list_user_projects(&state.db, &auth.user_id).await?;
 
     // If filtering by specific project, validate access
     let project_ids: Vec<String> = if let Some(ref project_filter) = query.project {

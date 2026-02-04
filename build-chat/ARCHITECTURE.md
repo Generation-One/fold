@@ -164,11 +164,11 @@ jobs (id, project_id, job_type, status, priority, payload,
       attempts, next_retry, created_at)
 
 -- Authentication (OIDC)
-users (id, provider, email, display_name, avatar_url, created_at)
-sessions (id, user_id, token, expires_at, created_at)
-api_tokens (id, user_id, token_hash, name, project_ids, created_at)
-oauth_states (id, state, project_id, expires_at)
-auth_providers (id, provider, config_json)
+users (id, provider, email, display_name, avatar_url, role, created_at)
+sessions (id, user_id, expires_at, created_at)
+api_tokens (id, user_id, token_hash, token_prefix, name, created_at, expires_at, revoked_at)
+oauth_states (id, state, provider, expires_at)
+auth_providers (id, type, display_name, client_id, enabled)
 ```
 
 ## API Structure
@@ -228,6 +228,20 @@ GET    /status/jobs/:id
 POST   /mcp           (JSON-RPC)
 GET    /mcp/sse       (Server-Sent Events)
 ```
+
+## Authentication & Authorization
+
+Tokens inherit all project access from the user who created them. Access control is handled through project membership:
+
+- **Direct membership** - User assigned to project with role (member/viewer)
+- **Group membership** - User in group assigned to project with role
+- **Admin bypass** - Admin users have access to all projects
+- **Token scope** - Tokens do not have separate project scoping; they inherit user's full access
+
+When a token is used, the system checks:
+1. Token is valid (not expired, not revoked)
+2. User who owns token has access to requested project
+3. User's role (member/viewer) is sufficient for the operation
 
 ## MCP Tools
 

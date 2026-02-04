@@ -68,8 +68,6 @@ pub struct AuthContext {
     pub token_id: String,
     /// User ID that owns this token
     pub user_id: String,
-    /// Project IDs this token has access to (empty = all projects for this user)
-    pub project_ids: Vec<String>,
 }
 
 /// Database row for API tokens.
@@ -194,14 +192,8 @@ pub async fn require_project_access(
         .get::<AuthContext>()
         .ok_or(Error::Unauthenticated)?;
 
-    // Check project access
-    // Empty project_ids means access to all projects (for this user)
-    if !auth_context.project_ids.is_empty()
-        && !auth_context.project_ids.contains(project_id)
-    {
-        return Err(Error::Forbidden);
-    }
-
+    // Project access control is handled by the project-level middleware
+    // which checks user/groups/projects membership
     Ok(next.run(req).await)
 }
 
@@ -259,15 +251,9 @@ async fn validate_token(state: &AppState, token: &str) -> Result<AuthContext, Er
     }
 
     // Parse project_ids
-    let project_ids = token_row
-        .project_ids
-        .map(|s| parse_project_ids(&s))
-        .unwrap_or_default();
-
     Ok(AuthContext {
         token_id: token_row.id,
         user_id: token_row.user_id,
-        project_ids,
     })
 }
 
