@@ -249,9 +249,11 @@ async fn list_projects(
 /// POST /projects
 ///
 /// Creates a new project with the given details.
+/// The creating user is automatically added as a member with write access.
 #[axum::debug_handler]
 async fn create_project(
     State(state): State<AppState>,
+    axum::extract::Extension(auth): axum::extract::Extension<crate::middleware::AuthUser>,
     Json(request): Json<CreateProjectRequest>,
 ) -> Result<Json<ProjectResponse>> {
     // Validate slug format
@@ -270,6 +272,16 @@ async fn create_project(
     };
 
     let project = crate::db::create_project(&state.db, input).await?;
+
+    // Add the creating user as a member with write access
+    let _ = crate::db::add_project_member(
+        &state.db,
+        &project.id,
+        &auth.user_id,
+        "member",
+        Some(&auth.user_id),
+    )
+    .await;
 
     // Initialize Qdrant collection for project (non-blocking)
     match state
