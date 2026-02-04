@@ -259,15 +259,9 @@ async fn validate_token_internal(
         }
     }
 
-    let project_ids = token_row
-        .project_ids
-        .map(|s| parse_project_ids(&s))
-        .unwrap_or_default();
-
     Ok(AuthContext {
         token_id: token_row.id,
         user_id: token_row.user_id,
-        project_ids,
     })
 }
 
@@ -283,18 +277,3 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     result == 0
 }
 
-fn parse_project_ids(s: &str) -> Vec<String> {
-    let trimmed = s.trim();
-
-    if trimmed.starts_with('[') {
-        if let Ok(ids) = serde_json::from_str::<Vec<String>>(trimmed) {
-            return ids;
-        }
-    }
-
-    trimmed
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect()
-}
