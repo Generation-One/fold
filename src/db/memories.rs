@@ -128,8 +128,8 @@ pub struct Memory {
 
     // Metadata
     pub author: Option<String>,
-    pub keywords: Option<String>,  // JSON array
-    pub tags: Option<String>,      // JSON array
+    pub keywords: Option<String>, // JSON array
+    pub tags: Option<String>,     // JSON array
     #[sqlx(default)]
     pub context: Option<String>,
     #[sqlx(default)]
@@ -244,8 +244,12 @@ pub struct MetadataSyncUpdate {
 
 /// Create a new memory.
 pub async fn create_memory(pool: &DbPool, input: CreateMemory) -> Result<Memory> {
-    let keywords_json = input.keywords.map(|k| serde_json::to_string(&k).unwrap_or_default());
-    let tags_json = input.tags.map(|t| serde_json::to_string(&t).unwrap_or_default());
+    let keywords_json = input
+        .keywords
+        .map(|k| serde_json::to_string(&k).unwrap_or_default());
+    let tags_json = input
+        .tags
+        .map(|t| serde_json::to_string(&t).unwrap_or_default());
     let source_str = input.source.map(|s| s.as_str().to_string());
 
     sqlx::query_as::<_, Memory>(
@@ -304,7 +308,11 @@ pub async fn get_memory_optional(pool: &DbPool, id: &str) -> Result<Option<Memor
 
 /// Get a memory by content hash.
 /// Uses idx_memories_content_hash index.
-pub async fn get_memory_by_hash(pool: &DbPool, project_id: &str, content_hash: &str) -> Result<Option<Memory>> {
+pub async fn get_memory_by_hash(
+    pool: &DbPool,
+    project_id: &str,
+    content_hash: &str,
+) -> Result<Option<Memory>> {
     sqlx::query_as::<_, Memory>(
         r#"
         SELECT * FROM memories
@@ -476,7 +484,10 @@ pub async fn delete_memories_by_repository(pool: &DbPool, repository_id: &str) -
 
 /// List all memories for a repository.
 /// Uses idx_memories_repository index.
-pub async fn list_memories_by_repository(pool: &DbPool, repository_id: &str) -> Result<Vec<Memory>> {
+pub async fn list_memories_by_repository(
+    pool: &DbPool,
+    repository_id: &str,
+) -> Result<Vec<Memory>> {
     sqlx::query_as::<_, Memory>(
         r#"
         SELECT * FROM memories
@@ -664,12 +675,10 @@ pub async fn list_repository_files(
 
 /// Count memories for a project.
 pub async fn count_project_memories(pool: &DbPool, project_id: &str) -> Result<i64> {
-    let (count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM memories WHERE project_id = ?",
-    )
-    .bind(project_id)
-    .fetch_one(pool)
-    .await?;
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM memories WHERE project_id = ?")
+        .bind(project_id)
+        .fetch_one(pool)
+        .await?;
     Ok(count)
 }
 
@@ -679,13 +688,12 @@ pub async fn count_project_memories_by_type(
     project_id: &str,
     memory_type: MemoryType,
 ) -> Result<i64> {
-    let (count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM memories WHERE project_id = ? AND type = ?",
-    )
-    .bind(project_id)
-    .bind(memory_type.as_str())
-    .fetch_one(pool)
-    .await?;
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM memories WHERE project_id = ? AND type = ?")
+            .bind(project_id)
+            .bind(memory_type.as_str())
+            .fetch_one(pool)
+            .await?;
     Ok(count)
 }
 
@@ -711,8 +719,12 @@ pub async fn list_memories_needing_sync(pool: &DbPool, project_id: &str) -> Resu
 /// Upsert a memory (insert or update if exists).
 /// Useful for codebase indexing where we update existing files.
 pub async fn upsert_memory(pool: &DbPool, input: CreateMemory) -> Result<Memory> {
-    let keywords_json = input.keywords.map(|k| serde_json::to_string(&k).unwrap_or_default());
-    let tags_json = input.tags.map(|t| serde_json::to_string(&t).unwrap_or_default());
+    let keywords_json = input
+        .keywords
+        .map(|k| serde_json::to_string(&k).unwrap_or_default());
+    let tags_json = input
+        .tags
+        .map(|t| serde_json::to_string(&t).unwrap_or_default());
 
     sqlx::query_as::<_, Memory>(
         r#"
@@ -776,19 +788,24 @@ pub async fn get_memories_by_ids(pool: &DbPool, ids: &[String]) -> Result<Vec<Me
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{init_pool, migrate, create_project, CreateProject};
+    use crate::db::{create_project, init_pool, migrate, CreateProject};
 
     async fn setup_test_db() -> DbPool {
         let pool = init_pool(":memory:").await.unwrap();
         migrate(&pool).await.unwrap();
 
         // Create test project
-        create_project(&pool, CreateProject {
-            id: "proj-1".to_string(),
-            slug: "test".to_string(),
-            name: "Test".to_string(),
-            description: None,
-        }).await.unwrap();
+        create_project(
+            &pool,
+            CreateProject {
+                id: "proj-1".to_string(),
+                slug: "test".to_string(),
+                name: "Test".to_string(),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
 
         pool
     }
@@ -797,24 +814,29 @@ mod tests {
     async fn test_create_and_get_memory() {
         let pool = setup_test_db().await;
 
-        let memory = create_memory(&pool, CreateMemory {
-            id: "mem-1".to_string(),
-            project_id: "proj-1".to_string(),
-            repository_id: None,
-            memory_type: MemoryType::General,
-            source: None,
-            title: Some("Test Memory".to_string()),
-            content: None, // Content stored externally
-            content_hash: Some("abc123".to_string()),
-            content_storage: "filesystem".to_string(),
-            file_path: None,
-            language: None,
-            git_branch: None,
-            git_commit_sha: None,
-            author: Some("test".to_string()),
-            keywords: Some(vec!["test".to_string(), "memory".to_string()]),
-            tags: Some(vec!["important".to_string()]),
-        }).await.unwrap();
+        let memory = create_memory(
+            &pool,
+            CreateMemory {
+                id: "mem-1".to_string(),
+                project_id: "proj-1".to_string(),
+                repository_id: None,
+                memory_type: MemoryType::General,
+                source: None,
+                title: Some("Test Memory".to_string()),
+                content: None, // Content stored externally
+                content_hash: Some("abc123".to_string()),
+                content_storage: "filesystem".to_string(),
+                file_path: None,
+                language: None,
+                git_branch: None,
+                git_commit_sha: None,
+                author: Some("test".to_string()),
+                keywords: Some(vec!["test".to_string(), "memory".to_string()]),
+                tags: Some(vec!["important".to_string()]),
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(memory.id, "mem-1");
         assert_eq!(memory.memory_type, "general");
@@ -830,31 +852,43 @@ mod tests {
         let pool = setup_test_db().await;
 
         // Create different types of memories
-        for (i, mem_type) in [MemoryType::Decision, MemoryType::Task, MemoryType::Decision].iter().enumerate() {
-            create_memory(&pool, CreateMemory {
-                id: format!("mem-{}", i),
-                project_id: "proj-1".to_string(),
-                repository_id: None,
-                memory_type: *mem_type,
-                source: None,
-                title: Some(format!("Memory {}", i)),
-                content: None,
-                content_hash: None,
-                content_storage: "filesystem".to_string(),
-                file_path: None,
-                language: None,
-                git_branch: None,
-                git_commit_sha: None,
-                author: None,
-                keywords: None,
-                tags: None,
-            }).await.unwrap();
+        for (i, mem_type) in [MemoryType::Decision, MemoryType::Task, MemoryType::Decision]
+            .iter()
+            .enumerate()
+        {
+            create_memory(
+                &pool,
+                CreateMemory {
+                    id: format!("mem-{}", i),
+                    project_id: "proj-1".to_string(),
+                    repository_id: None,
+                    memory_type: *mem_type,
+                    source: None,
+                    title: Some(format!("Memory {}", i)),
+                    content: None,
+                    content_hash: None,
+                    content_storage: "filesystem".to_string(),
+                    file_path: None,
+                    language: None,
+                    git_branch: None,
+                    git_commit_sha: None,
+                    author: None,
+                    keywords: None,
+                    tags: None,
+                },
+            )
+            .await
+            .unwrap();
         }
 
-        let decisions = list_project_memories_by_type(&pool, "proj-1", MemoryType::Decision, 10, 0).await.unwrap();
+        let decisions = list_project_memories_by_type(&pool, "proj-1", MemoryType::Decision, 10, 0)
+            .await
+            .unwrap();
         assert_eq!(decisions.len(), 2);
 
-        let tasks = list_project_memories_by_type(&pool, "proj-1", MemoryType::Task, 10, 0).await.unwrap();
+        let tasks = list_project_memories_by_type(&pool, "proj-1", MemoryType::Task, 10, 0)
+            .await
+            .unwrap();
         assert_eq!(tasks.len(), 1);
     }
 

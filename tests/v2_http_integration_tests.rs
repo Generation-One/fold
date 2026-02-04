@@ -81,7 +81,10 @@ impl TestClient {
 #[ignore] // Only run with server running
 async fn test_http_create_and_get_project() {
     let client = TestClient::new();
-    let project_name = format!("test-proj-{}", uuid::Uuid::new_v4().to_string()[..8].to_string());
+    let project_name = format!(
+        "test-proj-{}",
+        uuid::Uuid::new_v4().to_string()[..8].to_string()
+    );
     let project_slug = format!("ts-{}", uuid::Uuid::new_v4().to_string()[..8].to_string());
 
     // Create project
@@ -198,7 +201,10 @@ async fn test_http_create_memory_without_type() {
         .await
         .expect("Failed to create project");
 
-    let project: Value = project_response.json().await.expect("Invalid response JSON");
+    let project: Value = project_response
+        .json()
+        .await
+        .expect("Invalid response JSON");
     let project_id = project["id"].as_str().expect("No project ID");
 
     // Create memory WITHOUT type field
@@ -219,7 +225,10 @@ async fn test_http_create_memory_without_type() {
     let memory: Value = memory_response.json().await.expect("Invalid response JSON");
     assert!(memory.get("id").is_some());
     assert_eq!(memory["title"], "Test Memory");
-    assert!(memory.get("type").is_none(), "v2 should not have type field");
+    assert!(
+        memory.get("type").is_none(),
+        "v2 should not have type field"
+    );
     assert_eq!(memory["source"], "agent");
 
     // Cleanup
@@ -247,7 +256,10 @@ async fn test_http_memory_with_file_path_sets_source() {
         .await
         .expect("Failed to create project");
 
-    let project: Value = project_response.json().await.expect("Invalid response JSON");
+    let project: Value = project_response
+        .json()
+        .await
+        .expect("Invalid response JSON");
     let project_id = project["id"].as_str().expect("No project ID");
 
     // Create memory WITH file_path
@@ -265,7 +277,10 @@ async fn test_http_memory_with_file_path_sets_source() {
 
     assert_eq!(memory_response.status(), 201);
     let memory: Value = memory_response.json().await.expect("Invalid response JSON");
-    assert_eq!(memory["source"], "file", "source should be 'file' when file_path provided");
+    assert_eq!(
+        memory["source"], "file",
+        "source should be 'file' when file_path provided"
+    );
 
     // Cleanup
     client
@@ -296,7 +311,10 @@ async fn test_http_search_with_project_decay_config() {
         .await
         .expect("Failed to create project");
 
-    let project: Value = project_response.json().await.expect("Invalid response JSON");
+    let project: Value = project_response
+        .json()
+        .await
+        .expect("Invalid response JSON");
     let project_id = project["id"].as_str().expect("No project ID");
 
     // Create test memory
@@ -334,7 +352,10 @@ async fn test_http_search_with_project_decay_config() {
 
     // Verify response includes decay fields
     if let Some(first_result) = search_result["results"].get(0) {
-        assert!(first_result.get("score").is_some(), "Response should include 'score'");
+        assert!(
+            first_result.get("score").is_some(),
+            "Response should include 'score'"
+        );
         assert!(
             first_result.get("strength").is_some(),
             "Response should include 'strength' (v2)"
@@ -370,7 +391,10 @@ async fn test_http_decay_config_affects_search_results() {
         .await
         .expect("Failed to create project");
 
-    let project: Value = project_response.json().await.expect("Invalid response JSON");
+    let project: Value = project_response
+        .json()
+        .await
+        .expect("Invalid response JSON");
     let project_id = project["id"].as_str().expect("No project ID");
 
     // Create memory
@@ -447,7 +471,10 @@ async fn test_http_decay_config_affects_search_results() {
         .expect("No combined_score");
 
     // Scores should be different (one is pure semantic, one is pure strength)
-    assert!((score1 - score2).abs() > 0.01, "Decay config should affect search results");
+    assert!(
+        (score1 - score2).abs() > 0.01,
+        "Decay config should affect search results"
+    );
 
     // Cleanup
     client
@@ -478,7 +505,10 @@ async fn test_http_reject_invalid_strength_weight() {
         .await
         .expect("Failed to create project");
 
-    let project: Value = project_response.json().await.expect("Invalid response JSON");
+    let project: Value = project_response
+        .json()
+        .await
+        .expect("Invalid response JSON");
     let project_id = project["id"].as_str().expect("No project ID");
 
     // Try to set invalid strength_weight
@@ -492,7 +522,10 @@ async fn test_http_reject_invalid_strength_weight() {
         .await
         .expect("Failed to send request");
 
-    assert!(invalid_response.status().is_client_error(), "Should reject invalid strength_weight");
+    assert!(
+        invalid_response.status().is_client_error(),
+        "Should reject invalid strength_weight"
+    );
 
     // Cleanup
     client
@@ -519,7 +552,10 @@ async fn test_http_memory_requires_content() {
         .await
         .expect("Failed to create project");
 
-    let project: Value = project_response.json().await.expect("Invalid response JSON");
+    let project: Value = project_response
+        .json()
+        .await
+        .expect("Invalid response JSON");
     let project_id = project["id"].as_str().expect("No project ID");
 
     // Try to create memory with empty content

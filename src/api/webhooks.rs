@@ -23,7 +23,6 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use uuid::Uuid;
 
-use crate::services::FileSourceProvider;
 use crate::{db, AppState, Error, Result};
 
 type HmacSha256 = Hmac<Sha256>;
@@ -216,14 +215,15 @@ async fn handle_github_webhook(
 
     // Verify signature using the provider abstraction
     if let Some(signature) = headers.get("X-Hub-Signature-256") {
-        let signature = signature.to_str().map_err(|_| {
-            Error::Webhook("Invalid signature header".into())
-        })?;
+        let signature = signature
+            .to_str()
+            .map_err(|_| Error::Webhook("Invalid signature header".into()))?;
 
         // Use provider-agnostic verification
-        let provider = state.providers.get("github").ok_or_else(|| {
-            Error::Webhook("GitHub provider not available".into())
-        })?;
+        let provider = state
+            .providers
+            .get("github")
+            .ok_or_else(|| Error::Webhook("GitHub provider not available".into()))?;
 
         if !provider.verify_notification(&body, signature, &webhook_secret) {
             return Err(Error::Webhook("Signature verification failed".into()));
@@ -294,9 +294,9 @@ async fn handle_gitlab_webhook(
 
     // Verify token
     if let Some(token) = headers.get("X-Gitlab-Token") {
-        let token = token.to_str().map_err(|_| {
-            Error::Webhook("Invalid token header".into())
-        })?;
+        let token = token
+            .to_str()
+            .map_err(|_| Error::Webhook("Invalid token header".into()))?;
 
         if token != webhook_token {
             return Err(Error::Webhook("Invalid webhook token".into()));
@@ -348,8 +348,8 @@ fn verify_github_signature(body: &[u8], secret: &str, signature: &str) -> Result
         .strip_prefix("sha256=")
         .ok_or_else(|| Error::Webhook("Invalid signature format".into()))?;
 
-    let expected = hex::decode(signature)
-        .map_err(|_| Error::Webhook("Invalid signature hex".into()))?;
+    let expected =
+        hex::decode(signature).map_err(|_| Error::Webhook("Invalid signature hex".into()))?;
 
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
         .map_err(|_| Error::Webhook("Invalid secret".into()))?;
@@ -433,7 +433,9 @@ async fn process_github_push(
         "Created indexing job"
     );
 
-    Ok(Some(Uuid::parse_str(&job.id).unwrap_or_else(|_| Uuid::new_v4())))
+    Ok(Some(
+        Uuid::parse_str(&job.id).unwrap_or_else(|_| Uuid::new_v4()),
+    ))
 }
 
 /// Process GitHub pull request event.
@@ -486,7 +488,8 @@ async fn process_github_pull_request(
                     None
                 },
             },
-        ).await?;
+        )
+        .await?;
 
         tracing::debug!(
             pr_id = %pr_record.id,
@@ -499,12 +502,9 @@ async fn process_github_pull_request(
         match action {
             "opened" | "synchronize" => {
                 // Hybrid diff indexing: fetch files, rank by impact, analyze top 4
-                if let Err(e) = process_pr_diff_hybrid(
-                    state,
-                    &repo_id_str,
-                    pr.number,
-                    &pr.title,
-                ).await {
+                if let Err(e) =
+                    process_pr_diff_hybrid(state, &repo_id_str, pr.number, &pr.title).await
+                {
                     tracing::warn!(
                         pr_number = pr.number,
                         error = %e,
@@ -539,12 +539,10 @@ async fn process_pr_diff_hybrid(
     let repo = db::get_repository(&state.db, repo_id).await?;
 
     // Fetch PR files from GitHub
-    let files = state.github.get_pull_request_files(
-        &repo.owner,
-        &repo.repo,
-        pr_number,
-        &repo.access_token,
-    ).await?;
+    let files = state
+        .github
+        .get_pull_request_files(&repo.owner, &repo.repo, pr_number, &repo.access_token)
+        .await?;
 
     if files.is_empty() {
         tracing::debug!(pr_number = pr_number, "No files in PR");
@@ -557,19 +555,17 @@ async fn process_pr_diff_hybrid(
         .filter(|f| {
             // Exclude lockfiles, generated files, and very small changes
             let path = f.filename.to_lowercase();
-            !path.contains("lock") &&
-            !path.contains(".min.") &&
-            !path.ends_with(".map") &&
-            !path.starts_with("vendor/") &&
-            !path.starts_with("node_modules/") &&
-            (f.additions + f.deletions) > 2
+            !path.contains("lock")
+                && !path.contains(".min.")
+                && !path.ends_with(".map")
+                && !path.starts_with("vendor/")
+                && !path.starts_with("node_modules/")
+                && (f.additions + f.deletions) > 2
         })
         .collect();
 
     // Sort by total changes (most impactful first)
-    ranked_files.sort_by(|a, b| {
-        (b.additions + b.deletions).cmp(&(a.additions + a.deletions))
-    });
+    ranked_files.sort_by(|a, b| (b.additions + b.deletions).cmp(&(a.additions + a.deletions)));
 
     // Take top 4 most impactful files
     let top_files: Vec<_> = ranked_files.into_iter().take(4).collect();
@@ -589,14 +585,18 @@ async fn process_pr_diff_hybrid(
     // Analyze each top file with LLM
     let mut analyses = Vec::new();
     for file in &top_files {
-        match state.llm.summarize_pr_diff(
-            pr_title,
-            &file.filename,
-            &file.status,
-            file.additions,
-            file.deletions,
-            file.patch.as_deref(),
-        ).await {
+        match state
+            .llm
+            .summarize_pr_diff(
+                pr_title,
+                &file.filename,
+                &file.status,
+                file.additions,
+                file.deletions,
+                file.patch.as_deref(),
+            )
+            .await
+        {
             Ok(analysis) => {
                 analyses.push(format!(
                     "**{}** (+{}, -{})\n{}",
@@ -624,7 +624,7 @@ async fn process_pr_diff_hybrid(
 
         // Update PR record with analysis (stored in description field)
         sqlx::query(
-            "UPDATE git_pull_requests SET description = ? WHERE repository_id = ? AND number = ?"
+            "UPDATE git_pull_requests SET description = ? WHERE repository_id = ? AND number = ?",
         )
         .bind(&analysis_text)
         .bind(repo_id)
@@ -691,7 +691,9 @@ async fn process_gitlab_push(
     )
     .await?;
 
-    Ok(Some(Uuid::parse_str(&job.id).unwrap_or_else(|_| Uuid::new_v4())))
+    Ok(Some(
+        Uuid::parse_str(&job.id).unwrap_or_else(|_| Uuid::new_v4()),
+    ))
 }
 
 /// Process GitLab merge request event.
@@ -745,7 +747,8 @@ async fn process_gitlab_merge_request(
                     None
                 },
             },
-        ).await?;
+        )
+        .await?;
 
         tracing::debug!(
             mr_id = %mr_record.id,

@@ -34,7 +34,9 @@ fn bearer_auth(token: &str) -> HeaderValue {
 
 /// Create a test database with migrations applied
 async fn setup_test_db() -> DbPool {
-    let pool = db::init_pool(":memory:").await.expect("Failed to create test database");
+    let pool = db::init_pool(":memory:")
+        .await
+        .expect("Failed to create test database");
     db::migrate(&pool).await.expect("Failed to run migrations");
     pool
 }
@@ -141,7 +143,9 @@ async fn build_test_state(pool: DbPool) -> AppState {
     let git_local = Arc::new(GitLocalService::new());
 
     // Initialize storage services
-    let meta_storage = Arc::new(MetaStorageService::new(std::path::PathBuf::from("./test_fold")));
+    let meta_storage = Arc::new(MetaStorageService::new(std::path::PathBuf::from(
+        "./test_fold",
+    )));
     let fold_storage = Arc::new(FoldStorageService::new());
     let content_resolver = Arc::new(fold::services::ContentResolverService::new(
         pool.clone(),
@@ -168,7 +172,8 @@ async fn build_test_state(pool: DbPool) -> AppState {
         embeddings.clone(),
     ));
 
-    let indexer = IndexerService::with_git_service(memory.clone(), llm.clone(), git_service.clone());
+    let indexer =
+        IndexerService::with_git_service(memory.clone(), llm.clone(), git_service.clone());
 
     let git_sync = GitSyncService::new(
         pool.clone(),
@@ -397,7 +402,9 @@ async fn test_list_memories_requires_auth() {
 
     let project_id = create_test_project(&pool, "mem-test", "Memory Test").await;
 
-    let response = server.get(&format!("/projects/{}/memories", project_id)).await;
+    let response = server
+        .get(&format!("/projects/{}/memories", project_id))
+        .await;
 
     response.assert_status_unauthorized();
 }
@@ -463,10 +470,7 @@ async fn test_create_memory_empty_content_fails() {
 
     response.assert_status_bad_request();
     let body: Value = response.json();
-    assert!(body["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("empty"));
+    assert!(body["error"]["message"].as_str().unwrap().contains("empty"));
 }
 
 #[tokio::test]
@@ -707,7 +711,10 @@ async fn test_invalid_token_format_rejected() {
 
     let response = server
         .get("/projects")
-        .add_header(AUTHORIZATION, HeaderValue::from_static("Bearer invalid-token-format"))
+        .add_header(
+            AUTHORIZATION,
+            HeaderValue::from_static("Bearer invalid-token-format"),
+        )
         .await;
 
     response.assert_status_unauthorized();

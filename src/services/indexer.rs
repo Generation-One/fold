@@ -10,12 +10,12 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use chrono::Utc;
 use futures::stream::{self, StreamExt};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use tokio::fs;
 use tracing::{debug, info, warn};
 
@@ -24,8 +24,8 @@ use crate::error::{Error, Result};
 use crate::models::{ChunkCreate, Memory, MemoryCreate, MemoryType, Project};
 
 use super::{
-    ChunkerService, EmbeddingService, FoldStorageService, GitService, LinkerService,
-    LlmService, MemoryService, QdrantService,
+    ChunkerService, EmbeddingService, FoldStorageService, GitService, LinkerService, LlmService,
+    MemoryService, QdrantService,
 };
 
 /// Maximum file size to index (100KB)
@@ -371,8 +371,7 @@ impl IndexerService {
                 if project.auto_commit_enabled() {
                     let commit_message = format!(
                         "fold: Index {} files from {}",
-                        stats.indexed_files,
-                        project.slug
+                        stats.indexed_files, project.slug
                     );
                     match git_service.auto_commit_fold(&root, &commit_message).await {
                         Ok(result) => {
@@ -422,12 +421,18 @@ impl IndexerService {
         files: &mut Vec<PathBuf>,
     ) -> Result<()> {
         let mut entries = fs::read_dir(current).await.map_err(|e| {
-            Error::Internal(format!("Failed to read directory {}: {}", current.display(), e))
+            Error::Internal(format!(
+                "Failed to read directory {}: {}",
+                current.display(),
+                e
+            ))
         })?;
 
-        while let Some(entry) = entries.next_entry().await.map_err(|e| {
-            Error::Internal(format!("Failed to read entry: {}", e))
-        })? {
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to read entry: {}", e)))?
+        {
             let path = entry.path();
             let rel_path = path
                 .strip_prefix(root)
@@ -505,10 +510,15 @@ impl IndexerService {
 
         // Generate summary using LLM - fail if LLM is unavailable (no dumb fallbacks)
         if !self.llm.is_available().await {
-            return Err(Error::Llm("LLM service is unavailable - cannot index without summarization".to_string()));
+            return Err(Error::Llm(
+                "LLM service is unavailable - cannot index without summarization".to_string(),
+            ));
         }
 
-        let code_summary = self.llm.summarize_code(&content, &rel_path, &language).await?;
+        let code_summary = self
+            .llm
+            .summarize_code(&content, &rel_path, &language)
+            .await?;
 
         let title = code_summary.title;
         let summary_content = code_summary.summary;
@@ -518,7 +528,10 @@ impl IndexerService {
 
         // Ensure we got a real summary, not empty
         if summary_content.trim().is_empty() {
-            return Err(Error::Llm("LLM returned empty summary - cannot index without proper summarization".to_string()));
+            return Err(Error::Llm(
+                "LLM returned empty summary - cannot index without proper summarization"
+                    .to_string(),
+            ));
         }
 
         let mut metadata = HashMap::new();
@@ -561,7 +574,8 @@ impl IndexerService {
         };
 
         // Add memory to database and vector store
-        let memory = self.memory_service
+        let memory = self
+            .memory_service
             .add(&project.id, &project.slug, create, false)
             .await?;
 
@@ -570,7 +584,10 @@ impl IndexerService {
         // The linker service provides ADDITIONAL semantic similarity-based linking.
         if let Some(ref linker) = self.linker {
             info!(memory_id = %memory.id, "Starting auto-link for memory");
-            match linker.auto_link(&project.id, &project.slug, &memory.id, 0.3).await {
+            match linker
+                .auto_link(&project.id, &project.slug, &memory.id, 0.3)
+                .await
+            {
                 Ok(result) => {
                     info!(
                         memory_id = %memory.id,
@@ -619,7 +636,9 @@ impl IndexerService {
         // Update in-memory hash cache
         {
             let mut hashes = self.file_hashes.write().await;
-            let project_hashes = hashes.entry(project.slug.clone()).or_insert_with(HashMap::new);
+            let project_hashes = hashes
+                .entry(project.slug.clone())
+                .or_insert_with(HashMap::new);
             project_hashes.insert(rel_path, content_hash_value);
         }
 
@@ -646,10 +665,15 @@ impl IndexerService {
 
         // Generate summary using LLM - fail if LLM is unavailable (no dumb fallbacks)
         if !self.llm.is_available().await {
-            return Err(Error::Llm("LLM service is unavailable - cannot index without summarization".to_string()));
+            return Err(Error::Llm(
+                "LLM service is unavailable - cannot index without summarization".to_string(),
+            ));
         }
 
-        let code_summary = self.llm.summarize_code(content, file_path, &language).await?;
+        let code_summary = self
+            .llm
+            .summarize_code(content, file_path, &language)
+            .await?;
 
         let title = code_summary.title;
         let summary_content = code_summary.summary;
@@ -658,7 +682,10 @@ impl IndexerService {
 
         // Ensure we got a real summary, not empty
         if summary_content.trim().is_empty() {
-            return Err(Error::Llm("LLM returned empty summary - cannot index without proper summarization".to_string()));
+            return Err(Error::Llm(
+                "LLM returned empty summary - cannot index without proper summarization"
+                    .to_string(),
+            ));
         }
 
         // Include hash and file stats in metadata
@@ -696,14 +723,18 @@ impl IndexerService {
         };
 
         // Add memory to database and vector store
-        let memory = self.memory_service
+        let memory = self
+            .memory_service
             .add(&project.id, &project.slug, create, false)
             .await?;
 
         // Auto-link to related memories for holographic context
         if let Some(ref linker) = self.linker {
             info!(memory_id = %memory.id, "Starting auto-link for memory");
-            match linker.auto_link(&project.id, &project.slug, &memory.id, 0.3).await {
+            match linker
+                .auto_link(&project.id, &project.slug, &memory.id, 0.3)
+                .await
+            {
                 Ok(result) => {
                     info!(
                         memory_id = %memory.id,
@@ -762,9 +793,10 @@ impl IndexerService {
         content: &str,
         language: &str,
     ) -> Result<usize> {
-        let db = self.db.as_ref().ok_or_else(|| {
-            Error::Internal("Database not configured for chunking".to_string())
-        })?;
+        let db = self
+            .db
+            .as_ref()
+            .ok_or_else(|| Error::Internal("Database not configured for chunking".to_string()))?;
         let embedding = self.embedding.as_ref().ok_or_else(|| {
             Error::Internal("Embedding service not configured for chunking".to_string())
         })?;

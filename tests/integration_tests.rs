@@ -293,17 +293,13 @@ async fn test_embedding_hash_fallback() -> Result<()> {
     assert_eq!(service.dimension(), 384);
 
     // Generate embeddings
-    let embeddings = service
-        .embed(vec!["test text".to_string()])
-        .await?;
+    let embeddings = service.embed(vec!["test text".to_string()]).await?;
 
     assert_eq!(embeddings.len(), 1);
     assert_eq!(embeddings[0].len(), 384);
 
     // Embeddings should be deterministic
-    let embeddings2 = service
-        .embed(vec!["test text".to_string()])
-        .await?;
+    let embeddings2 = service.embed(vec!["test text".to_string()]).await?;
 
     assert_eq!(embeddings[0], embeddings2[0]);
 
@@ -322,9 +318,7 @@ async fn test_embedding_normalization() -> Result<()> {
 
     let service = EmbeddingService::new(&config)?;
 
-    let embeddings = service
-        .embed(vec!["some random text".to_string()])
-        .await?;
+    let embeddings = service.embed(vec!["some random text".to_string()]).await?;
 
     // Check that embedding is normalized (unit vector)
     let norm: f32 = embeddings[0].iter().map(|x| x * x).sum::<f32>().sqrt();

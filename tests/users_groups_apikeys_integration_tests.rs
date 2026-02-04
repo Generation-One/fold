@@ -101,12 +101,7 @@ async fn setup_test_db() -> SqlitePool {
 }
 
 /// Insert a test user into the database
-async fn insert_user(
-    pool: &SqlitePool,
-    id: &str,
-    email: &str,
-    role: &str,
-) {
+async fn insert_user(pool: &SqlitePool, id: &str, email: &str, role: &str) {
     sqlx::query(
         r#"
         INSERT INTO users (id, provider, subject, email, display_name, role, created_at, updated_at)
@@ -273,7 +268,7 @@ async fn test_admin_can_add_member_to_group() {
     // Insert test group
     sqlx::query(
         "INSERT INTO groups (id, name, description, is_system, created_at, updated_at)
-         VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))"
+         VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))",
     )
     .bind(group_id)
     .bind("Engineering")
@@ -302,7 +297,7 @@ async fn test_cannot_delete_system_group() {
     // Insert system admin group
     sqlx::query(
         "INSERT INTO groups (id, name, description, is_system, created_at, updated_at)
-         VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))"
+         VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))",
     )
     .bind(system_group_id)
     .bind("Admins")
@@ -313,11 +308,12 @@ async fn test_cannot_delete_system_group() {
     .expect("Failed to insert system group");
 
     // Verify system group exists and is protected
-    let group = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM groups WHERE id = ? AND is_system = 1")
-        .bind(system_group_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let group =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM groups WHERE id = ? AND is_system = 1")
+            .bind(system_group_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
     assert_eq!(group, 1);
 }
@@ -353,7 +349,7 @@ async fn test_user_cannot_remove_group_members() {
     // Insert group and add members
     sqlx::query(
         "INSERT INTO groups (id, name, description, is_system, created_at, updated_at)
-         VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))"
+         VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))",
     )
     .bind(group_id)
     .bind("Test Group")
@@ -364,7 +360,7 @@ async fn test_user_cannot_remove_group_members() {
     .expect("Failed to insert group");
 
     sqlx::query(
-        "INSERT INTO group_members (group_id, user_id, created_at) VALUES (?, ?, datetime('now'))"
+        "INSERT INTO group_members (group_id, user_id, created_at) VALUES (?, ?, datetime('now'))",
     )
     .bind(group_id)
     .bind(other_user_id)
@@ -374,7 +370,7 @@ async fn test_user_cannot_remove_group_members() {
 
     // Verify member is in group
     let member_count = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM group_members WHERE group_id = ? AND user_id = ?"
+        "SELECT COUNT(*) FROM group_members WHERE group_id = ? AND user_id = ?",
     )
     .bind(group_id)
     .bind(other_user_id)
@@ -485,7 +481,7 @@ async fn test_user_can_revoke_own_api_key() {
 
     // Verify token exists
     let token_exists = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM api_tokens WHERE id = ? AND revoked_at IS NULL"
+        "SELECT COUNT(*) FROM api_tokens WHERE id = ? AND revoked_at IS NULL",
     )
     .bind(token_id)
     .fetch_one(&pool)
@@ -522,13 +518,12 @@ async fn test_user_cannot_revoke_other_user_api_key() {
 
     // User 1 cannot revoke User 2's token
     // The API would return 403 Forbidden
-    let token_owner = sqlx::query_scalar::<_, String>(
-        "SELECT user_id FROM api_tokens WHERE id = ?"
-    )
-    .bind(token_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let token_owner =
+        sqlx::query_scalar::<_, String>("SELECT user_id FROM api_tokens WHERE id = ?")
+            .bind(token_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
     assert_eq!(token_owner, user_id_2);
 }
@@ -559,13 +554,11 @@ async fn test_admin_can_revoke_any_api_key() {
     .expect("Failed to insert token");
 
     // Admin can revoke any API key
-    let token_exists = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM api_tokens WHERE id = ?"
-    )
-    .bind(token_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let token_exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM api_tokens WHERE id = ?")
+        .bind(token_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
 
     assert_eq!(token_exists, 1);
 }
@@ -623,7 +616,7 @@ async fn test_revoked_token_returns_401() {
 
     // Verify token is marked as revoked
     let revoked_count = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM api_tokens WHERE id = ? AND revoked_at IS NOT NULL"
+        "SELECT COUNT(*) FROM api_tokens WHERE id = ? AND revoked_at IS NOT NULL",
     )
     .bind(token_id)
     .fetch_one(&pool)

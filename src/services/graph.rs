@@ -171,7 +171,13 @@ impl GraphService {
                     id: memory.id.clone(),
                     memory_type: memory.memory_type.clone(),
                     title: memory.title.clone(),
-                    content_preview: memory.content.as_deref().unwrap_or("").chars().take(200).collect(),
+                    content_preview: memory
+                        .content
+                        .as_deref()
+                        .unwrap_or("")
+                        .chars()
+                        .take(200)
+                        .collect(),
                     file_path: memory.file_path.clone(),
                     depth,
                 });
@@ -245,7 +251,13 @@ impl GraphService {
                     id: memory.id.clone(),
                     memory_type: memory.memory_type.clone(),
                     title: memory.title.clone(),
-                    content_preview: memory.content.as_deref().unwrap_or("").chars().take(200).collect(),
+                    content_preview: memory
+                        .content
+                        .as_deref()
+                        .unwrap_or("")
+                        .chars()
+                        .take(200)
+                        .collect(),
                     link_type: link.link_type.clone(),
                     confidence: link.confidence,
                 };
@@ -346,7 +358,11 @@ impl GraphService {
                 for link in links {
                     if !visited.contains(&link.target_id) {
                         visited.insert(link.target_id.clone());
-                        queue.push_back((link.target_id.clone(), depth + 1, link.link_type.clone()));
+                        queue.push_back((
+                            link.target_id.clone(),
+                            depth + 1,
+                            link.link_type.clone(),
+                        ));
                     }
                 }
             }
@@ -450,19 +466,17 @@ impl GraphService {
 
     /// Get project graph statistics.
     pub async fn get_stats(&self, project_id: &str) -> Result<GraphStats> {
-        let total_nodes: i64 = sqlx::query_scalar(
-            r#"SELECT COUNT(*) FROM memories WHERE project_id = ?"#,
-        )
-        .bind(project_id)
-        .fetch_one(&self.db)
-        .await?;
+        let total_nodes: i64 =
+            sqlx::query_scalar(r#"SELECT COUNT(*) FROM memories WHERE project_id = ?"#)
+                .bind(project_id)
+                .fetch_one(&self.db)
+                .await?;
 
-        let total_edges: i64 = sqlx::query_scalar(
-            r#"SELECT COUNT(*) FROM memory_links WHERE project_id = ?"#,
-        )
-        .bind(project_id)
-        .fetch_one(&self.db)
-        .await?;
+        let total_edges: i64 =
+            sqlx::query_scalar(r#"SELECT COUNT(*) FROM memory_links WHERE project_id = ?"#)
+                .bind(project_id)
+                .fetch_one(&self.db)
+                .await?;
 
         let edge_type_counts: Vec<(String, i64)> = sqlx::query_as(
             r#"
@@ -506,12 +520,10 @@ impl GraphService {
 
     /// Get a memory by ID.
     async fn get_memory(&self, id: &str) -> Result<Option<Memory>> {
-        let memory = sqlx::query_as::<_, Memory>(
-            r#"SELECT * FROM memories WHERE id = ?"#,
-        )
-        .bind(id)
-        .fetch_optional(&self.db)
-        .await?;
+        let memory = sqlx::query_as::<_, Memory>(r#"SELECT * FROM memories WHERE id = ?"#)
+            .bind(id)
+            .fetch_optional(&self.db)
+            .await?;
 
         Ok(memory)
     }
@@ -541,13 +553,17 @@ impl GraphService {
                 id: m.id,
                 memory_type: m.memory_type,
                 title: m.title,
-                content_preview: m.content.as_ref().map(|c| {
-                    if c.len() > 100 {
-                        format!("{}...", &c[..100])
-                    } else {
-                        c.clone()
-                    }
-                }).unwrap_or_default(),
+                content_preview: m
+                    .content
+                    .as_ref()
+                    .map(|c| {
+                        if c.len() > 100 {
+                            format!("{}...", &c[..100])
+                        } else {
+                            c.clone()
+                        }
+                    })
+                    .unwrap_or_default(),
                 file_path: m.file_path,
                 depth: 0,
             })

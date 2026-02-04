@@ -89,9 +89,20 @@ impl From<GroupMember> for GroupMemberResponse {
 pub fn routes(_state: AppState) -> Router<AppState> {
     Router::new()
         .route("/", axum::routing::get(list_groups).post(create_group))
-        .route("/:id", axum::routing::get(get_group).patch(update_group).delete(delete_group))
-        .route("/:id/members", axum::routing::get(list_group_members).post(add_group_member))
-        .route("/:id/members/:user_id", axum::routing::delete(remove_group_member))
+        .route(
+            "/:id",
+            axum::routing::get(get_group)
+                .patch(update_group)
+                .delete(delete_group),
+        )
+        .route(
+            "/:id/members",
+            axum::routing::get(list_group_members).post(add_group_member),
+        )
+        .route(
+            "/:id/members/:user_id",
+            axum::routing::delete(remove_group_member),
+        )
 }
 
 // ============================================================================
@@ -130,12 +141,17 @@ async fn create_group(
     // Validate name
     let name = request.name.trim();
     if name.is_empty() || name.len() > 255 {
-        return Err(Error::InvalidInput("Group name must be 1-255 characters".to_string()));
+        return Err(Error::InvalidInput(
+            "Group name must be 1-255 characters".to_string(),
+        ));
     }
 
     // Check if name already exists
     if let Ok(Some(_)) = db::get_group_by_name(&state.db, name).await {
-        return Err(Error::AlreadyExists(format!("Group '{}' already exists", name)));
+        return Err(Error::AlreadyExists(format!(
+            "Group '{}' already exists",
+            name
+        )));
     }
 
     let group = db::create_group(
@@ -187,7 +203,9 @@ async fn list_group_members(
     Path(id): Path<String>,
 ) -> Result<Json<Vec<GroupMemberResponse>>> {
     let members = db::list_group_members(&state.db, &id).await?;
-    Ok(Json(members.into_iter().map(GroupMemberResponse::from).collect()))
+    Ok(Json(
+        members.into_iter().map(GroupMemberResponse::from).collect(),
+    ))
 }
 
 /// Add a user to a group (admin only).
@@ -205,7 +223,8 @@ async fn add_group_member(
     // Verify group exists
     let _ = db::get_group(&state.db, &id).await?;
 
-    let member = db::add_group_member(&state.db, &id, &request.user_id, Some(&auth.user_id)).await?;
+    let member =
+        db::add_group_member(&state.db, &id, &request.user_id, Some(&auth.user_id)).await?;
     Ok((StatusCode::CREATED, Json(GroupMemberResponse::from(member))))
 }
 

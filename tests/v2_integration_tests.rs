@@ -212,7 +212,9 @@ async fn test_search_uses_project_decay_config() {
 
     assert!(search_response["results"][0].get("score").is_some());
     assert!(search_response["results"][0].get("strength").is_some());
-    assert!(search_response["results"][0].get("combined_score").is_some());
+    assert!(search_response["results"][0]
+        .get("combined_score")
+        .is_some());
 }
 
 #[tokio::test]
@@ -467,10 +469,10 @@ async fn test_user_cannot_list_other_user_tokens() {
 async fn test_projects_endpoint_structure() {
     // All project operations use /projects/:project_id pattern
     let endpoints = vec![
-        "/projects",           // List
-        "/projects/{id}",      // Get/Update/Delete
-        "/projects/{id}/config/algorithm",  // Algorithm config
-        "/projects/{id}/members",           // Project members
+        "/projects",                       // List
+        "/projects/{id}",                  // Get/Update/Delete
+        "/projects/{id}/config/algorithm", // Algorithm config
+        "/projects/{id}/members",          // Project members
     ];
 
     for endpoint in endpoints {
@@ -482,10 +484,10 @@ async fn test_projects_endpoint_structure() {
 async fn test_memories_endpoint_structure() {
     // All memory operations use /projects/:project_id/memories pattern
     let endpoints = vec![
-        "/projects/{id}/memories",              // List/Create
-        "/projects/{id}/memories/{mem_id}",     // Get/Update/Delete
-        "/projects/{id}/memories/search",       // Search
-        "/projects/{id}/memories/{mem_id}/context",  // Context
+        "/projects/{id}/memories",                  // List/Create
+        "/projects/{id}/memories/{mem_id}",         // Get/Update/Delete
+        "/projects/{id}/memories/search",           // Search
+        "/projects/{id}/memories/{mem_id}/context", // Context
     ];
 
     for endpoint in endpoints {

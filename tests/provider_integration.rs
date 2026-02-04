@@ -99,10 +99,7 @@ mod gemini {
 
         let values = embedding.as_array().unwrap();
         assert!(!values.is_empty(), "Embedding should not be empty");
-        println!(
-            "✓ Gemini embedding successful, dimension: {}",
-            values.len()
-        );
+        println!("✓ Gemini embedding successful, dimension: {}", values.len());
     }
 
     /// Test Gemini LLM completion API directly
@@ -191,10 +188,7 @@ mod openai {
 
         let values = embedding.as_array().unwrap();
         assert!(!values.is_empty(), "Embedding should not be empty");
-        println!(
-            "✓ OpenAI embedding successful, dimension: {}",
-            values.len()
-        );
+        println!("✓ OpenAI embedding successful, dimension: {}", values.len());
     }
 
     /// Test OpenAI LLM completion API directly

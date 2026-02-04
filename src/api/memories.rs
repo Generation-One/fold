@@ -26,7 +26,7 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::db;
-use crate::middleware::{AuthContext, require_project_read, require_project_write};
+use crate::middleware::{require_project_read, require_project_write, AuthContext};
 use crate::models::MemorySource;
 use crate::{AppState, Error, Result};
 
@@ -36,10 +36,16 @@ pub fn routes(state: AppState) -> Router<AppState> {
         // Read operations (list, search, context)
         .route("/search", post(search_memories))
         .route("/context/:memory_id", get(get_context))
-        .layer(middleware::from_fn_with_state(state.clone(), require_project_read))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_project_read,
+        ))
         // Write operations (create, update, delete)
         .route("/", get(list_memories).post(create_memory))
-        .route("/:memory_id", get(get_memory).put(update_memory).delete(delete_memory))
+        .route(
+            "/:memory_id",
+            get(get_memory).put(update_memory).delete(delete_memory),
+        )
         .layer(middleware::from_fn_with_state(state, require_project_write))
 }
 
@@ -48,8 +54,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
 /// Routes:
 /// - GET /memories - List memories across all accessible projects
 pub fn global_routes() -> Router<AppState> {
-    Router::new()
-        .route("/", get(list_all_memories))
+    Router::new().route("/", get(list_all_memories))
 }
 
 // ============================================================================
@@ -75,9 +80,11 @@ pub struct ListMemoriesQuery {
     pub limit: u32,
     /// Sort field
     #[serde(default)]
+    #[allow(dead_code)]
     pub sort_by: MemorySortField,
     /// Sort direction
     #[serde(default)]
+    #[allow(dead_code)]
     pub sort_dir: SortDirection,
 }
 
@@ -118,6 +125,7 @@ pub struct CreateMemoryRequest {
     pub file_path: Option<String>,
     /// Additional metadata
     #[serde(default)]
+    #[allow(dead_code)]
     pub metadata: serde_json::Value,
 }
 
@@ -129,6 +137,7 @@ pub struct UpdateMemoryRequest {
     pub author: Option<String>,
     pub tags: Option<Vec<String>>,
     pub file_path: Option<String>,
+    #[allow(dead_code)]
     pub metadata: Option<serde_json::Value>,
 }
 
@@ -295,7 +304,9 @@ fn memory_to_response(memory: db::Memory) -> MemoryResponse {
     let project_id = Uuid::parse_str(&memory.project_id).unwrap_or_else(|_| Uuid::new_v4());
 
     // Parse source - default to agent if not specified
-    let source = memory.source.as_deref()
+    let source = memory
+        .source
+        .as_deref()
         .and_then(MemorySource::from_str)
         .unwrap_or(MemorySource::Agent);
     let tags = memory.tags_vec();
@@ -323,7 +334,9 @@ fn memory_to_response_from_model(memory: crate::models::Memory) -> MemoryRespons
     let project_id = Uuid::parse_str(&memory.project_id).unwrap_or_else(|_| Uuid::new_v4());
 
     // Parse source
-    let source = memory.source.as_deref()
+    let source = memory
+        .source
+        .as_deref()
         .and_then(MemorySource::from_str)
         .unwrap_or(MemorySource::Agent);
 
@@ -371,7 +384,10 @@ async fn list_memories(
         project_id: Some(project.id.clone()),
         source: query.source,
         author: query.author.clone(),
-        tag: query.tags.as_ref().and_then(|t| t.split(',').next().map(|s| s.trim().to_string())),
+        tag: query
+            .tags
+            .as_ref()
+            .and_then(|t| t.split(',').next().map(|s| s.trim().to_string())),
         search_query: query.q.clone(),
         limit: Some(limit),
         offset: Some(offset),
@@ -408,10 +424,8 @@ async fn list_memories(
     let total = db::count_project_memories(&state.db, &project.id).await? as u32;
 
     // Convert to response
-    let memory_responses: Vec<MemoryResponse> = memories
-        .into_iter()
-        .map(memory_to_response)
-        .collect();
+    let memory_responses: Vec<MemoryResponse> =
+        memories.into_iter().map(memory_to_response).collect();
 
     Ok(Json(ListMemoriesResponse {
         memories: memory_responses,
@@ -469,7 +483,11 @@ async fn create_memory(
         git_commit_sha: None,
         author: request.author,
         keywords: None,
-        tags: if request.tags.is_empty() { None } else { Some(request.tags) },
+        tags: if request.tags.is_empty() {
+            None
+        } else {
+            Some(request.tags)
+        },
         source: Some(source),
     };
 
@@ -488,12 +506,11 @@ async fn create_memory(
     }
 
     // Store embedding in Qdrant (non-blocking)
-    if let Err(e) = state.qdrant.upsert(
-        &project.slug,
-        &memory.id,
-        _embedding,
-        payload,
-    ).await {
+    if let Err(e) = state
+        .qdrant
+        .upsert(&project.slug, &memory.id, _embedding, payload)
+        .await
+    {
         warn!(error = %e, memory_id = %memory.id, "Failed to store embedding in Qdrant");
     }
 
@@ -568,12 +585,16 @@ async fn update_memory(
         }
 
         // Update embedding in Qdrant (non-blocking)
-        if let Err(e) = state.qdrant.upsert(
-            &project.slug,
-            &path.memory_id.to_string(),
-            embedding,
-            payload,
-        ).await {
+        if let Err(e) = state
+            .qdrant
+            .upsert(
+                &project.slug,
+                &path.memory_id.to_string(),
+                embedding,
+                payload,
+            )
+            .await
+        {
             warn!(error = %e, memory_id = %path.memory_id, "Failed to update embedding in Qdrant");
         }
     }
@@ -611,10 +632,11 @@ async fn delete_memory(
     db::delete_memory(&state.db, &path.memory_id.to_string()).await?;
 
     // Delete embedding from Qdrant (non-blocking cleanup)
-    if let Err(e) = state.qdrant.delete(
-        &project.slug,
-        &path.memory_id.to_string(),
-    ).await {
+    if let Err(e) = state
+        .qdrant
+        .delete(&project.slug, &path.memory_id.to_string())
+        .await
+    {
         warn!(error = %e, memory_id = %path.memory_id, "Failed to delete embedding from Qdrant");
     }
 
@@ -647,7 +669,12 @@ async fn search_memories(
     // Use MemoryService for search (pure similarity, no decay)
     let search_results = state
         .memory
-        .search(&project.id, &project.slug, &request.query, request.limit as usize)
+        .search(
+            &project.id,
+            &project.slug,
+            &request.query,
+            request.limit as usize,
+        )
         .await?;
 
     // Filter by source if specified
@@ -655,7 +682,9 @@ async fn search_memories(
         search_results
             .into_iter()
             .filter(|r| {
-                r.memory.source.as_deref()
+                r.memory
+                    .source
+                    .as_deref()
                     .and_then(MemorySource::from_str)
                     .map(|s| s == source)
                     .unwrap_or(false)
@@ -711,7 +740,9 @@ async fn get_context(
             related.push(RelatedMemory {
                 id: linked_memory.id.clone(),
                 title: linked_memory.title.clone(),
-                content_preview: linked_memory.content.as_deref()
+                content_preview: linked_memory
+                    .content
+                    .as_deref()
                     .unwrap_or("")
                     .chars()
                     .take(200)
@@ -741,7 +772,10 @@ async fn get_context(
         .map(|r| SimilarMemory {
             id: r.memory.id,
             title: r.memory.title,
-            content_preview: r.memory.content.as_deref()
+            content_preview: r
+                .memory
+                .content
+                .as_deref()
                 .unwrap_or("")
                 .chars()
                 .take(200)
@@ -841,7 +875,10 @@ async fn list_all_memories(
         project_ids: Some(project_ids.clone()),
         source: query.source,
         author: query.author.clone(),
-        tag: query.tags.as_ref().and_then(|t| t.split(',').next().map(|s| s.trim().to_string())),
+        tag: query
+            .tags
+            .as_ref()
+            .and_then(|t| t.split(',').next().map(|s| s.trim().to_string())),
         search_query: query.q.clone(),
         limit: Some(limit),
         offset: Some(offset),

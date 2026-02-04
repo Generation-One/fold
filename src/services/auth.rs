@@ -10,14 +10,13 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use oauth2::{
-    basic::BasicClient,
-    reqwest::async_http_client,
-    AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge,
-    PkceCodeVerifier, RedirectUrl, Scope, TokenResponse, TokenUrl,
+    basic::BasicClient, reqwest::async_http_client, AuthUrl, AuthorizationCode, ClientId,
+    ClientSecret, CsrfToken, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope,
+    TokenResponse, TokenUrl,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use tracing::info;
 
 use crate::config::{AuthConfig, AuthProvider, AuthProviderType};
@@ -156,11 +155,7 @@ impl AuthService {
     }
 
     /// Exchange authorization code for tokens and create session.
-    pub async fn exchange_code(
-        &self,
-        code: &str,
-        state: &str,
-    ) -> Result<TokenResult> {
+    pub async fn exchange_code(&self, code: &str, state: &str) -> Result<TokenResult> {
         // Retrieve and validate state
         let oidc_state = self.get_oidc_state(state).await?;
 
@@ -182,12 +177,11 @@ impl AuthService {
         let client = self.build_oauth_client(provider, redirect_uri)?;
 
         // Exchange code for tokens
-        let mut token_request = client
-            .exchange_code(AuthorizationCode::new(code.to_string()));
+        let mut token_request = client.exchange_code(AuthorizationCode::new(code.to_string()));
 
         if let Some(ref verifier) = oidc_state.pkce_verifier {
-            token_request = token_request
-                .set_pkce_verifier(PkceCodeVerifier::new(verifier.clone()));
+            token_request =
+                token_request.set_pkce_verifier(PkceCodeVerifier::new(verifier.clone()));
         }
 
         let token_response = token_request
@@ -198,14 +192,10 @@ impl AuthService {
         let access_token = token_response.access_token().secret();
 
         // Get user info
-        let user_info = self
-            .get_user_info(provider, access_token)
-            .await?;
+        let user_info = self.get_user_info(provider, access_token).await?;
 
         // Create or update user
-        let user = self
-            .upsert_user(&oidc_state.provider, &user_info)
-            .await?;
+        let user = self.upsert_user(&oidc_state.provider, &user_info).await?;
 
         // Create session
         let session_token = nanoid::nanoid!(64);
@@ -273,23 +263,18 @@ impl AuthService {
     }
 
     /// Get user info from provider.
-    async fn get_user_info(
-        &self,
-        provider: &AuthProvider,
-        access_token: &str,
-    ) -> Result<UserInfo> {
+    async fn get_user_info(&self, provider: &AuthProvider, access_token: &str) -> Result<UserInfo> {
         let userinfo_url = match provider.provider_type {
             AuthProviderType::GitHub => "https://api.github.com/user",
             AuthProviderType::GitLab => "https://gitlab.com/api/v4/user",
             AuthProviderType::Oidc => {
-                let issuer = provider.issuer.as_ref().ok_or_else(|| {
-                    Error::Validation("OIDC provider missing issuer".to_string())
-                })?;
+                let issuer = provider
+                    .issuer
+                    .as_ref()
+                    .ok_or_else(|| Error::Validation("OIDC provider missing issuer".to_string()))?;
                 // Would need to fetch from .well-known/openid-configuration
                 // For now, construct common pattern
-                return self
-                    .get_oidc_user_info(issuer, access_token)
-                    .await;
+                return self.get_oidc_user_info(issuer, access_token).await;
             }
         };
 
@@ -318,9 +303,10 @@ impl AuthService {
                     avatar_url: Option<String>,
                 }
 
-                let gh_user: GitHubUser = response.json().await.map_err(|e| {
-                    Error::Internal(format!("Failed to parse user info: {}", e))
-                })?;
+                let gh_user: GitHubUser = response
+                    .json()
+                    .await
+                    .map_err(|e| Error::Internal(format!("Failed to parse user info: {}", e)))?;
 
                 Ok(UserInfo {
                     sub: gh_user.id.to_string(),
@@ -340,9 +326,10 @@ impl AuthService {
                     avatar_url: Option<String>,
                 }
 
-                let gl_user: GitLabUser = response.json().await.map_err(|e| {
-                    Error::Internal(format!("Failed to parse user info: {}", e))
-                })?;
+                let gl_user: GitLabUser = response
+                    .json()
+                    .await
+                    .map_err(|e| Error::Internal(format!("Failed to parse user info: {}", e)))?;
 
                 Ok(UserInfo {
                     sub: gl_user.id.to_string(),
@@ -352,18 +339,15 @@ impl AuthService {
                     picture: gl_user.avatar_url,
                 })
             }
-            _ => response.json().await.map_err(|e| {
-                Error::Internal(format!("Failed to parse user info: {}", e))
-            }),
+            _ => response
+                .json()
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to parse user info: {}", e))),
         }
     }
 
     /// Get user info from OIDC provider.
-    async fn get_oidc_user_info(
-        &self,
-        issuer: &str,
-        access_token: &str,
-    ) -> Result<UserInfo> {
+    async fn get_oidc_user_info(&self, issuer: &str, access_token: &str) -> Result<UserInfo> {
         let userinfo_url = format!("{}/userinfo", issuer.trim_end_matches('/'));
 
         let response = self
@@ -378,17 +362,14 @@ impl AuthService {
             return Err(Error::Internal("Failed to get user info".to_string()));
         }
 
-        response.json().await.map_err(|e| {
-            Error::Internal(format!("Failed to parse user info: {}", e))
-        })
+        response
+            .json()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to parse user info: {}", e)))
     }
 
     /// Create or update user from provider info.
-    async fn upsert_user(
-        &self,
-        provider: &str,
-        info: &UserInfo,
-    ) -> Result<User> {
+    async fn upsert_user(&self, provider: &str, info: &UserInfo) -> Result<User> {
         // Check if user exists
         let existing: Option<User> = sqlx::query_as(
             r#"
@@ -429,7 +410,11 @@ impl AuthService {
         let username = info
             .preferred_username
             .clone()
-            .or_else(|| info.email.as_ref().map(|e| e.split('@').next().unwrap_or("user").to_string()))
+            .or_else(|| {
+                info.email
+                    .as_ref()
+                    .map(|e| e.split('@').next().unwrap_or("user").to_string())
+            })
             .unwrap_or_else(|| format!("user_{}", &info.sub[..8.min(info.sub.len())]));
 
         let now = Utc::now();
@@ -530,20 +515,16 @@ impl AuthService {
         }
 
         // Update last used
-        sqlx::query(
-            r#"UPDATE user_sessions SET last_used = datetime('now') WHERE id = ?"#,
-        )
-        .bind(&session.id)
-        .execute(&self.db)
-        .await?;
+        sqlx::query(r#"UPDATE user_sessions SET last_used = datetime('now') WHERE id = ?"#)
+            .bind(&session.id)
+            .execute(&self.db)
+            .await?;
 
         // Get user
-        let user: User = sqlx::query_as(
-            r#"SELECT * FROM users WHERE id = ?"#,
-        )
-        .bind(&session.user_id)
-        .fetch_one(&self.db)
-        .await?;
+        let user: User = sqlx::query_as(r#"SELECT * FROM users WHERE id = ?"#)
+            .bind(&session.user_id)
+            .fetch_one(&self.db)
+            .await?;
 
         Ok(user)
     }
@@ -567,20 +548,16 @@ impl AuthService {
         }
 
         // Update last used
-        sqlx::query(
-            r#"UPDATE api_tokens SET last_used = datetime('now') WHERE id = ?"#,
-        )
-        .bind(&api_token.id)
-        .execute(&self.db)
-        .await?;
+        sqlx::query(r#"UPDATE api_tokens SET last_used = datetime('now') WHERE id = ?"#)
+            .bind(&api_token.id)
+            .execute(&self.db)
+            .await?;
 
         // Get user
-        let user: User = sqlx::query_as(
-            r#"SELECT * FROM users WHERE id = ?"#,
-        )
-        .bind(&api_token.user_id)
-        .fetch_one(&self.db)
-        .await?;
+        let user: User = sqlx::query_as(r#"SELECT * FROM users WHERE id = ?"#)
+            .bind(&api_token.user_id)
+            .fetch_one(&self.db)
+            .await?;
 
         Ok(user)
     }
@@ -633,12 +610,10 @@ impl AuthService {
     pub async fn logout(&self, token: &str) -> Result<()> {
         let token_hash = self.hash_token(token);
 
-        sqlx::query(
-            r#"DELETE FROM user_sessions WHERE token_hash = ?"#,
-        )
-        .bind(&token_hash)
-        .execute(&self.db)
-        .await?;
+        sqlx::query(r#"DELETE FROM user_sessions WHERE token_hash = ?"#)
+            .bind(&token_hash)
+            .execute(&self.db)
+            .await?;
 
         Ok(())
     }
@@ -676,13 +651,11 @@ impl AuthService {
 
     /// Get OIDC state by state value.
     async fn get_oidc_state(&self, state: &str) -> Result<OidcState> {
-        sqlx::query_as::<_, OidcState>(
-            r#"SELECT * FROM oidc_states WHERE state = ?"#,
-        )
-        .bind(state)
-        .fetch_optional(&self.db)
-        .await?
-        .ok_or(Error::InvalidToken)
+        sqlx::query_as::<_, OidcState>(r#"SELECT * FROM oidc_states WHERE state = ?"#)
+            .bind(state)
+            .fetch_optional(&self.db)
+            .await?
+            .ok_or(Error::InvalidToken)
     }
 
     /// Delete OIDC state.
@@ -705,19 +678,17 @@ impl AuthService {
 
     /// Clean up expired states and sessions.
     pub async fn cleanup_expired(&self) -> Result<usize> {
-        let states_deleted = sqlx::query(
-            r#"DELETE FROM oidc_states WHERE expires_at < datetime('now')"#,
-        )
-        .execute(&self.db)
-        .await?
-        .rows_affected();
+        let states_deleted =
+            sqlx::query(r#"DELETE FROM oidc_states WHERE expires_at < datetime('now')"#)
+                .execute(&self.db)
+                .await?
+                .rows_affected();
 
-        let sessions_deleted = sqlx::query(
-            r#"DELETE FROM user_sessions WHERE expires_at < datetime('now')"#,
-        )
-        .execute(&self.db)
-        .await?
-        .rows_affected();
+        let sessions_deleted =
+            sqlx::query(r#"DELETE FROM user_sessions WHERE expires_at < datetime('now')"#)
+                .execute(&self.db)
+                .await?
+                .rows_affected();
 
         Ok((states_deleted + sessions_deleted) as usize)
     }

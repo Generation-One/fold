@@ -32,7 +32,12 @@ use crate::{config, db, AppState, Error, Result};
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/", get(list_repositories).post(connect_repository))
-        .route("/:repo_id", get(get_repository).delete(disconnect_repository).patch(update_repository))
+        .route(
+            "/:repo_id",
+            get(get_repository)
+                .delete(disconnect_repository)
+                .patch(update_repository),
+        )
         .route("/:repo_id/reindex", post(reindex_repository))
         .route("/:repo_id/sync", post(sync_repository))
         .route("/:repo_id/sync-fold", post(sync_fold))
@@ -42,8 +47,7 @@ pub fn routes() -> Router<AppState> {
 
 /// Build file source provider routes (under /file-sources).
 pub fn file_source_routes() -> Router<AppState> {
-    Router::new()
-        .route("/providers", get(list_providers))
+    Router::new().route("/providers", get(list_providers))
 }
 
 // ============================================================================
@@ -81,6 +85,7 @@ impl RepositoryProvider {
     }
 
     /// Parse from a source type string.
+    #[allow(dead_code)]
     pub fn from_source_type(s: &str) -> Option<Self> {
         match s {
             "github" => Some(Self::GitHub),
@@ -151,11 +156,15 @@ impl ConnectRepositoryRequest {
         }
 
         // Otherwise, require explicit fields
-        let provider = self.provider.ok_or("provider is required when url is not provided")?;
+        let provider = self
+            .provider
+            .ok_or("provider is required when url is not provided")?;
 
         // For Local provider, derive owner/name from local_path if not provided
         if matches!(provider, RepositoryProvider::Local) {
-            let local_path = self.local_path.as_ref()
+            let local_path = self
+                .local_path
+                .as_ref()
                 .ok_or("local_path is required for local provider")?;
 
             // Derive name from the last path component if not provided
@@ -170,11 +179,21 @@ impl ConnectRepositoryRequest {
             // Use "local" as owner if not provided
             let owner = self.owner.clone().unwrap_or_else(|| "local".to_string());
 
-            return Ok(ParsedRepository { provider, owner, name });
+            return Ok(ParsedRepository {
+                provider,
+                owner,
+                name,
+            });
         }
 
-        let owner = self.owner.clone().ok_or("owner is required when url is not provided")?;
-        let name = self.name.clone().ok_or("name is required when url is not provided")?;
+        let owner = self
+            .owner
+            .clone()
+            .ok_or("owner is required when url is not provided")?;
+        let name = self
+            .name
+            .clone()
+            .ok_or("name is required when url is not provided")?;
 
         if owner.is_empty() {
             return Err("owner cannot be empty".into());
@@ -183,7 +202,11 @@ impl ConnectRepositoryRequest {
             return Err("name cannot be empty".into());
         }
 
-        Ok(ParsedRepository { provider, owner, name })
+        Ok(ParsedRepository {
+            provider,
+            owner,
+            name,
+        })
     }
 }
 
@@ -204,16 +227,12 @@ fn parse_repository_url(url: &str) -> std::result::Result<ParsedRepository, Stri
     }
 
     // Handle HTTPS format
-    let url = url
-        .trim_end_matches('/')
-        .trim_end_matches(".git");
+    let url = url.trim_end_matches('/').trim_end_matches(".git");
 
     // Parse as URL
-    let parsed = url::Url::parse(url)
-        .map_err(|e| format!("Invalid URL: {}", e))?;
+    let parsed = url::Url::parse(url).map_err(|e| format!("Invalid URL: {}", e))?;
 
-    let host = parsed.host_str()
-        .ok_or("URL must have a host")?;
+    let host = parsed.host_str().ok_or("URL must have a host")?;
 
     // Determine provider from host
     let provider = if host.contains("github") {
@@ -221,7 +240,10 @@ fn parse_repository_url(url: &str) -> std::result::Result<ParsedRepository, Stri
     } else if host.contains("gitlab") {
         RepositoryProvider::GitLab
     } else {
-        return Err(format!("Unsupported git host: {}. Supported: github.com, gitlab.com", host));
+        return Err(format!(
+            "Unsupported git host: {}. Supported: github.com, gitlab.com",
+            host
+        ));
     };
 
     // Parse path segments
@@ -235,18 +257,26 @@ fn parse_repository_url(url: &str) -> std::result::Result<ParsedRepository, Stri
     // For GitHub: owner/repo
     // For GitLab: can be group/subgroup/repo, we take first as owner, last as repo
     let owner = segments[0].to_string();
-    let name = segments.last().unwrap().trim_end_matches(".git").to_string();
+    let name = segments
+        .last()
+        .unwrap()
+        .trim_end_matches(".git")
+        .to_string();
 
-    Ok(ParsedRepository { provider, owner, name })
+    Ok(ParsedRepository {
+        provider,
+        owner,
+        name,
+    })
 }
 
 /// Parse SSH-style git URL: git@github.com:owner/repo.git
 fn parse_ssh_url(url: &str) -> std::result::Result<ParsedRepository, String> {
     // Format: git@host:path
-    let without_prefix = url.strip_prefix("git@")
-        .ok_or("Invalid SSH URL format")?;
+    let without_prefix = url.strip_prefix("git@").ok_or("Invalid SSH URL format")?;
 
-    let (host, path) = without_prefix.split_once(':')
+    let (host, path) = without_prefix
+        .split_once(':')
         .ok_or("Invalid SSH URL format: missing ':'")?;
 
     let provider = if host.contains("github") {
@@ -254,7 +284,10 @@ fn parse_ssh_url(url: &str) -> std::result::Result<ParsedRepository, String> {
     } else if host.contains("gitlab") {
         RepositoryProvider::GitLab
     } else {
-        return Err(format!("Unsupported git host: {}. Supported: github.com, gitlab.com", host));
+        return Err(format!(
+            "Unsupported git host: {}. Supported: github.com, gitlab.com",
+            host
+        ));
     };
 
     let path = path.trim_end_matches(".git");
@@ -267,7 +300,11 @@ fn parse_ssh_url(url: &str) -> std::result::Result<ParsedRepository, String> {
     let owner = segments[0].to_string();
     let name = segments.last().unwrap().to_string();
 
-    Ok(ParsedRepository { provider, owner, name })
+    Ok(ParsedRepository {
+        provider,
+        owner,
+        name,
+    })
 }
 
 fn default_auto_index() -> bool {
@@ -278,6 +315,7 @@ fn default_auto_index() -> bool {
 #[derive(Debug, Deserialize, Default)]
 pub struct ListCommitsQuery {
     /// Branch to list commits from
+    #[allow(dead_code)]
     pub branch: Option<String>,
     /// Pagination
     #[serde(default)]
@@ -528,8 +566,16 @@ async fn list_repositories(
                 },
                 local_path: r.local_path.clone(),
                 head_sha: r.last_commit_sha.clone(),
-                last_indexed_at: r.last_indexed_at.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))),
-                last_polled_at: r.last_sync.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))),
+                last_indexed_at: r.last_indexed_at.and_then(|s| {
+                    DateTime::parse_from_rfc3339(&s)
+                        .ok()
+                        .map(|d| d.with_timezone(&Utc))
+                }),
+                last_polled_at: r.last_sync.and_then(|s| {
+                    DateTime::parse_from_rfc3339(&s)
+                        .ok()
+                        .map(|d| d.with_timezone(&Utc))
+                }),
                 webhook_id: r.webhook_id,
                 error_message: None, // TODO: Add error tracking to Repository model
                 created_at: DateTime::parse_from_rfc3339(&r.created_at)
@@ -544,7 +590,10 @@ async fn list_repositories(
 
     let total = repositories.len() as u32;
 
-    Ok(Json(ListRepositoriesResponse { repositories, total }))
+    Ok(Json(ListRepositoriesResponse {
+        repositories,
+        total,
+    }))
 }
 
 /// Connect a repository to the project.
@@ -564,8 +613,7 @@ async fn connect_repository(
     Json(request): Json<ConnectRepositoryRequest>,
 ) -> Result<Json<RepositoryResponse>> {
     // Parse repository info from URL or explicit fields
-    let parsed = request.parse()
-        .map_err(|e| Error::Validation(e))?;
+    let parsed = request.parse().map_err(|e| Error::Validation(e))?;
 
     // Get project by ID or slug
     let project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
@@ -639,14 +687,18 @@ async fn connect_repository(
         initial_local_path
     } else {
         // Clone from remote
-        match state.git_local.clone_repo(
-            &project.slug,
-            &parsed.owner,
-            &parsed.name,
-            &branch,
-            &access_token,
-            db_provider.as_str(),
-        ).await {
+        match state
+            .git_local
+            .clone_repo(
+                &project.slug,
+                &parsed.owner,
+                &parsed.name,
+                &branch,
+                &access_token,
+                db_provider.as_str(),
+            )
+            .await
+        {
             Ok(path) => {
                 let path_str = path.to_string_lossy().to_string();
                 info!(
@@ -662,7 +714,8 @@ async fn connect_repository(
                         local_path: Some(path_str.clone()),
                         ..Default::default()
                     },
-                ).await?;
+                )
+                .await?;
                 Some(path_str)
             }
             Err(e) => {
@@ -692,14 +745,18 @@ async fn connect_repository(
         );
 
         // Register webhook with GitHub
-        match state.github.register_webhook(
-            &parsed.owner,
-            &parsed.name,
-            &webhook_url,
-            &webhook_secret,
-            vec!["push".to_string(), "pull_request".to_string()],
-            &access_token,
-        ).await {
+        match state
+            .github
+            .register_webhook(
+                &parsed.owner,
+                &parsed.name,
+                &webhook_url,
+                &webhook_secret,
+                vec!["push".to_string(), "pull_request".to_string()],
+                &access_token,
+            )
+            .await
+        {
             Ok(webhook) => {
                 info!(
                     repo = %repo.full_name(),
@@ -716,7 +773,8 @@ async fn connect_repository(
                         webhook_secret: Some(webhook_secret),
                         ..Default::default()
                     },
-                ).await?;
+                )
+                .await?;
 
                 webhook_id = Some(webhook.id.to_string());
             }
@@ -841,12 +899,11 @@ async fn disconnect_repository(
             "github" => {
                 // Parse webhook ID as i64
                 if let Ok(wh_id) = webhook_id.parse::<i64>() {
-                    match state.github.delete_webhook(
-                        &repo.owner,
-                        &repo.repo,
-                        wh_id,
-                        &repo.access_token,
-                    ).await {
+                    match state
+                        .github
+                        .delete_webhook(&repo.owner, &repo.repo, wh_id, &repo.access_token)
+                        .await
+                    {
                         Ok(_) => {
                             info!(
                                 repo = %repo.full_name(),
@@ -940,7 +997,14 @@ async fn sync_repository(
     let since_sha = repo.last_commit_sha.clone();
     let commits = state
         .github
-        .get_commits(&repo.owner, &repo.repo, Some(&repo.branch), since_sha.as_deref(), 100, &repo.access_token)
+        .get_commits(
+            &repo.owner,
+            &repo.repo,
+            Some(&repo.branch),
+            since_sha.as_deref(),
+            100,
+            &repo.access_token,
+        )
         .await
         .map_err(|e| Error::Internal(format!("Failed to fetch commits: {}", e)))?;
 
@@ -995,7 +1059,10 @@ async fn sync_repository(
         repository_id: path.repo_id,
         new_commits: new_commit_count,
         job_id: Some(Uuid::parse_str(&job.id).unwrap_or_else(|_| Uuid::new_v4())),
-        message: format!("Found {} new commits in {}, queued for indexing", new_commit_count, full_name),
+        message: format!(
+            "Found {} new commits in {}, queued for indexing",
+            new_commit_count, full_name
+        ),
     }))
 }
 
@@ -1016,10 +1083,7 @@ async fn sync_fold(
     let project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
 
     // Use git service to sync from remote
-    let stats = state
-        .git_service
-        .sync_from_remote(&project)
-        .await?;
+    let stats = state.git_service.sync_from_remote(&project).await?;
 
     let project_id = Uuid::parse_str(&project.id).unwrap_or_else(|_| Uuid::new_v4());
 
@@ -1062,7 +1126,11 @@ async fn update_repository(
         access_token: request.access_token,
         branch: request.default_branch,
         notification_type: request.polling_enabled.map(|enabled| {
-            if enabled { "polling".to_string() } else { "webhook".to_string() }
+            if enabled {
+                "polling".to_string()
+            } else {
+                "webhook".to_string()
+            }
         }),
         sync_cursor: request.polling_interval_secs.map(|s| s.to_string()),
         ..Default::default()
@@ -1139,7 +1207,8 @@ async fn list_commits(
     let offset = ((page - 1) * per_page) as i64;
 
     // Fetch commits from database (already indexed)
-    let db_commits = db::list_repository_commits(&state.db, &repo_id, per_page as i64 + 1, offset).await?;
+    let db_commits =
+        db::list_repository_commits(&state.db, &repo_id, per_page as i64 + 1, offset).await?;
 
     let has_more = db_commits.len() > per_page as usize;
     let commits: Vec<CommitInfo> = db_commits
@@ -1147,8 +1216,14 @@ async fn list_commits(
         .take(per_page as usize)
         .map(|c| {
             let url = match repo.provider.as_str() {
-                "gitlab" => format!("https://gitlab.com/{}/{}/-/commit/{}", repo.owner, repo.repo, c.sha),
-                _ => format!("https://github.com/{}/{}/commit/{}", repo.owner, repo.repo, c.sha),
+                "gitlab" => format!(
+                    "https://gitlab.com/{}/{}/-/commit/{}",
+                    repo.owner, repo.repo, c.sha
+                ),
+                _ => format!(
+                    "https://github.com/{}/{}/commit/{}",
+                    repo.owner, repo.repo, c.sha
+                ),
             };
             CommitInfo {
                 sha: c.sha,
@@ -1188,7 +1263,8 @@ async fn list_pull_requests(
     let offset = ((page - 1) * per_page) as i64;
 
     // Fetch PRs from database (already indexed)
-    let db_prs = db::list_repository_pull_requests(&state.db, &repo_id, per_page as i64 + 1, offset).await?;
+    let db_prs =
+        db::list_repository_pull_requests(&state.db, &repo_id, per_page as i64 + 1, offset).await?;
 
     let has_more = db_prs.len() > per_page as usize;
     let pull_requests: Vec<PullRequestInfo> = db_prs
@@ -1202,8 +1278,14 @@ async fn list_pull_requests(
         })
         .map(|pr| {
             let url = match repo.provider.as_str() {
-                "gitlab" => format!("https://gitlab.com/{}/{}/-/merge_requests/{}", repo.owner, repo.repo, pr.number),
-                _ => format!("https://github.com/{}/{}/pull/{}", repo.owner, repo.repo, pr.number),
+                "gitlab" => format!(
+                    "https://gitlab.com/{}/{}/-/merge_requests/{}",
+                    repo.owner, repo.repo, pr.number
+                ),
+                _ => format!(
+                    "https://github.com/{}/{}/pull/{}",
+                    repo.owner, repo.repo, pr.number
+                ),
             };
             PullRequestInfo {
                 number: pr.number as u32,
@@ -1250,9 +1332,7 @@ async fn list_pull_requests(
 ///
 /// Returns all registered file source providers with their capabilities.
 #[axum::debug_handler]
-async fn list_providers(
-    State(state): State<AppState>,
-) -> Result<Json<ListProvidersResponse>> {
+async fn list_providers(State(state): State<AppState>) -> Result<Json<ListProvidersResponse>> {
     let providers = state
         .providers
         .providers()

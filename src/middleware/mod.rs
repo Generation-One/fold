@@ -10,16 +10,13 @@ mod session_auth;
 mod token_auth;
 
 pub use project_auth::{
-    require_project_read, require_project_write, require_admin, ProjectAccessContext, ProjectIdParams,
+    require_admin, require_project_read, require_project_write, ProjectAccessContext,
+    ProjectIdParams,
 };
-pub use session_auth::{
-    require_session, SessionUser, SESSION_COOKIE_NAME,
-};
-pub use token_auth::{
-    require_token,
-    AuthContext,
-};
+pub use session_auth::{require_session, SessionUser, SESSION_COOKIE_NAME};
+pub use token_auth::{require_token, AuthContext};
 
+use crate::{error::Error, AppState};
 use axum::{
     body::Body,
     extract::{Request, State},
@@ -27,7 +24,6 @@ use axum::{
     response::Response,
 };
 use axum_extra::extract::CookieJar;
-use crate::{error::Error, AppState};
 
 /// User context that supports both session and token authentication.
 ///
@@ -100,16 +96,17 @@ pub async fn require_auth(
             if let Some(token) = auth_str.strip_prefix("Bearer ") {
                 if let Ok(auth_context) = validate_token_internal(&state, token).await {
                     // Convert AuthContext to AuthUser
-                    let user: Option<(String, Option<String>, Option<String>, String)> = sqlx::query_as(
-                        r#"
+                    let user: Option<(String, Option<String>, Option<String>, String)> =
+                        sqlx::query_as(
+                            r#"
                         SELECT id, email, display_name, role
                         FROM users
                         WHERE id = ?
                         "#,
-                    )
-                    .bind(&auth_context.user_id)
-                    .fetch_optional(&state.db)
-                    .await?;
+                        )
+                        .bind(&auth_context.user_id)
+                        .fetch_optional(&state.db)
+                        .await?;
 
                     if let Some((user_id, email, name, role)) = user {
                         let auth_user = AuthUser {
@@ -198,10 +195,7 @@ async fn validate_session_internal(
     })
 }
 
-async fn validate_token_internal(
-    state: &AppState,
-    token: &str,
-) -> Result<AuthContext, Error> {
+async fn validate_token_internal(state: &AppState, token: &str) -> Result<AuthContext, Error> {
     use sha2::{Digest, Sha256};
     use sqlx::FromRow;
 
@@ -276,4 +270,3 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     }
     result == 0
 }
-

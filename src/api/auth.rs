@@ -14,20 +14,20 @@
 //! - DELETE /auth/tokens/:id - Revoke an API token
 
 use axum::{
-    extract::{Path, Query, State, Extension},
+    extract::{Extension, Path, Query, State},
     middleware,
     response::{IntoResponse, Redirect, Response},
-    routing::{get, post, delete},
+    routing::{delete, get, post},
     Json, Router,
 };
+use axum_extra::extract::cookie::{Cookie, SameSite};
+use axum_extra::extract::CookieJar;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use axum_extra::extract::CookieJar;
-use axum_extra::extract::cookie::{Cookie, SameSite};
-use chrono::Utc;
 use time;
 
-use crate::middleware::{require_session, require_auth, AuthUser};
+use crate::middleware::{require_auth, require_session, AuthUser};
 use crate::{AppState, Error, Result};
 
 /// Build authentication routes.
@@ -41,11 +41,15 @@ pub fn routes(state: AppState) -> Router<AppState> {
         // Protected routes (require session)
         .route(
             "/logout",
-            post(logout).layer(middleware::from_fn_with_state(state.clone(), require_session)),
+            post(logout).layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_session,
+            )),
         )
         .route(
             "/me",
-            get(get_current_user).layer(middleware::from_fn_with_state(state.clone(), require_auth)),
+            get(get_current_user)
+                .layer(middleware::from_fn_with_state(state.clone(), require_auth)),
         )
         // API token management (require auth - supports both session and token)
         .route(
@@ -56,8 +60,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         )
         .route(
             "/tokens/:token_id",
-            delete(revoke_token)
-                .layer(middleware::from_fn_with_state(state.clone(), require_auth)),
+            delete(revoke_token).layer(middleware::from_fn_with_state(state.clone(), require_auth)),
         )
         // Admin token management (admin only)
         .route(
@@ -134,6 +137,7 @@ pub struct UserInfo {
 pub struct CreateTokenRequest {
     pub name: String,
     #[serde(default)]
+    #[allow(dead_code)]
     pub scopes: Vec<String>,
     /// Optional expiry in days from now
     pub expires_in_days: Option<i64>,
@@ -175,8 +179,10 @@ pub struct ListTokensResponse {
 #[derive(Debug, sqlx::FromRow)]
 struct OAuthState {
     id: String,
+    #[allow(dead_code)]
     state: String,
     provider: String,
+    #[allow(dead_code)]
     created_at: String,
     expires_at: String,
 }
@@ -249,7 +255,10 @@ async fn login_redirect(
             )
         }
         crate::config::AuthProviderType::GitLab => {
-            let issuer = provider_config.issuer.as_deref().unwrap_or("https://gitlab.com");
+            let issuer = provider_config
+                .issuer
+                .as_deref()
+                .unwrap_or("https://gitlab.com");
             format!(
                 "{}/oauth/authorize?client_id={}&redirect_uri={}/auth/callback/{}&response_type=code&scope={}&state={}",
                 issuer,
@@ -327,15 +336,14 @@ async fn oauth_callback(
         .ok_or_else(|| Error::InvalidInput("Missing state parameter".into()))?;
 
     // Verify state from database
-    let oauth_state: Option<OAuthState> = sqlx::query_as(
-        "SELECT * FROM oauth_states WHERE state = ?"
-    )
-    .bind(&_state_param)
-    .fetch_optional(&state.db)
-    .await?;
+    let oauth_state: Option<OAuthState> =
+        sqlx::query_as("SELECT * FROM oauth_states WHERE state = ?")
+            .bind(&_state_param)
+            .fetch_optional(&state.db)
+            .await?;
 
-    let oauth_state = oauth_state
-        .ok_or_else(|| Error::InvalidInput("Invalid or expired state".into()))?;
+    let oauth_state =
+        oauth_state.ok_or_else(|| Error::InvalidInput("Invalid or expired state".into()))?;
 
     // Check expiry
     let expires = chrono::DateTime::parse_from_rfc3339(&oauth_state.expires_at)
@@ -420,10 +428,7 @@ async fn oauth_callback(
 ///
 /// Clears the session cookie and invalidates the session server-side.
 #[axum::debug_handler]
-async fn logout(
-    State(state): State<AppState>,
-    jar: CookieJar,
-) -> Result<impl IntoResponse> {
+async fn logout(State(state): State<AppState>, jar: CookieJar) -> Result<impl IntoResponse> {
     // Get session ID from cookie
     if let Some(cookie) = jar.get("fold_session") {
         let session_id = cookie.value();
@@ -447,7 +452,7 @@ async fn logout(
         jar,
         Json(serde_json::json!({
             "message": "Logged out successfully"
-        }))
+        })),
     ))
 }
 
@@ -477,7 +482,9 @@ async fn get_current_user(
     Ok(Json(UserInfo {
         id: user.user_id.clone(),
         email: db_user.0,
-        name: db_user.1.unwrap_or_else(|| user.name.clone().unwrap_or_default()),
+        name: db_user
+            .1
+            .unwrap_or_else(|| user.name.clone().unwrap_or_default()),
         avatar_url: db_user.2,
         provider: db_user.3,
         roles: vec![user.role.clone()],
@@ -613,7 +620,15 @@ async fn list_tokens(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<ListTokensResponse>> {
-    let tokens: Vec<(String, String, String, String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+    let tokens: Vec<(
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
         r#"
         SELECT id, name, token_prefix, created_at, last_used, expires_at, revoked_at
         FROM api_tokens
@@ -627,15 +642,19 @@ async fn list_tokens(
 
     let tokens = tokens
         .into_iter()
-        .map(|(id, name, token_prefix, created_at, last_used, expires_at, revoked_at)| ApiTokenInfo {
-            id,
-            name,
-            token_prefix,
-            created_at,
-            last_used,
-            expires_at,
-            revoked_at,
-        })
+        .map(
+            |(id, name, token_prefix, created_at, last_used, expires_at, revoked_at)| {
+                ApiTokenInfo {
+                    id,
+                    name,
+                    token_prefix,
+                    created_at,
+                    last_used,
+                    expires_at,
+                    revoked_at,
+                }
+            },
+        )
         .collect();
 
     Ok(Json(ListTokensResponse { tokens }))
@@ -661,11 +680,18 @@ async fn create_token(
         return Err(Error::InvalidInput("Token name cannot be empty".into()));
     }
     if name.len() > 100 {
-        return Err(Error::InvalidInput("Token name too long (max 100 characters)".into()));
+        return Err(Error::InvalidInput(
+            "Token name too long (max 100 characters)".into(),
+        ));
     }
 
     // Determine which user to create the token for
-    eprintln!("DEBUG create_token: request.user_id = {:?}, authenticated user = {}, is_admin = {}", request.user_id, user.user_id, user.is_admin());
+    eprintln!(
+        "DEBUG create_token: request.user_id = {:?}, authenticated user = {}, is_admin = {}",
+        request.user_id,
+        user.user_id,
+        user.is_admin()
+    );
     let target_user_id = if let Some(user_id) = request.user_id {
         eprintln!("DEBUG: Creating token for specified user: {}", user_id);
         // Only admins can create tokens for other users
@@ -674,7 +700,10 @@ async fn create_token(
         }
         user_id
     } else {
-        eprintln!("DEBUG: No user_id provided, using authenticated user: {}", user.user_id);
+        eprintln!(
+            "DEBUG: No user_id provided, using authenticated user: {}",
+            user.user_id
+        );
         user.user_id.clone()
     };
     eprintln!("DEBUG: Final target_user_id = {}", target_user_id);
@@ -691,7 +720,9 @@ async fn create_token(
 
     // Calculate expiry if specified
     let expires_at = request.expires_in_days.map(|days| {
-        (Utc::now() + chrono::Duration::days(days)).format("%Y-%m-%d %H:%M:%S").to_string()
+        (Utc::now() + chrono::Duration::days(days))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string()
     });
 
     let created_at = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -736,13 +767,12 @@ async fn revoke_token(
     Path(token_id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
     // Verify the token belongs to the user
-    let token_exists: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM api_tokens WHERE id = ? AND user_id = ?"
-    )
-    .bind(&token_id)
-    .bind(&user.user_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let token_exists: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM api_tokens WHERE id = ? AND user_id = ?")
+            .bind(&token_id)
+            .bind(&user.user_id)
+            .fetch_optional(&state.db)
+            .await?;
 
     if token_exists.is_none() {
         return Err(Error::NotFound(format!("Token {}", token_id)));
@@ -750,13 +780,11 @@ async fn revoke_token(
 
     // Mark as revoked
     let revoked_at = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    sqlx::query(
-        "UPDATE api_tokens SET revoked_at = ? WHERE id = ?"
-    )
-    .bind(&revoked_at)
-    .bind(&token_id)
-    .execute(&state.db)
-    .await?;
+    sqlx::query("UPDATE api_tokens SET revoked_at = ? WHERE id = ?")
+        .bind(&revoked_at)
+        .bind(&token_id)
+        .execute(&state.db)
+        .await?;
 
     Ok(Json(serde_json::json!({
         "message": "Token revoked successfully",
@@ -776,7 +804,15 @@ async fn admin_list_user_tokens(
         return Err(Error::Forbidden);
     }
 
-    let result: Vec<(String, String, String, String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+    let result: Vec<(
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
         r#"
         SELECT id, name, token_prefix, created_at, last_used, expires_at, revoked_at
         FROM api_tokens
@@ -790,15 +826,19 @@ async fn admin_list_user_tokens(
 
     let tokens = result
         .into_iter()
-        .map(|(id, name, token_prefix, created_at, last_used, expires_at, revoked_at)| ApiTokenInfo {
-            id,
-            name,
-            token_prefix,
-            created_at,
-            last_used,
-            expires_at,
-            revoked_at,
-        })
+        .map(
+            |(id, name, token_prefix, created_at, last_used, expires_at, revoked_at)| {
+                ApiTokenInfo {
+                    id,
+                    name,
+                    token_prefix,
+                    created_at,
+                    last_used,
+                    expires_at,
+                    revoked_at,
+                }
+            },
+        )
         .collect();
 
     Ok(Json(ListTokensResponse { tokens }))
@@ -817,15 +857,18 @@ async fn admin_revoke_user_token(
     }
 
     // Verify the token belongs to the user
-    let token_user: Option<(String,)> = sqlx::query_as("SELECT user_id FROM api_tokens WHERE id = ?")
-        .bind(&token_id)
-        .fetch_optional(&state.db)
-        .await?;
+    let token_user: Option<(String,)> =
+        sqlx::query_as("SELECT user_id FROM api_tokens WHERE id = ?")
+            .bind(&token_id)
+            .fetch_optional(&state.db)
+            .await?;
 
     match token_user {
         None => return Err(Error::NotFound("Token not found".to_string())),
         Some((token_user_id,)) if token_user_id != user_id => {
-            return Err(Error::InvalidInput("Token does not belong to this user".to_string()))
+            return Err(Error::InvalidInput(
+                "Token does not belong to this user".to_string(),
+            ))
         }
         _ => {}
     }
@@ -958,7 +1001,9 @@ async fn fetch_user_info(
             let user: GitHubUser = response.json().await?;
             Ok(OAuthUserInfo {
                 provider_id: user.id.to_string(),
-                email: user.email.unwrap_or_else(|| format!("{}@github.local", user.login)),
+                email: user
+                    .email
+                    .unwrap_or_else(|| format!("{}@github.local", user.login)),
                 name: user.name.unwrap_or(user.login),
                 avatar_url: user.avatar_url,
             })
@@ -967,6 +1012,7 @@ async fn fetch_user_info(
             #[derive(Deserialize)]
             struct GitLabUser {
                 id: i64,
+                #[allow(dead_code)]
                 username: String,
                 email: String,
                 name: String,
@@ -993,7 +1039,9 @@ async fn fetch_user_info(
             let user: OidcUserInfo = response.json().await?;
             Ok(OAuthUserInfo {
                 provider_id: user.sub.clone(),
-                email: user.email.unwrap_or_else(|| format!("{}@oidc.local", user.sub)),
+                email: user
+                    .email
+                    .unwrap_or_else(|| format!("{}@oidc.local", user.sub)),
                 name: user.name.unwrap_or_else(|| user.sub.clone()),
                 avatar_url: user.picture,
             })
@@ -1016,13 +1064,12 @@ async fn upsert_user(
     user_info: &OAuthUserInfo,
 ) -> Result<String> {
     // Check if user exists by provider + subject
-    let existing: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM users WHERE provider = ? AND subject = ?"
-    )
-    .bind(provider)
-    .bind(&user_info.provider_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let existing: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM users WHERE provider = ? AND subject = ?")
+            .bind(provider)
+            .bind(&user_info.provider_id)
+            .fetch_optional(&state.db)
+            .await?;
 
     if let Some((user_id,)) = existing {
         // Update existing user
@@ -1045,7 +1092,7 @@ async fn upsert_user(
 
     // Create new user
     let user_id = uuid::Uuid::new_v4().to_string();
-    let role = "member";  // Default role
+    let role = "member"; // Default role
 
     sqlx::query(
         r#"

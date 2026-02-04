@@ -117,9 +117,9 @@ impl GitLocalService {
             builder.fetch_options(fetch_opts);
             builder.branch(&branch);
 
-            builder.clone(&url, &local_path_clone).map_err(|e| {
-                Error::Internal(format!("Failed to clone repository: {}", e))
-            })?;
+            builder
+                .clone(&url, &local_path_clone)
+                .map_err(|e| Error::Internal(format!("Failed to clone repository: {}", e)))?;
 
             Ok::<PathBuf, Error>(local_path_clone)
         })
@@ -146,9 +146,8 @@ impl GitLocalService {
         );
 
         tokio::task::spawn_blocking(move || {
-            let repo = GitRepo::open(&repo_path).map_err(|e| {
-                Error::Internal(format!("Failed to open repository: {}", e))
-            })?;
+            let repo = GitRepo::open(&repo_path)
+                .map_err(|e| Error::Internal(format!("Failed to open repository: {}", e)))?;
 
             // Set up callbacks for authentication
             let mut callbacks = RemoteCallbacks::new();
@@ -160,28 +159,28 @@ impl GitLocalService {
             fetch_opts.remote_callbacks(callbacks);
 
             // Find origin remote
-            let mut remote = repo.find_remote("origin").map_err(|e| {
-                Error::Internal(format!("Failed to find origin remote: {}", e))
-            })?;
+            let mut remote = repo
+                .find_remote("origin")
+                .map_err(|e| Error::Internal(format!("Failed to find origin remote: {}", e)))?;
 
             // Fetch the branch
-            remote.fetch(&[&branch], Some(&mut fetch_opts), None).map_err(|e| {
-                Error::Internal(format!("Failed to fetch: {}", e))
-            })?;
+            remote
+                .fetch(&[&branch], Some(&mut fetch_opts), None)
+                .map_err(|e| Error::Internal(format!("Failed to fetch: {}", e)))?;
 
             // Get the fetch head
-            let fetch_head = repo.find_reference("FETCH_HEAD").map_err(|e| {
-                Error::Internal(format!("Failed to find FETCH_HEAD: {}", e))
-            })?;
+            let fetch_head = repo
+                .find_reference("FETCH_HEAD")
+                .map_err(|e| Error::Internal(format!("Failed to find FETCH_HEAD: {}", e)))?;
 
-            let fetch_commit = repo.reference_to_annotated_commit(&fetch_head).map_err(|e| {
-                Error::Internal(format!("Failed to get fetch commit: {}", e))
-            })?;
+            let fetch_commit = repo
+                .reference_to_annotated_commit(&fetch_head)
+                .map_err(|e| Error::Internal(format!("Failed to get fetch commit: {}", e)))?;
 
             // Do a fast-forward merge
-            let (analysis, _) = repo.merge_analysis(&[&fetch_commit]).map_err(|e| {
-                Error::Internal(format!("Failed to analyze merge: {}", e))
-            })?;
+            let (analysis, _) = repo
+                .merge_analysis(&[&fetch_commit])
+                .map_err(|e| Error::Internal(format!("Failed to analyze merge: {}", e)))?;
 
             if analysis.is_up_to_date() {
                 debug!("Repository is up to date");
@@ -191,34 +190,30 @@ impl GitLocalService {
             if analysis.is_fast_forward() {
                 // Get the reference for the branch
                 let refname = format!("refs/heads/{}", branch);
-                let mut reference = repo.find_reference(&refname).map_err(|e| {
-                    Error::Internal(format!("Failed to find reference: {}", e))
-                })?;
+                let mut reference = repo
+                    .find_reference(&refname)
+                    .map_err(|e| Error::Internal(format!("Failed to find reference: {}", e)))?;
 
                 // Fast-forward
-                reference.set_target(fetch_commit.id(), "Fast-forward").map_err(|e| {
-                    Error::Internal(format!("Failed to fast-forward: {}", e))
-                })?;
+                reference
+                    .set_target(fetch_commit.id(), "Fast-forward")
+                    .map_err(|e| Error::Internal(format!("Failed to fast-forward: {}", e)))?;
 
                 // Checkout the updated tree
-                repo.checkout_head(Some(
-                    git2::build::CheckoutBuilder::default().force()
-                )).map_err(|e| {
-                    Error::Internal(format!("Failed to checkout: {}", e))
-                })?;
+                repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+                    .map_err(|e| Error::Internal(format!("Failed to checkout: {}", e)))?;
 
                 info!("Fast-forwarded to latest commit");
             } else {
                 // For non-fast-forward cases, just reset to the remote branch
                 // This discards local changes, which is fine for an indexing clone
                 let obj = fetch_commit.id();
-                let commit = repo.find_commit(obj).map_err(|e| {
-                    Error::Internal(format!("Failed to find commit: {}", e))
-                })?;
+                let commit = repo
+                    .find_commit(obj)
+                    .map_err(|e| Error::Internal(format!("Failed to find commit: {}", e)))?;
 
-                repo.reset(commit.as_object(), git2::ResetType::Hard, None).map_err(|e| {
-                    Error::Internal(format!("Failed to reset: {}", e))
-                })?;
+                repo.reset(commit.as_object(), git2::ResetType::Hard, None)
+                    .map_err(|e| Error::Internal(format!("Failed to reset: {}", e)))?;
 
                 info!("Reset to latest commit (non-fast-forward)");
             }
@@ -234,17 +229,16 @@ impl GitLocalService {
         let repo_path = local_path.to_path_buf();
 
         tokio::task::spawn_blocking(move || {
-            let repo = GitRepo::open(&repo_path).map_err(|e| {
-                Error::Internal(format!("Failed to open repository: {}", e))
-            })?;
+            let repo = GitRepo::open(&repo_path)
+                .map_err(|e| Error::Internal(format!("Failed to open repository: {}", e)))?;
 
-            let head = repo.head().map_err(|e| {
-                Error::Internal(format!("Failed to get HEAD: {}", e))
-            })?;
+            let head = repo
+                .head()
+                .map_err(|e| Error::Internal(format!("Failed to get HEAD: {}", e)))?;
 
-            let commit = head.peel_to_commit().map_err(|e| {
-                Error::Internal(format!("Failed to get commit: {}", e))
-            })?;
+            let commit = head
+                .peel_to_commit()
+                .map_err(|e| Error::Internal(format!("Failed to get commit: {}", e)))?;
 
             Ok(commit.id().to_string())
         })

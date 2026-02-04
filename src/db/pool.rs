@@ -174,13 +174,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_check() {
-        let pool = create_pool_with_config(":memory:", PoolConfig::test()).await.unwrap();
+        let pool = create_pool_with_config(":memory:", PoolConfig::test())
+            .await
+            .unwrap();
         health_check(&pool).await.unwrap();
     }
 
     #[tokio::test]
     async fn test_pool_stats() {
-        let pool = create_pool_with_config(":memory:", PoolConfig::test()).await.unwrap();
+        let pool = create_pool_with_config(":memory:", PoolConfig::test())
+            .await
+            .unwrap();
         let stats = get_pool_stats(&pool);
         assert_eq!(stats.max_connections, 1);
     }

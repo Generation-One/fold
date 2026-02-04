@@ -108,10 +108,7 @@ impl FileSourceProvider for LocalFileSource {
         }
 
         let metadata = fs::metadata(&file_path).await?;
-        let modified_at = metadata
-            .modified()
-            .ok()
-            .map(|t| DateTime::<Utc>::from(t));
+        let modified_at = metadata.modified().ok().map(|t| DateTime::<Utc>::from(t));
 
         let content = fs::read_to_string(&file_path).await.ok();
         let bytes = if content.is_none() {
@@ -155,7 +152,11 @@ impl FileSourceProvider for LocalFileSource {
             let metadata = entry.metadata().await?;
             let path = entry.path();
             let relative_path = path
-                .strip_prefix(self.base_path.as_ref().unwrap_or(&PathBuf::from(&source.name)))
+                .strip_prefix(
+                    self.base_path
+                        .as_ref()
+                        .unwrap_or(&PathBuf::from(&source.name)),
+                )
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .to_string();

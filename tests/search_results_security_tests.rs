@@ -33,10 +33,7 @@ async fn test_search_only_returns_results_from_accessible_projects() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -60,10 +57,7 @@ async fn test_search_excludes_memories_from_inaccessible_projects() {
         .unwrap();
 
     // Request should be valid but results should be empty (403 Forbidden)
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -86,10 +80,7 @@ async fn test_admin_search_returns_all_results() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -112,10 +103,7 @@ async fn test_search_respects_direct_project_membership() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -138,10 +126,7 @@ async fn test_search_respects_group_based_project_membership() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -164,10 +149,7 @@ async fn test_search_with_viewer_role_returns_results() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -190,10 +172,7 @@ async fn test_search_with_member_role_returns_results() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -217,10 +196,7 @@ async fn test_search_filters_by_both_tag_and_access() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -244,10 +220,7 @@ async fn test_search_filters_by_author_and_access() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -271,10 +244,7 @@ async fn test_search_with_similarity_threshold_respects_access() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -298,10 +268,7 @@ async fn test_search_pagination_respects_access() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -318,10 +285,7 @@ async fn test_global_search_only_returns_accessible_results() {
         .unwrap();
 
     // Request should succeed but results filtered to accessible projects only
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -344,10 +308,7 @@ async fn test_search_api_token_scoped_to_projects() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -371,10 +332,7 @@ async fn test_search_cannot_bypass_access_with_query_manipulation() {
         .unwrap();
 
     // Should still return 403 despite query manipulation attempt
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -398,10 +356,7 @@ async fn test_search_result_count_accurate_for_user_scope() {
         .unwrap();
 
     // Response should indicate count of accessible results only
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -424,10 +379,7 @@ async fn test_search_does_not_leak_memory_metadata_from_restricted_projects() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }
 
 #[tokio::test]
@@ -451,8 +403,5 @@ async fn test_search_handles_multiple_projects_correctly() {
         .body(Body::from(serde_json::to_string(&request_body).unwrap()))
         .unwrap();
 
-    assert!(request
-        .headers()
-        .get("Authorization")
-        .is_some());
+    assert!(request.headers().get("Authorization").is_some());
 }

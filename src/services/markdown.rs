@@ -86,8 +86,9 @@ impl MarkdownService {
 
     /// Generate markdown with frontmatter from components.
     pub fn generate(&self, frontmatter: &MemoryFrontmatter, body: &str) -> Result<String> {
-        let yaml = serde_yaml::to_string(frontmatter)
-            .map_err(|e| crate::Error::Internal(format!("Failed to serialize frontmatter: {}", e)))?;
+        let yaml = serde_yaml::to_string(frontmatter).map_err(|e| {
+            crate::Error::Internal(format!("Failed to serialize frontmatter: {}", e))
+        })?;
 
         Ok(format!("---\n{}---\n\n{}", yaml, body))
     }

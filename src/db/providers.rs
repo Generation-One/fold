@@ -145,9 +145,11 @@ impl EmbeddingProviderRow {
     }
 
     pub fn dimension(&self) -> Option<usize> {
-        self.config_json()
-            .ok()
-            .and_then(|c| c.get("dimension").and_then(|d| d.as_u64()).map(|d| d as usize))
+        self.config_json().ok().and_then(|c| {
+            c.get("dimension")
+                .and_then(|d| d.as_u64())
+                .map(|d| d as usize)
+        })
     }
 
     pub fn is_oauth_token_expired(&self) -> bool {
@@ -227,7 +229,10 @@ pub struct CreateProviderOAuthState {
 // ============================================================================
 
 /// Create a new LLM provider.
-pub async fn create_llm_provider(pool: &DbPool, input: CreateLlmProvider) -> Result<LlmProviderRow> {
+pub async fn create_llm_provider(
+    pool: &DbPool,
+    input: CreateLlmProvider,
+) -> Result<LlmProviderRow> {
     let id = crate::models::new_id();
     let config_json = serde_json::to_string(&input.config)?;
 
@@ -308,7 +313,11 @@ pub async fn update_llm_provider(
 
     if let Some(enabled) = input.enabled {
         updates.push("enabled = ?");
-        bindings.push(if enabled { "1".to_string() } else { "0".to_string() });
+        bindings.push(if enabled {
+            "1".to_string()
+        } else {
+            "0".to_string()
+        });
     }
     if let Some(priority) = input.priority {
         updates.push("priority = ?");
@@ -383,7 +392,10 @@ pub async fn delete_llm_provider(pool: &DbPool, id: &str) -> Result<()> {
 }
 
 /// Upsert an LLM provider (insert or update by name).
-pub async fn upsert_llm_provider(pool: &DbPool, input: CreateLlmProvider) -> Result<LlmProviderRow> {
+pub async fn upsert_llm_provider(
+    pool: &DbPool,
+    input: CreateLlmProvider,
+) -> Result<LlmProviderRow> {
     let id = crate::models::new_id();
     let config_json = serde_json::to_string(&input.config)?;
 
@@ -442,15 +454,18 @@ pub async fn create_embedding_provider(
     .fetch_one(pool)
     .await
     .map_err(|e| match e {
-        sqlx::Error::Database(ref db_err) if db_err.is_unique_violation() => {
-            Error::AlreadyExists(format!("Embedding provider '{}' already exists", input.name))
-        }
+        sqlx::Error::Database(ref db_err) if db_err.is_unique_violation() => Error::AlreadyExists(
+            format!("Embedding provider '{}' already exists", input.name),
+        ),
         _ => Error::Database(e),
     })
 }
 
 /// Get an embedding provider by ID.
-pub async fn get_embedding_provider(pool: &DbPool, id: &str) -> Result<Option<EmbeddingProviderRow>> {
+pub async fn get_embedding_provider(
+    pool: &DbPool,
+    id: &str,
+) -> Result<Option<EmbeddingProviderRow>> {
     sqlx::query_as::<_, EmbeddingProviderRow>("SELECT * FROM embedding_providers WHERE id = ?")
         .bind(id)
         .fetch_optional(pool)
@@ -505,7 +520,11 @@ pub async fn update_embedding_provider(
 
     if let Some(enabled) = input.enabled {
         updates.push("enabled = ?");
-        bindings.push(if enabled { "1".to_string() } else { "0".to_string() });
+        bindings.push(if enabled {
+            "1".to_string()
+        } else {
+            "0".to_string()
+        });
     }
     if let Some(priority) = input.priority {
         updates.push("priority = ?");
@@ -810,11 +829,7 @@ pub async fn seed_claudecode_provider_async(
 // ============================================================================
 
 /// Record successful LLM provider usage.
-pub async fn record_llm_provider_usage(
-    pool: &DbPool,
-    id: &str,
-    tokens_used: i64,
-) -> Result<()> {
+pub async fn record_llm_provider_usage(pool: &DbPool, id: &str, tokens_used: i64) -> Result<()> {
     sqlx::query(
         r#"
         UPDATE llm_providers
@@ -833,11 +848,7 @@ pub async fn record_llm_provider_usage(
 }
 
 /// Record LLM provider error.
-pub async fn record_llm_provider_error(
-    pool: &DbPool,
-    id: &str,
-    error_message: &str,
-) -> Result<()> {
+pub async fn record_llm_provider_error(pool: &DbPool, id: &str, error_message: &str) -> Result<()> {
     sqlx::query(
         r#"
         UPDATE llm_providers
@@ -972,7 +983,10 @@ mod tests {
         assert_eq!(provider.name, "openai");
         assert!(provider.is_enabled());
 
-        let fetched = get_llm_provider(&pool, &provider.id).await.unwrap().unwrap();
+        let fetched = get_llm_provider(&pool, &provider.id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(fetched.id, provider.id);
         assert_eq!(fetched.model(), Some("gpt-4o-mini".to_string()));
     }

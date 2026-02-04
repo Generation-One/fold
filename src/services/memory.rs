@@ -14,16 +14,20 @@ use std::path::Path;
 use std::sync::Arc;
 
 use chrono::Utc;
-use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tracing::{debug, info, warn};
 
 use crate::db::{self, DbPool};
 use crate::error::{Error, Result};
-use crate::models::{ChunkMatch, Memory, MemoryCreate, MemorySearchResult, MemoryType, MemoryUpdate};
+use crate::models::{
+    ChunkMatch, Memory, MemoryCreate, MemorySearchResult, MemoryType, MemoryUpdate,
+};
 
-use super::decay::{calculate_strength, blend_scores, DEFAULT_HALF_LIFE_DAYS, DEFAULT_STRENGTH_WEIGHT};
+use super::decay::{
+    blend_scores, calculate_strength, DEFAULT_HALF_LIFE_DAYS, DEFAULT_STRENGTH_WEIGHT,
+};
 use super::fold_storage::FoldStorageService;
 use super::qdrant::{QdrantService, SearchFilter};
 use super::EmbeddingService;
@@ -182,10 +186,7 @@ Return JSON:
                         })
                         .unwrap_or_default();
 
-                    let context = json["context"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string();
+                    let context = json["context"].as_str().unwrap_or("").to_string();
 
                     let tags = json["tags"]
                         .as_array()
@@ -228,7 +229,10 @@ Return JSON:
         // Try to find JSON in generic code blocks
         if let Some(start) = text.find("```") {
             let start = start + 3;
-            let start = text[start..].find('\n').map(|i| start + i + 1).unwrap_or(start);
+            let start = text[start..]
+                .find('\n')
+                .map(|i| start + i + 1)
+                .unwrap_or(start);
             if let Some(end) = text[start..].find("```") {
                 if let Ok(json) = serde_json::from_str(&text[start..start + end]) {
                     return Some(json);
@@ -321,8 +325,8 @@ Return JSON:
         match self.llm.complete(&prompt, 800).await {
             Ok(response) => {
                 if let Some(json) = self.extract_json(&response) {
-                    let decision: EvolutionDecision = serde_json::from_value(json)
-                        .unwrap_or_default();
+                    let decision: EvolutionDecision =
+                        serde_json::from_value(json).unwrap_or_default();
                     Ok(decision)
                 } else {
                     warn!("Failed to parse evolution decision response as JSON");
@@ -445,8 +449,8 @@ Return JSON:
 
                     // Update memory tags if provided
                     if !decision.tags_to_update.is_empty() {
-                        let tags_json = serde_json::to_string(&decision.tags_to_update)
-                            .unwrap_or_default();
+                        let tags_json =
+                            serde_json::to_string(&decision.tags_to_update).unwrap_or_default();
                         let _ = sqlx::query(
                             r#"UPDATE memories SET tags = ?, updated_at = datetime('now') WHERE id = ?"#,
                         )
@@ -565,30 +569,33 @@ Return JSON:
             .unwrap_or_else(|| std::path::PathBuf::from("."));
 
         // Auto-analyse if metadata not provided
-        let (keywords, context, tags) = if auto_metadata
-            && (data.keywords.is_empty() || data.tags.is_empty())
-        {
-            let analysis = self.analyse_content(&data.content).await?;
-            (
-                if data.keywords.is_empty() {
-                    analysis.keywords
-                } else {
-                    data.keywords.clone()
-                },
-                if data.context.is_none() {
-                    Some(analysis.context).filter(|s| !s.is_empty())
-                } else {
-                    data.context.clone()
-                },
-                if data.tags.is_empty() {
-                    analysis.tags
-                } else {
-                    data.tags.clone()
-                },
-            )
-        } else {
-            (data.keywords.clone(), data.context.clone(), data.tags.clone())
-        };
+        let (keywords, context, tags) =
+            if auto_metadata && (data.keywords.is_empty() || data.tags.is_empty()) {
+                let analysis = self.analyse_content(&data.content).await?;
+                (
+                    if data.keywords.is_empty() {
+                        analysis.keywords
+                    } else {
+                        data.keywords.clone()
+                    },
+                    if data.context.is_none() {
+                        Some(analysis.context).filter(|s| !s.is_empty())
+                    } else {
+                        data.context.clone()
+                    },
+                    if data.tags.is_empty() {
+                        analysis.tags
+                    } else {
+                        data.tags.clone()
+                    },
+                )
+            } else {
+                (
+                    data.keywords.clone(),
+                    data.context.clone(),
+                    data.tags.clone(),
+                )
+            };
 
         // Create memory object
         // Use provided ID if available (e.g. path-based hash for codebase files),
@@ -672,7 +679,10 @@ Return JSON:
         if let Some(ref fp) = memory.file_path {
             payload.insert("file_path".to_string(), json!(fp));
         }
-        payload.insert("created_at".to_string(), json!(memory.created_at.to_rfc3339()));
+        payload.insert(
+            "created_at".to_string(),
+            json!(memory.created_at.to_rfc3339()),
+        );
 
         // Store in Qdrant
         self.qdrant
@@ -733,7 +743,11 @@ Return JSON:
         if let Ok(project) = crate::db::get_project(&self.db, project_id).await {
             if let Some(root_path) = &project.root_path {
                 let project_root = std::path::PathBuf::from(root_path);
-                match self.fold_storage.read_memory(&project_root, memory_id).await {
+                match self
+                    .fold_storage
+                    .read_memory(&project_root, memory_id)
+                    .await
+                {
                     Ok((_, content)) => {
                         memory.content = Some(content);
                     }
@@ -755,7 +769,11 @@ Return JSON:
     }
 
     /// Get a memory without updating access tracking (for internal use).
-    async fn get_without_tracking(&self, project_id: &str, memory_id: &str) -> Result<Option<Memory>> {
+    async fn get_without_tracking(
+        &self,
+        project_id: &str,
+        memory_id: &str,
+    ) -> Result<Option<Memory>> {
         let memory = sqlx::query_as::<_, Memory>(
             r#"
             SELECT * FROM memories
@@ -821,7 +839,9 @@ Return JSON:
         limit: i64,
         offset: i64,
     ) -> Result<Vec<Memory>> {
-        let mut memories = self.list(project_id, memory_type, author, limit, offset).await?;
+        let mut memories = self
+            .list(project_id, memory_type, author, limit, offset)
+            .await?;
 
         // Resolve content for each memory
         if let Ok(project) = crate::db::get_project(&self.db, project_id).await {
@@ -957,7 +977,10 @@ Return JSON:
         if let Some(ref fp) = updated.file_path {
             payload.insert("file_path".to_string(), json!(fp));
         }
-        payload.insert("created_at".to_string(), json!(updated.created_at.to_rfc3339()));
+        payload.insert(
+            "created_at".to_string(),
+            json!(updated.created_at.to_rfc3339()),
+        );
 
         self.qdrant
             .upsert(project_slug, &updated.id, embedding, payload)
@@ -969,7 +992,12 @@ Return JSON:
     }
 
     /// Delete a memory.
-    pub async fn delete(&self, project_id: &str, project_slug: &str, memory_id: &str) -> Result<()> {
+    pub async fn delete(
+        &self,
+        project_id: &str,
+        project_slug: &str,
+        memory_id: &str,
+    ) -> Result<()> {
         let project = crate::db::get_project(&self.db, project_id).await?;
         let project_root = project
             .root_path
@@ -997,7 +1025,11 @@ Return JSON:
         self.qdrant.delete(project_slug, memory_id).await?;
 
         // Delete from fold/
-        if let Err(e) = self.fold_storage.delete_memory(&project_root, memory_id).await {
+        if let Err(e) = self
+            .fold_storage
+            .delete_memory(&project_root, memory_id)
+            .await
+        {
             warn!(error = %e, memory_id = %memory_id, "Failed to delete memory file (may not exist)");
         }
 
@@ -1032,7 +1064,8 @@ Return JSON:
         query: &str,
         limit: usize,
     ) -> Result<Vec<MemorySearchResult>> {
-        self.search_with_type(project_id, project_slug, query, None, limit).await
+        self.search_with_type(project_id, project_slug, query, None, limit)
+            .await
     }
 
     /// Search memories using semantic similarity with optional type filter.
@@ -1055,7 +1088,10 @@ Return JSON:
 
         // Search in Qdrant - fetch more results to allow for re-ranking
         let fetch_limit = (limit * 2).min(100);
-        let vector_results = self.qdrant.search(project_slug, embedding, fetch_limit, filter).await?;
+        let vector_results = self
+            .qdrant
+            .search(project_slug, embedding, fetch_limit, filter)
+            .await?;
 
         let project = crate::db::get_project(&self.db, project_id).await?;
         let project_root = project
@@ -1065,8 +1101,12 @@ Return JSON:
             .unwrap_or_else(|| std::path::PathBuf::from("."));
 
         // Get decay config from project settings (or use defaults)
-        let half_life = project.decay_half_life_days.unwrap_or(DEFAULT_HALF_LIFE_DAYS);
-        let strength_weight = project.decay_strength_weight.unwrap_or(DEFAULT_STRENGTH_WEIGHT);
+        let half_life = project
+            .decay_half_life_days
+            .unwrap_or(DEFAULT_HALF_LIFE_DAYS);
+        let strength_weight = project
+            .decay_strength_weight
+            .unwrap_or(DEFAULT_STRENGTH_WEIGHT);
 
         let mut results = Vec::with_capacity(vector_results.len());
         for vr in vector_results {
@@ -1167,15 +1207,21 @@ Return JSON:
             .unwrap_or_else(|| std::path::PathBuf::from("."));
 
         // Get decay config
-        let half_life = project.decay_half_life_days.unwrap_or(DEFAULT_HALF_LIFE_DAYS);
-        let strength_weight = project.decay_strength_weight.unwrap_or(DEFAULT_STRENGTH_WEIGHT);
+        let half_life = project
+            .decay_half_life_days
+            .unwrap_or(DEFAULT_HALF_LIFE_DAYS);
+        let strength_weight = project
+            .decay_strength_weight
+            .unwrap_or(DEFAULT_STRENGTH_WEIGHT);
 
         // Collect matched chunks by parent_memory_id
         let mut chunks_by_memory: HashMap<String, Vec<ChunkMatch>> = HashMap::new();
 
         for cr in &chunk_results {
             // Get parent_memory_id from payload
-            let parent_id = cr.payload.get("parent_memory_id")
+            let parent_id = cr
+                .payload
+                .get("parent_memory_id")
                 .and_then(|v| v.as_str())
                 .map(String::from);
 
@@ -1211,7 +1257,11 @@ Return JSON:
 
         // Sort chunks by score within each memory
         for chunks in chunks_by_memory.values_mut() {
-            chunks.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            chunks.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         }
 
         // Build results - start with direct memory matches
@@ -1264,7 +1314,11 @@ Return JSON:
             };
 
             // Resolve content from fold/
-            if let Ok((_, content)) = self.fold_storage.read_memory(&project_root, &memory_id).await {
+            if let Ok((_, content)) = self
+                .fold_storage
+                .read_memory(&project_root, &memory_id)
+                .await
+            {
                 memory.content = Some(content);
             }
 
@@ -1369,10 +1423,8 @@ Return JSON:
                 }
 
                 if let Ok(Some(neighbour)) = self.get_without_tracking(project_id, &link_id).await {
-                    if let Ok((_, neighbour_content)) = self
-                        .fold_storage
-                        .read_memory(&project_root, &link_id)
-                        .await
+                    if let Ok((_, neighbour_content)) =
+                        self.fold_storage.read_memory(&project_root, &link_id).await
                     {
                         seen_ids.insert(link_id.clone());
                         results.push(AgenticSearchResult {
@@ -1469,10 +1521,7 @@ Return JSON:
 
         // BFS through links
         let initial_links = self.get_linked_memory_ids(memory_id).await?;
-        let mut queue: Vec<(String, usize)> = initial_links
-            .into_iter()
-            .map(|id| (id, 1))
-            .collect();
+        let mut queue: Vec<(String, usize)> = initial_links.into_iter().map(|id| (id, 1)).collect();
 
         while let Some((id, current_depth)) = queue.pop() {
             if visited.contains(&id) || current_depth > depth {
@@ -1481,10 +1530,8 @@ Return JSON:
             visited.insert(id.clone());
 
             if let Ok(Some(related_memory)) = self.get_without_tracking(project_id, &id).await {
-                if let Ok((_, related_content)) = self
-                    .fold_storage
-                    .read_memory(&project_root, &id)
-                    .await
+                if let Ok((_, related_content)) =
+                    self.fold_storage.read_memory(&project_root, &id).await
                 {
                     // Add links to queue for next depth
                     if current_depth < depth {
@@ -1513,7 +1560,9 @@ Return JSON:
 
         for result in similar {
             if !visited.contains(&result.id) {
-                if let Ok(Some(sim_memory)) = self.get_without_tracking(project_id, &result.id).await {
+                if let Ok(Some(sim_memory)) =
+                    self.get_without_tracking(project_id, &result.id).await
+                {
                     if let Ok((_, sim_content)) = self
                         .fold_storage
                         .read_memory(&project_root, &result.id)
@@ -1571,7 +1620,13 @@ Return JSON:
 
         for memory_type in types {
             let results = self
-                .search_with_type(project_id, project_slug, task, Some(memory_type), per_type_limit)
+                .search_with_type(
+                    project_id,
+                    project_slug,
+                    task,
+                    Some(memory_type),
+                    per_type_limit,
+                )
                 .await?;
 
             for result in results {
@@ -1605,7 +1660,11 @@ Return JSON:
     }
 
     /// Delete all memories for a project.
-    pub async fn delete_all_for_project(&self, project_id: &str, project_slug: &str) -> Result<u64> {
+    pub async fn delete_all_for_project(
+        &self,
+        project_id: &str,
+        project_slug: &str,
+    ) -> Result<u64> {
         let result = sqlx::query(
             r#"
             DELETE FROM memories WHERE project_id = ?
@@ -1715,7 +1774,9 @@ Return JSON:
                 if let Some(root_path) = &project.root_path {
                     let project_root = std::path::PathBuf::from(root_path);
                     for memory in &mut memories {
-                        if memory.content.is_none() || memory.content.as_ref().is_some_and(|c| c.is_empty()) {
+                        if memory.content.is_none()
+                            || memory.content.as_ref().is_some_and(|c| c.is_empty())
+                        {
                             if let Ok((_, content)) = self
                                 .fold_storage
                                 .read_memory(&project_root, &memory.id)

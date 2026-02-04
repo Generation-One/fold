@@ -76,8 +76,8 @@ async fn create_test_repository(
 
 /// Generate a valid GitHub HMAC-SHA256 signature for a payload.
 fn generate_github_signature(payload: &[u8], secret: &str) -> String {
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .expect("HMAC can take key of any size");
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
     mac.update(payload);
     let result = mac.finalize();
     format!("sha256={}", hex::encode(result.into_bytes()))
@@ -96,8 +96,8 @@ fn verify_github_signature(payload: &[u8], secret: &str, signature: &str) -> boo
         Err(_) => return false,
     };
 
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .expect("HMAC can take key of any size");
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
     mac.update(payload);
 
     mac.verify_slice(&signature_bytes).is_ok()
@@ -137,7 +137,12 @@ fn github_push_payload(branch: &str, commits: Vec<serde_json::Value>) -> serde_j
 }
 
 /// Create a commit object for push payload.
-fn github_commit(sha: &str, message: &str, added: Vec<&str>, modified: Vec<&str>) -> serde_json::Value {
+fn github_commit(
+    sha: &str,
+    message: &str,
+    added: Vec<&str>,
+    modified: Vec<&str>,
+) -> serde_json::Value {
     json!({
         "id": sha,
         "message": message,
@@ -156,7 +161,12 @@ fn github_commit(sha: &str, message: &str, added: Vec<&str>, modified: Vec<&str>
 // ============================================================================
 
 /// Create a GitHub pull request event payload.
-fn github_pr_payload(action: &str, pr_number: u32, pr_state: &str, merged: bool) -> serde_json::Value {
+fn github_pr_payload(
+    action: &str,
+    pr_number: u32,
+    pr_state: &str,
+    merged: bool,
+) -> serde_json::Value {
     json!({
         "action": action,
         "number": pr_number,
@@ -203,7 +213,11 @@ async fn test_github_signature_verification_valid() {
     let signature = generate_github_signature(&payload_bytes, webhook_secret);
 
     // Verify the signature is valid using our verification function
-    assert!(verify_github_signature(&payload_bytes, webhook_secret, &signature));
+    assert!(verify_github_signature(
+        &payload_bytes,
+        webhook_secret,
+        &signature
+    ));
 }
 
 #[tokio::test]
@@ -216,10 +230,18 @@ async fn test_github_signature_verification_invalid() {
     let correct_signature = generate_github_signature(&payload_bytes, webhook_secret);
 
     // Verification with wrong secret should fail
-    assert!(!verify_github_signature(&payload_bytes, "wrong-secret", &correct_signature));
+    assert!(!verify_github_signature(
+        &payload_bytes,
+        "wrong-secret",
+        &correct_signature
+    ));
 
     // Verification with correct secret should succeed
-    assert!(verify_github_signature(&payload_bytes, webhook_secret, &correct_signature));
+    assert!(verify_github_signature(
+        &payload_bytes,
+        webhook_secret,
+        &correct_signature
+    ));
 }
 
 #[tokio::test]
@@ -233,7 +255,11 @@ async fn test_github_signature_wrong_payload() {
     let tampered_payload = github_push_payload("develop", vec![]);
     let tampered_bytes = serde_json::to_vec(&tampered_payload).unwrap();
 
-    assert!(!verify_github_signature(&tampered_bytes, webhook_secret, &signature));
+    assert!(!verify_github_signature(
+        &tampered_bytes,
+        webhook_secret,
+        &signature
+    ));
 }
 
 #[tokio::test]
@@ -248,7 +274,11 @@ async fn test_github_signature_missing_prefix() {
     let signature_without_prefix = hex::encode(result.into_bytes());
 
     // Verification should fail without sha256= prefix
-    assert!(!verify_github_signature(payload, secret, &signature_without_prefix));
+    assert!(!verify_github_signature(
+        payload,
+        secret,
+        &signature_without_prefix
+    ));
 }
 
 #[tokio::test]
@@ -268,7 +298,11 @@ async fn test_github_signature_empty_payload() {
     let signature = generate_github_signature(empty_payload, webhook_secret);
 
     // Empty payload should still have valid signature
-    assert!(verify_github_signature(empty_payload, webhook_secret, &signature));
+    assert!(verify_github_signature(
+        empty_payload,
+        webhook_secret,
+        &signature
+    ));
 }
 
 // ============================================================================
@@ -339,9 +373,12 @@ async fn test_push_to_tracked_branch_creates_job() -> Result<()> {
     assert_eq!(repo.branch, "main");
 
     // Push payload to main branch with changed files
-    let commits = vec![
-        github_commit("abc123", "Add feature", vec!["src/feature.rs"], vec!["src/lib.rs"]),
-    ];
+    let commits = vec![github_commit(
+        "abc123",
+        "Add feature",
+        vec!["src/feature.rs"],
+        vec!["src/lib.rs"],
+    )];
     let payload = github_push_payload("main", commits);
 
     // Extract branch from ref and verify it matches tracked branch
@@ -368,9 +405,15 @@ async fn test_push_to_non_tracked_branch_ignored() -> Result<()> {
     let repo = db::get_repository(&pool, "repo-1").await?;
     assert_eq!(repo.branch, "main");
 
-    let payload = github_push_payload("feature", vec![
-        github_commit("abc123", "Feature work", vec!["src/feature.rs"], vec![]),
-    ]);
+    let payload = github_push_payload(
+        "feature",
+        vec![github_commit(
+            "abc123",
+            "Feature work",
+            vec!["src/feature.rs"],
+            vec![],
+        )],
+    );
 
     // Extract branch from payload
     let git_ref = payload["ref"].as_str().unwrap();
@@ -385,8 +428,18 @@ async fn test_push_to_non_tracked_branch_ignored() -> Result<()> {
 #[tokio::test]
 async fn test_push_collects_changed_files() {
     let commits = vec![
-        github_commit("commit1", "First commit", vec!["src/new.rs"], vec!["src/existing.rs"]),
-        github_commit("commit2", "Second commit", vec!["src/another.rs"], vec!["src/lib.rs"]),
+        github_commit(
+            "commit1",
+            "First commit",
+            vec!["src/new.rs"],
+            vec!["src/existing.rs"],
+        ),
+        github_commit(
+            "commit2",
+            "Second commit",
+            vec!["src/another.rs"],
+            vec!["src/lib.rs"],
+        ),
     ];
     let payload = github_push_payload("main", commits);
 
@@ -523,7 +576,8 @@ async fn test_pr_merged_updates_state_and_timestamp() -> Result<()> {
 
     // Update to merged
     let merged_at = chrono::Utc::now().to_rfc3339();
-    let updated = db::update_pull_request_state(&pool, "pr-1", db::PrState::Merged, Some(&merged_at)).await?;
+    let updated =
+        db::update_pull_request_state(&pool, "pr-1", db::PrState::Merged, Some(&merged_at)).await?;
 
     assert_eq!(updated.state, "merged");
     assert!(updated.is_merged());
@@ -732,7 +786,10 @@ async fn test_gitlab_push_payload_format() {
     });
 
     assert_eq!(payload["object_kind"], "push");
-    assert_eq!(payload["project"]["path_with_namespace"], "test-org/test-repo");
+    assert_eq!(
+        payload["project"]["path_with_namespace"],
+        "test-org/test-repo"
+    );
     assert_eq!(payload["commits"].as_array().unwrap().len(), 1);
 }
 

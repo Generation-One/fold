@@ -49,14 +49,11 @@ mod project;
 mod qdrant;
 
 pub use auth::AuthService;
-pub use permissions::{PermissionService, ProjectAccess};
-pub use chunker::{ChunkerConfig, ChunkerService, ChunkStrategy, CodeChunk};
+pub use chunker::{ChunkStrategy, ChunkerConfig, ChunkerService, CodeChunk};
 pub use claudecode::{ClaudeCodeInfo, ClaudeCodeService};
 pub use content_resolver::ContentResolverService;
 pub use embeddings::EmbeddingService;
-pub use file_source::{
-    FileSourceProvider, ProviderRegistry,
-};
+pub use file_source::{FileSourceProvider, ProviderRegistry};
 pub use fold_storage::FoldStorageService;
 pub use git::GitService;
 pub use git_local::GitLocalService;
@@ -71,5 +68,6 @@ pub use llm::LlmService;
 pub use memory::MemoryService;
 pub use meta_storage::MetaStorageService;
 pub use metadata_sync::MetadataSyncService;
+pub use permissions::{PermissionService, ProjectAccess};
 pub use project::ProjectService;
 pub use qdrant::QdrantService;

@@ -43,16 +43,21 @@ pub struct SearchRequest {
 
     /// Filter by tags
     #[serde(default)]
+    #[allow(dead_code)]
     pub tags: Vec<String>,
 
     /// Filter by author
+    #[allow(dead_code)]
     pub author: Option<String>,
 
     /// Filter by file path pattern (glob)
+    #[allow(dead_code)]
     pub file_pattern: Option<String>,
 
     /// Filter by date range
+    #[allow(dead_code)]
     pub after: Option<DateTime<Utc>>,
+    #[allow(dead_code)]
     pub before: Option<DateTime<Utc>>,
 
     /// Maximum results
@@ -112,6 +117,10 @@ pub struct SearchResultItem {
     pub snippet: String,
     /// Semantic similarity score (0.0-1.0)
     pub score: f32,
+    /// Retrieval strength from decay algorithm (0.0-1.0)
+    pub strength: f32,
+    /// Combined score: (1-weight)*score + weight*strength
+    pub combined_score: f32,
     pub metadata: SearchResultMetadata,
     pub created_at: DateTime<Utc>,
     /// Matched chunks within this memory (when include_chunks=true)
@@ -214,12 +223,23 @@ async fn search(
     let search_results = if request.include_chunks {
         state
             .memory
-            .search_with_chunks(&project.id, &project.slug, &request.query, None, request.limit as usize * 2)
+            .search_with_chunks(
+                &project.id,
+                &project.slug,
+                &request.query,
+                None,
+                request.limit as usize * 2,
+            )
             .await?
     } else {
         state
             .memory
-            .search(&project.id, &project.slug, &request.query, request.limit as usize * 2)
+            .search(
+                &project.id,
+                &project.slug,
+                &request.query,
+                request.limit as usize * 2,
+            )
             .await?
     };
 
@@ -261,6 +281,8 @@ async fn search(
                 content: memory.content.clone().unwrap_or_default(),
                 snippet: create_snippet(memory.content.as_deref().unwrap_or(""), 200),
                 score: result.score,
+                strength: result.strength,
+                combined_score: result.combined_score,
                 metadata: SearchResultMetadata {
                     source,
                     file_path: memory.file_path.clone(),
@@ -316,7 +338,12 @@ async fn get_context(
     // Search for relevant memories
     let search_results = state
         .memory
-        .search(&project.id, &project.slug, &request.task, request.limit as usize * 2)
+        .search(
+            &project.id,
+            &project.slug,
+            &request.task,
+            request.limit as usize * 2,
+        )
         .await?;
 
     // Build context items with source filtering
@@ -427,7 +454,9 @@ fn generate_suggestions(task: &str, context: &[ContextItem]) -> Vec<String> {
 
     // Suggest based on context found
     let has_file = context.iter().any(|c| c.source == Some(MemorySource::File));
-    let has_agent = context.iter().any(|c| c.source == Some(MemorySource::Agent));
+    let has_agent = context
+        .iter()
+        .any(|c| c.source == Some(MemorySource::Agent));
 
     if !has_file && (task.contains("code") || task.contains("implement")) {
         suggestions.push("Search for related code files in the repository".into());
@@ -438,7 +467,8 @@ fn generate_suggestions(task: &str, context: &[ContextItem]) -> Vec<String> {
     }
 
     if context.is_empty() {
-        suggestions.push("No relevant context found. Consider adding memories about this topic.".into());
+        suggestions
+            .push("No relevant context found. Consider adding memories about this topic.".into());
     }
 
     suggestions

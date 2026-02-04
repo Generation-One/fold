@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sqlx;
 
 use crate::{
-    db::{self, User, UpdateUser, UserRole},
+    db::{self, UpdateUser, User, UserRole},
     error::{Error, Result},
     middleware::AuthUser,
     AppState,
@@ -74,7 +74,12 @@ impl From<User> for UserResponse {
 pub fn routes(_state: AppState) -> Router<AppState> {
     Router::new()
         .route("/", axum::routing::get(list_users).post(create_user))
-        .route("/:id", axum::routing::get(get_user).patch(update_user).delete(delete_user))
+        .route(
+            "/:id",
+            axum::routing::get(get_user)
+                .patch(update_user)
+                .delete(delete_user),
+        )
 }
 
 // ============================================================================
@@ -84,7 +89,7 @@ pub fn routes(_state: AppState) -> Router<AppState> {
 /// List all users (authenticated users can search for users to add to projects).
 async fn list_users(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthUser>,
+    Extension(_auth): Extension<AuthUser>,
 ) -> Result<Json<Vec<UserResponse>>> {
     // All authenticated users can list users (for adding to projects)
     let users = db::list_users(&state.db, None).await?;
@@ -169,7 +174,9 @@ async fn update_user(
 
     // Prevent users from making themselves admin (even if role is somehow provided)
     if !auth.is_admin() && request.role.as_deref() == Some("admin") {
-        return Err(Error::InvalidInput("Users cannot grant themselves admin role".to_string()));
+        return Err(Error::InvalidInput(
+            "Users cannot grant themselves admin role".to_string(),
+        ));
     }
 
     let update = UpdateUser {
@@ -196,7 +203,9 @@ async fn delete_user(
 
     // Prevent self-deletion
     if id == auth.user_id {
-        return Err(Error::InvalidInput("Cannot delete your own user account".to_string()));
+        return Err(Error::InvalidInput(
+            "Cannot delete your own user account".to_string(),
+        ));
     }
 
     db::delete_user(&state.db, &id).await?;

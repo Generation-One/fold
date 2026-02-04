@@ -561,11 +561,7 @@ async fn test_google_drive_connect() {
     assert_eq!(info.id, "test-folder-id-123");
     assert_eq!(info.name, "test-folder-id-123");
     assert!(info.full_name.contains("Google Drive"));
-    assert!(info
-        .url
-        .as_deref()
-        .unwrap()
-        .contains("test-folder-id-123"));
+    assert!(info.url.as_deref().unwrap().contains("test-folder-id-123"));
 }
 
 #[tokio::test]

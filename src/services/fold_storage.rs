@@ -62,10 +62,14 @@ impl MemoryFrontmatter {
     /// Create frontmatter from a Memory.
     pub fn from_memory(memory: &Memory) -> Self {
         // Extract original_date from metadata if present
-        let original_date = memory.metadata
+        let original_date = memory
+            .metadata
             .as_ref()
             .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
-            .and_then(|json| json.get("original_date").and_then(|v| v.as_str().map(String::from)));
+            .and_then(|json| {
+                json.get("original_date")
+                    .and_then(|v| v.as_str().map(String::from))
+            });
 
         Self {
             id: memory.id.clone(),
@@ -97,7 +101,7 @@ impl MemoryFrontmatter {
             repository_id: None,
             memory_type: self.memory_type.clone(),
             source: Some("file".to_string()), // Default to file source for fold/ imports
-            content: None, // Content is stored in the body, not frontmatter
+            content: None,                    // Content is stored in the body, not frontmatter
             content_hash: Some(self.id.clone()),
             content_storage: None,
             title: self.title.clone(),
@@ -209,16 +213,8 @@ impl FoldStorageService {
     /// The path structure is: fold/a/b/aBcD123.md
     /// where 'a' and 'b' are the first two hex characters of the hash.
     pub fn get_memory_path(&self, project_root: &Path, hash: &str) -> PathBuf {
-        let char1 = if hash.len() >= 1 {
-            &hash[0..1]
-        } else {
-            "0"
-        };
-        let char2 = if hash.len() >= 2 {
-            &hash[1..2]
-        } else {
-            "0"
-        };
+        let char1 = if hash.len() >= 1 { &hash[0..1] } else { "0" };
+        let char2 = if hash.len() >= 2 { &hash[1..2] } else { "0" };
 
         project_root
             .join("fold")
@@ -242,7 +238,8 @@ impl FoldStorageService {
         memory: &Memory,
         content: &str,
     ) -> Result<PathBuf> {
-        self.write_memory_with_links(project_root, memory, content, &[]).await
+        self.write_memory_with_links(project_root, memory, content, &[])
+            .await
     }
 
     /// Write a memory with wiki-style links to related memories.
@@ -281,9 +278,8 @@ impl FoldStorageService {
         // Build frontmatter with related_to populated
         let mut frontmatter = MemoryFrontmatter::from_memory(memory);
         frontmatter.related_to = related_ids.to_vec();
-        let yaml = serde_yaml::to_string(&frontmatter).map_err(|e| {
-            Error::Internal(format!("Failed to serialize frontmatter: {}", e))
-        })?;
+        let yaml = serde_yaml::to_string(&frontmatter)
+            .map_err(|e| Error::Internal(format!("Failed to serialize frontmatter: {}", e)))?;
 
         // Build content with wiki-style links appended
         let mut full_content = content.to_string();
@@ -347,17 +343,14 @@ impl FoldStorageService {
         };
 
         // Re-write with new links
-        self.write_memory_with_links(project_root, &memory, &clean_content, related_ids).await
+        self.write_memory_with_links(project_root, &memory, &clean_content, related_ids)
+            .await
     }
 
     /// Read a memory from the fold/ directory.
     ///
     /// Returns the Memory metadata and body content.
-    pub async fn read_memory(
-        &self,
-        project_root: &Path,
-        hash: &str,
-    ) -> Result<(Memory, String)> {
+    pub async fn read_memory(&self, project_root: &Path, hash: &str) -> Result<(Memory, String)> {
         let file_path = self.get_memory_path(project_root, hash);
         let content = fs::read_to_string(&file_path).await.map_err(|e| {
             Error::FileNotFound(format!(
@@ -404,10 +397,8 @@ impl FoldStorageService {
         };
 
         // Parse frontmatter
-        let frontmatter: MemoryFrontmatter =
-            serde_yaml::from_str(frontmatter_str).map_err(|e| {
-                Error::InvalidInput(format!("Failed to parse frontmatter: {}", e))
-            })?;
+        let frontmatter: MemoryFrontmatter = serde_yaml::from_str(frontmatter_str)
+            .map_err(|e| Error::InvalidInput(format!("Failed to parse frontmatter: {}", e)))?;
 
         let memory = frontmatter.to_memory();
 
@@ -435,9 +426,11 @@ impl FoldStorageService {
             ))
         })?;
 
-        while let Some(entry) = entries.next_entry().await.map_err(|e| {
-            Error::Internal(format!("Failed to read directory entry: {}", e))
-        })? {
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to read directory entry: {}", e)))?
+        {
             let entry_path = entry.path();
 
             // Skip non-directories and special files (project.toml, .gitignore)
@@ -515,9 +508,8 @@ impl FoldStorageService {
             ))
         })?;
 
-        let config: ProjectConfig = toml::from_str(&content).map_err(|e| {
-            Error::InvalidInput(format!("Failed to parse project.toml: {}", e))
-        })?;
+        let config: ProjectConfig = toml::from_str(&content)
+            .map_err(|e| Error::InvalidInput(format!("Failed to parse project.toml: {}", e)))?;
 
         Ok(config)
     }
@@ -541,27 +533,30 @@ impl FoldStorageService {
 
         // Write project.toml
         let config_path = fold_path.join("project.toml");
-        let content: String = toml::to_string_pretty(config).map_err(|e| {
-            Error::Internal(format!("Failed to serialize project.toml: {}", e))
-        })?;
-        fs::write(&config_path, &content).await.map_err(|e: std::io::Error| {
-            Error::Internal(format!(
-                "Failed to write project.toml {}: {}",
-                config_path.display(),
-                e
-            ))
-        })?;
+        let content: String = toml::to_string_pretty(config)
+            .map_err(|e| Error::Internal(format!("Failed to serialize project.toml: {}", e)))?;
+        fs::write(&config_path, &content)
+            .await
+            .map_err(|e: std::io::Error| {
+                Error::Internal(format!(
+                    "Failed to write project.toml {}: {}",
+                    config_path.display(),
+                    e
+                ))
+            })?;
 
         // Create .gitignore
         let gitignore_path = fold_path.join(".gitignore");
         let gitignore_content = "*.tmp\n*.lock\n";
-        fs::write(&gitignore_path, gitignore_content).await.map_err(|e| {
-            Error::Internal(format!(
-                "Failed to write .gitignore {}: {}",
-                gitignore_path.display(),
-                e
-            ))
-        })?;
+        fs::write(&gitignore_path, gitignore_content)
+            .await
+            .map_err(|e| {
+                Error::Internal(format!(
+                    "Failed to write .gitignore {}: {}",
+                    gitignore_path.display(),
+                    e
+                ))
+            })?;
 
         Ok(())
     }

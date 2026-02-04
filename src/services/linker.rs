@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, error};
+use tracing::{debug, error, info};
 
 use crate::db::DbPool;
 use crate::error::{Error, Result};
@@ -121,7 +121,9 @@ impl LinkerService {
 
         // Sort by confidence
         filtered_suggestions.sort_by(|a, b| {
-            b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal)
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         // Log top suggestions for debugging
@@ -242,10 +244,7 @@ impl LinkerService {
             }
 
             // Skip if already linked
-            if self
-                .link_exists(&memory.id, &result.memory.id)
-                .await?
-            {
+            if self.link_exists(&memory.id, &result.memory.id).await? {
                 debug!(target_id = %result.memory.id, "Skipping - already linked");
                 continue;
             }
@@ -256,12 +255,16 @@ impl LinkerService {
             // Build reason including chunk details if available
             let (reason, confidence_boost) = if !result.matched_chunks.is_empty() {
                 let chunk_count = result.matched_chunks.len();
-                let top_chunks: Vec<String> = result.matched_chunks
+                let top_chunks: Vec<String> = result
+                    .matched_chunks
                     .iter()
                     .take(3)
                     .map(|c| {
                         if let Some(name) = &c.node_name {
-                            format!("{} '{}' (L{}-{})", c.node_type, name, c.start_line, c.end_line)
+                            format!(
+                                "{} '{}' (L{}-{})",
+                                c.node_type, name, c.start_line, c.end_line
+                            )
                         } else {
                             format!("{} (L{}-{})", c.node_type, c.start_line, c.end_line)
                         }
@@ -364,7 +367,10 @@ impl LinkerService {
         }
 
         // Find test file relationships
-        if file_path.contains(".test.") || file_path.contains("_test.") || file_path.contains("/tests/") {
+        if file_path.contains(".test.")
+            || file_path.contains("_test.")
+            || file_path.contains("/tests/")
+        {
             // Try to find the source file
             let source_path = file_path
                 .replace(".test.", ".")
@@ -427,10 +433,7 @@ impl LinkerService {
         }
 
         // Ask LLM for link suggestions
-        let llm_suggestions = self
-            .llm
-            .suggest_links(memory, &candidate_memories)
-            .await?;
+        let llm_suggestions = self.llm.suggest_links(memory, &candidate_memories).await?;
 
         let mut suggestions = Vec::new();
 
@@ -552,12 +555,10 @@ impl LinkerService {
 
     /// Delete a link.
     pub async fn delete_link(&self, link_id: &str) -> Result<()> {
-        let result = sqlx::query(
-            r#"DELETE FROM memory_links WHERE id = ?"#,
-        )
-        .bind(link_id)
-        .execute(&self.db)
-        .await?;
+        let result = sqlx::query(r#"DELETE FROM memory_links WHERE id = ?"#)
+            .bind(link_id)
+            .execute(&self.db)
+            .await?;
 
         if result.rows_affected() == 0 {
             return Err(Error::NotFound(format!("Link {}", link_id)));
@@ -573,12 +574,11 @@ impl LinkerService {
         project_slug: &str,
         min_confidence: f64,
     ) -> Result<BatchLinkingResult> {
-        let memories: Vec<Memory> = sqlx::query_as(
-            r#"SELECT * FROM memories WHERE project_id = ?"#,
-        )
-        .bind(project_id)
-        .fetch_all(&self.db)
-        .await?;
+        let memories: Vec<Memory> =
+            sqlx::query_as(r#"SELECT * FROM memories WHERE project_id = ?"#)
+                .bind(project_id)
+                .fetch_all(&self.db)
+                .await?;
 
         let mut total_links_created = 0;
         let mut total_suggestions = 0;

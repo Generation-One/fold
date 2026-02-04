@@ -322,7 +322,10 @@ impl ChunkerService {
             result.push(CodeChunk {
                 content,
                 node_type: format!("{}_part{}", chunk.node_type, part),
-                node_name: chunk.node_name.clone().map(|n| format!("{} (part {})", n, part)),
+                node_name: chunk
+                    .node_name
+                    .clone()
+                    .map(|n| format!("{} (part {})", n, part)),
                 start_line,
                 end_line,
                 start_byte: 0, // Approximate, recalculate if needed
@@ -633,9 +636,6 @@ And more lines."#;
             ChunkStrategy::HeadingBased
         );
         assert_eq!(service.select_strategy(""), ChunkStrategy::ParagraphBased);
-        assert_eq!(
-            service.select_strategy("unknown"),
-            ChunkStrategy::LineBased
-        );
+        assert_eq!(service.select_strategy("unknown"), ChunkStrategy::LineBased);
     }
 }

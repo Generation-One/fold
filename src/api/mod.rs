@@ -17,7 +17,7 @@ mod webhooks;
 
 use axum::Router;
 
-use crate::middleware::{require_token, require_auth};
+use crate::middleware::{require_auth, require_token};
 use crate::AppState;
 
 /// Build the complete API router.

@@ -190,7 +190,10 @@ pub async fn create_user(pool: &DbPool, input: CreateUser) -> Result<User> {
     .await
     .map_err(|e| match e {
         sqlx::Error::Database(ref db_err) if db_err.is_unique_violation() => {
-            Error::AlreadyExists(format!("User with provider {} and subject {} already exists", input.provider, input.subject))
+            Error::AlreadyExists(format!(
+                "User with provider {} and subject {} already exists",
+                input.provider, input.subject
+            ))
         }
         _ => Error::Database(e),
     })
@@ -206,7 +209,11 @@ pub async fn get_user(pool: &DbPool, id: &str) -> Result<User> {
 }
 
 /// Get a user by provider and subject (OIDC lookup).
-pub async fn get_user_by_oidc(pool: &DbPool, provider: &str, subject: &str) -> Result<Option<User>> {
+pub async fn get_user_by_oidc(
+    pool: &DbPool,
+    provider: &str,
+    subject: &str,
+) -> Result<Option<User>> {
     sqlx::query_as::<_, User>(
         r#"
         SELECT * FROM users
@@ -307,20 +314,16 @@ pub async fn update_last_login(pool: &DbPool, id: &str) -> Result<()> {
 pub async fn list_users(pool: &DbPool, role: Option<UserRole>) -> Result<Vec<User>> {
     match role {
         Some(r) => {
-            sqlx::query_as::<_, User>(
-                "SELECT * FROM users WHERE role = ? ORDER BY created_at DESC",
-            )
-            .bind(r.as_str())
-            .fetch_all(pool)
-            .await
-            .map_err(Error::Database)
-        }
-        None => {
-            sqlx::query_as::<_, User>("SELECT * FROM users ORDER BY created_at DESC")
+            sqlx::query_as::<_, User>("SELECT * FROM users WHERE role = ? ORDER BY created_at DESC")
+                .bind(r.as_str())
                 .fetch_all(pool)
                 .await
                 .map_err(Error::Database)
         }
+        None => sqlx::query_as::<_, User>("SELECT * FROM users ORDER BY created_at DESC")
+            .fetch_all(pool)
+            .await
+            .map_err(Error::Database),
     }
 }
 
@@ -383,7 +386,10 @@ pub async fn get_valid_session(pool: &DbPool, id: &str) -> Result<Option<Session
 }
 
 /// Get session with associated user.
-pub async fn get_session_with_user(pool: &DbPool, session_id: &str) -> Result<Option<(Session, User)>> {
+pub async fn get_session_with_user(
+    pool: &DbPool,
+    session_id: &str,
+) -> Result<Option<(Session, User)>> {
     let session = match get_valid_session(pool, session_id).await? {
         Some(s) => s,
         None => return Ok(None),
@@ -504,7 +510,10 @@ pub async fn get_api_tokens_by_prefix(pool: &DbPool, prefix: &str) -> Result<Vec
 }
 
 /// Get a valid (non-expired) API token by hash.
-pub async fn get_valid_api_token_by_hash(pool: &DbPool, token_hash: &str) -> Result<Option<ApiToken>> {
+pub async fn get_valid_api_token_by_hash(
+    pool: &DbPool,
+    token_hash: &str,
+) -> Result<Option<ApiToken>> {
     sqlx::query_as::<_, ApiToken>(
         r#"
         SELECT * FROM api_tokens
@@ -622,27 +631,40 @@ mod tests {
         let pool = setup_test_db().await;
 
         // Create user first
-        let user = create_user(&pool, CreateUser {
-            id: "user-1".to_string(),
-            provider: "google".to_string(),
-            subject: "sub-123".to_string(),
-            email: None,
-            display_name: None,
-            avatar_url: None,
-            role: UserRole::Member,
-        }).await.unwrap();
+        let user = create_user(
+            &pool,
+            CreateUser {
+                id: "user-1".to_string(),
+                provider: "google".to_string(),
+                subject: "sub-123".to_string(),
+                email: None,
+                display_name: None,
+                avatar_url: None,
+                role: UserRole::Member,
+            },
+        )
+        .await
+        .unwrap();
 
         // Create session
-        let session = create_session(&pool, CreateSession {
-            id: "session-1".to_string(),
-            user_id: user.id.clone(),
-            expires_at: Utc::now() + chrono::Duration::hours(24),
-        }).await.unwrap();
+        let session = create_session(
+            &pool,
+            CreateSession {
+                id: "session-1".to_string(),
+                user_id: user.id.clone(),
+                expires_at: Utc::now() + chrono::Duration::hours(24),
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(session.user_id, user.id);
 
         // Verify session exists and is valid
-        let (sess, usr) = get_session_with_user(&pool, "session-1").await.unwrap().unwrap();
+        let (sess, usr) = get_session_with_user(&pool, "session-1")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(sess.id, "session-1");
         assert_eq!(usr.id, user.id);
     }

@@ -6,8 +6,8 @@ use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-use super::DbPool;
 use super::projects::GitProvider;
+use super::DbPool;
 
 // ============================================================================
 // Repository Types
@@ -53,7 +53,10 @@ impl Repository {
         match self.provider.as_str() {
             "github" => format!("https://github.com/{}/{}", self.owner, self.repo),
             "gitlab" => format!("https://gitlab.com/{}/{}", self.owner, self.repo),
-            "local" => self.local_path.clone().unwrap_or_else(|| format!("file://{}/{}", self.owner, self.repo)),
+            "local" => self
+                .local_path
+                .clone()
+                .unwrap_or_else(|| format!("file://{}/{}", self.owner, self.repo)),
             _ => format!("{}/{}", self.owner, self.repo),
         }
     }
@@ -100,7 +103,7 @@ pub struct GitCommit {
     pub message: String,
     pub author_name: Option<String>,
     pub author_email: Option<String>,
-    pub files_changed: Option<String>,  // JSON array
+    pub files_changed: Option<String>, // JSON array
     pub insertions: Option<i32>,
     pub deletions: Option<i32>,
     pub committed_at: String,
@@ -136,7 +139,7 @@ impl GitCommit {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileChange {
     pub path: String,
-    pub status: String,  // 'added', 'modified', 'deleted', 'renamed'
+    pub status: String, // 'added', 'modified', 'deleted', 'renamed'
     pub additions: Option<i32>,
     pub deletions: Option<i32>,
 }
@@ -317,7 +320,11 @@ pub async fn get_repository_by_path(
 }
 
 /// Update a repository.
-pub async fn update_repository(pool: &DbPool, id: &str, input: UpdateRepository) -> Result<Repository> {
+pub async fn update_repository(
+    pool: &DbPool,
+    id: &str,
+    input: UpdateRepository,
+) -> Result<Repository> {
     let mut updates = Vec::new();
     let mut bindings: Vec<Option<String>> = Vec::new();
 
@@ -436,12 +443,10 @@ pub async fn list_project_repositories(pool: &DbPool, project_id: &str) -> Resul
 
 /// List all repositories.
 pub async fn list_repositories(pool: &DbPool) -> Result<Vec<Repository>> {
-    sqlx::query_as::<_, Repository>(
-        "SELECT * FROM repositories ORDER BY created_at DESC",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(Error::Database)
+    sqlx::query_as::<_, Repository>("SELECT * FROM repositories ORDER BY created_at DESC")
+        .fetch_all(pool)
+        .await
+        .map_err(Error::Database)
 }
 
 /// List all repositories with polling enabled.
@@ -462,14 +467,15 @@ pub async fn list_polling_repositories(pool: &DbPool) -> Result<Vec<Repository>>
 
 /// Get a repository by its webhook ID.
 /// Used for routing incoming webhook events to the correct repository.
-pub async fn get_repository_by_webhook_id(pool: &DbPool, webhook_id: &str) -> Result<Option<Repository>> {
-    sqlx::query_as::<_, Repository>(
-        "SELECT * FROM repositories WHERE webhook_id = ?",
-    )
-    .bind(webhook_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(Error::Database)
+pub async fn get_repository_by_webhook_id(
+    pool: &DbPool,
+    webhook_id: &str,
+) -> Result<Option<Repository>> {
+    sqlx::query_as::<_, Repository>("SELECT * FROM repositories WHERE webhook_id = ?")
+        .bind(webhook_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(Error::Database)
 }
 
 /// Get the webhook secret for a repository.
@@ -492,7 +498,9 @@ pub async fn get_webhook_secret(pool: &DbPool, repo_id: &str) -> Result<Option<S
 
 /// Create a git commit record.
 pub async fn create_git_commit(pool: &DbPool, input: CreateGitCommit) -> Result<GitCommit> {
-    let files_json = input.files_changed.map(|f| serde_json::to_string(&f).unwrap_or_default());
+    let files_json = input
+        .files_changed
+        .map(|f| serde_json::to_string(&f).unwrap_or_default());
 
     sqlx::query_as::<_, GitCommit>(
         r#"
@@ -643,12 +651,11 @@ pub async fn list_commits_without_summary(
 
 /// Count commits for a repository.
 pub async fn count_repository_commits(pool: &DbPool, repository_id: &str) -> Result<i64> {
-    let (count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM git_commits WHERE repository_id = ?",
-    )
-    .bind(repository_id)
-    .fetch_one(pool)
-    .await?;
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM git_commits WHERE repository_id = ?")
+            .bind(repository_id)
+            .fetch_one(pool)
+            .await?;
     Ok(count)
 }
 
@@ -666,7 +673,10 @@ pub async fn delete_repository_commits(pool: &DbPool, repository_id: &str) -> Re
 // ============================================================================
 
 /// Create a pull request record.
-pub async fn create_git_pull_request(pool: &DbPool, input: CreateGitPullRequest) -> Result<GitPullRequest> {
+pub async fn create_git_pull_request(
+    pool: &DbPool,
+    input: CreateGitPullRequest,
+) -> Result<GitPullRequest> {
     sqlx::query_as::<_, GitPullRequest>(
         r#"
         INSERT INTO git_pull_requests (
@@ -797,7 +807,10 @@ pub async fn list_repository_pull_requests(
 
 /// List open pull requests for a repository.
 /// Uses idx_git_prs_state index.
-pub async fn list_open_pull_requests(pool: &DbPool, repository_id: &str) -> Result<Vec<GitPullRequest>> {
+pub async fn list_open_pull_requests(
+    pool: &DbPool,
+    repository_id: &str,
+) -> Result<Vec<GitPullRequest>> {
     sqlx::query_as::<_, GitPullRequest>(
         r#"
         SELECT * FROM git_pull_requests
@@ -833,17 +846,19 @@ pub async fn list_pull_requests_by_state(
 
 /// Count pull requests for a repository.
 pub async fn count_repository_pull_requests(pool: &DbPool, repository_id: &str) -> Result<i64> {
-    let (count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM git_pull_requests WHERE repository_id = ?",
-    )
-    .bind(repository_id)
-    .fetch_one(pool)
-    .await?;
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM git_pull_requests WHERE repository_id = ?")
+            .bind(repository_id)
+            .fetch_one(pool)
+            .await?;
     Ok(count)
 }
 
 /// Upsert a pull request (for webhook updates).
-pub async fn upsert_git_pull_request(pool: &DbPool, input: CreateGitPullRequest) -> Result<GitPullRequest> {
+pub async fn upsert_git_pull_request(
+    pool: &DbPool,
+    input: CreateGitPullRequest,
+) -> Result<GitPullRequest> {
     sqlx::query_as::<_, GitPullRequest>(
         r#"
         INSERT INTO git_pull_requests (
@@ -879,18 +894,23 @@ pub async fn upsert_git_pull_request(pool: &DbPool, input: CreateGitPullRequest)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{init_pool, migrate, create_project, CreateProject};
+    use crate::db::{create_project, init_pool, migrate, CreateProject};
 
     async fn setup_test_db() -> DbPool {
         let pool = init_pool(":memory:").await.unwrap();
         migrate(&pool).await.unwrap();
 
-        create_project(&pool, CreateProject {
-            id: "proj-1".to_string(),
-            slug: "test".to_string(),
-            name: "Test".to_string(),
-            description: None,
-        }).await.unwrap();
+        create_project(
+            &pool,
+            CreateProject {
+                id: "proj-1".to_string(),
+                slug: "test".to_string(),
+                name: "Test".to_string(),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
 
         pool
     }
@@ -899,16 +919,21 @@ mod tests {
     async fn test_create_and_get_repository() {
         let pool = setup_test_db().await;
 
-        let repo = create_repository(&pool, CreateRepository {
-            id: "repo-1".to_string(),
-            project_id: "proj-1".to_string(),
-            provider: GitProvider::GitHub,
-            owner: "testorg".to_string(),
-            repo: "testrepo".to_string(),
-            branch: "main".to_string(),
-            access_token: "token123".to_string(),
-            local_path: None,
-        }).await.unwrap();
+        let repo = create_repository(
+            &pool,
+            CreateRepository {
+                id: "repo-1".to_string(),
+                project_id: "proj-1".to_string(),
+                provider: GitProvider::GitHub,
+                owner: "testorg".to_string(),
+                repo: "testrepo".to_string(),
+                branch: "main".to_string(),
+                access_token: "token123".to_string(),
+                local_path: None,
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(repo.id, "repo-1");
         assert_eq!(repo.full_name(), "testorg/testrepo");
@@ -922,34 +947,44 @@ mod tests {
     async fn test_create_git_commit() {
         let pool = setup_test_db().await;
 
-        create_repository(&pool, CreateRepository {
-            id: "repo-1".to_string(),
-            project_id: "proj-1".to_string(),
-            provider: GitProvider::GitHub,
-            owner: "test".to_string(),
-            repo: "test".to_string(),
-            branch: "main".to_string(),
-            access_token: "token".to_string(),
-            local_path: None,
-        }).await.unwrap();
+        create_repository(
+            &pool,
+            CreateRepository {
+                id: "repo-1".to_string(),
+                project_id: "proj-1".to_string(),
+                provider: GitProvider::GitHub,
+                owner: "test".to_string(),
+                repo: "test".to_string(),
+                branch: "main".to_string(),
+                access_token: "token".to_string(),
+                local_path: None,
+            },
+        )
+        .await
+        .unwrap();
 
-        let commit = create_git_commit(&pool, CreateGitCommit {
-            id: "commit-1".to_string(),
-            repository_id: "repo-1".to_string(),
-            sha: "abc123def456".to_string(),
-            message: "Fix bug in authentication\n\nDetailed description".to_string(),
-            author_name: Some("Test User".to_string()),
-            author_email: Some("test@example.com".to_string()),
-            files_changed: Some(vec![FileChange {
-                path: "src/auth.rs".to_string(),
-                status: "modified".to_string(),
-                additions: Some(10),
+        let commit = create_git_commit(
+            &pool,
+            CreateGitCommit {
+                id: "commit-1".to_string(),
+                repository_id: "repo-1".to_string(),
+                sha: "abc123def456".to_string(),
+                message: "Fix bug in authentication\n\nDetailed description".to_string(),
+                author_name: Some("Test User".to_string()),
+                author_email: Some("test@example.com".to_string()),
+                files_changed: Some(vec![FileChange {
+                    path: "src/auth.rs".to_string(),
+                    status: "modified".to_string(),
+                    additions: Some(10),
+                    deletions: Some(5),
+                }]),
+                insertions: Some(10),
                 deletions: Some(5),
-            }]),
-            insertions: Some(10),
-            deletions: Some(5),
-            committed_at: "2024-01-01T12:00:00Z".to_string(),
-        }).await.unwrap();
+                committed_at: "2024-01-01T12:00:00Z".to_string(),
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(commit.short_sha(), "abc123d");
         assert_eq!(commit.summary(), "Fix bug in authentication");
@@ -960,30 +995,40 @@ mod tests {
     async fn test_create_pull_request() {
         let pool = setup_test_db().await;
 
-        create_repository(&pool, CreateRepository {
-            id: "repo-1".to_string(),
-            project_id: "proj-1".to_string(),
-            provider: GitProvider::GitHub,
-            owner: "test".to_string(),
-            repo: "test".to_string(),
-            branch: "main".to_string(),
-            access_token: "token".to_string(),
-            local_path: None,
-        }).await.unwrap();
+        create_repository(
+            &pool,
+            CreateRepository {
+                id: "repo-1".to_string(),
+                project_id: "proj-1".to_string(),
+                provider: GitProvider::GitHub,
+                owner: "test".to_string(),
+                repo: "test".to_string(),
+                branch: "main".to_string(),
+                access_token: "token".to_string(),
+                local_path: None,
+            },
+        )
+        .await
+        .unwrap();
 
-        let pr = create_git_pull_request(&pool, CreateGitPullRequest {
-            id: "pr-1".to_string(),
-            repository_id: "repo-1".to_string(),
-            number: 42,
-            title: "Add new feature".to_string(),
-            description: Some("This PR adds...".to_string()),
-            state: PrState::Open,
-            author: Some("contributor".to_string()),
-            source_branch: Some("feature/new".to_string()),
-            target_branch: Some("main".to_string()),
-            created_at: "2024-01-01T12:00:00Z".to_string(),
-            merged_at: None,
-        }).await.unwrap();
+        let pr = create_git_pull_request(
+            &pool,
+            CreateGitPullRequest {
+                id: "pr-1".to_string(),
+                repository_id: "repo-1".to_string(),
+                number: 42,
+                title: "Add new feature".to_string(),
+                description: Some("This PR adds...".to_string()),
+                state: PrState::Open,
+                author: Some("contributor".to_string()),
+                source_branch: Some("feature/new".to_string()),
+                target_branch: Some("main".to_string()),
+                created_at: "2024-01-01T12:00:00Z".to_string(),
+                merged_at: None,
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(pr.number, 42);
         assert!(pr.is_open());

@@ -125,11 +125,7 @@ pub async fn list_groups(pool: &DbPool) -> Result<Vec<Group>> {
 }
 
 /// Update a group.
-pub async fn update_group(
-    pool: &DbPool,
-    id: &str,
-    input: UpdateGroup,
-) -> Result<Group> {
+pub async fn update_group(pool: &DbPool, id: &str, input: UpdateGroup) -> Result<Group> {
     let mut updates = Vec::new();
     let mut bindings: Vec<String> = Vec::new();
 
@@ -222,13 +218,11 @@ pub async fn add_group_member(
 
 /// Remove a user from a group.
 pub async fn remove_group_member(pool: &DbPool, group_id: &str, user_id: &str) -> Result<bool> {
-    let result = sqlx::query(
-        "DELETE FROM group_members WHERE group_id = ? AND user_id = ?",
-    )
-    .bind(group_id)
-    .bind(user_id)
-    .execute(pool)
-    .await?;
+    let result = sqlx::query("DELETE FROM group_members WHERE group_id = ? AND user_id = ?")
+        .bind(group_id)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
 
     Ok(result.rows_affected() > 0)
 }
@@ -266,13 +260,12 @@ pub async fn list_user_groups(pool: &DbPool, user_id: &str) -> Result<Vec<Group>
 
 /// Check if a user is in a group.
 pub async fn is_user_in_group(pool: &DbPool, group_id: &str, user_id: &str) -> Result<bool> {
-    let result = sqlx::query(
-        "SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ? LIMIT 1",
-    )
-    .bind(group_id)
-    .bind(user_id)
-    .fetch_optional(pool)
-    .await?;
+    let result =
+        sqlx::query("SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ? LIMIT 1")
+            .bind(group_id)
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await?;
 
     Ok(result.is_some())
 }

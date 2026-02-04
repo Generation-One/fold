@@ -127,7 +127,10 @@ mod tests {
         let providers = registry.providers();
         assert!(!providers.is_empty());
 
-        let github_info = providers.iter().find(|p| p.provider_type == "github").unwrap();
+        let github_info = providers
+            .iter()
+            .find(|p| p.provider_type == "github")
+            .unwrap();
         assert_eq!(github_info.display_name, "GitHub");
         assert!(github_info.supports_webhooks);
         assert!(!github_info.requires_polling);

@@ -126,13 +126,11 @@ pub async fn get_attachment_optional(pool: &DbPool, id: &str) -> Result<Option<A
 /// Note: This only deletes the database record, not the file.
 /// File deletion should be handled by the caller.
 pub async fn delete_attachment(pool: &DbPool, id: &str) -> Result<Attachment> {
-    sqlx::query_as::<_, Attachment>(
-        "DELETE FROM attachments WHERE id = ? RETURNING *",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| Error::NotFound(format!("Attachment not found: {}", id)))
+    sqlx::query_as::<_, Attachment>("DELETE FROM attachments WHERE id = ? RETURNING *")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| Error::NotFound(format!("Attachment not found: {}", id)))
 }
 
 /// Delete all attachments for a memory.
@@ -229,33 +227,28 @@ pub async fn list_attachments(pool: &DbPool, filter: AttachmentFilter) -> Result
 
 /// Count attachments for a memory.
 pub async fn count_memory_attachments(pool: &DbPool, memory_id: &str) -> Result<i64> {
-    let (count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM attachments WHERE memory_id = ?",
-    )
-    .bind(memory_id)
-    .fetch_one(pool)
-    .await?;
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM attachments WHERE memory_id = ?")
+        .bind(memory_id)
+        .fetch_one(pool)
+        .await?;
     Ok(count)
 }
 
 /// Get total size of attachments for a memory.
 pub async fn get_memory_attachments_size(pool: &DbPool, memory_id: &str) -> Result<i64> {
-    let (size,): (i64,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(size_bytes), 0) FROM attachments WHERE memory_id = ?",
-    )
-    .bind(memory_id)
-    .fetch_one(pool)
-    .await?;
+    let (size,): (i64,) =
+        sqlx::query_as("SELECT COALESCE(SUM(size_bytes), 0) FROM attachments WHERE memory_id = ?")
+            .bind(memory_id)
+            .fetch_one(pool)
+            .await?;
     Ok(size)
 }
 
 /// Get total storage used by all attachments.
 pub async fn get_total_storage_used(pool: &DbPool) -> Result<i64> {
-    let (size,): (i64,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(size_bytes), 0) FROM attachments",
-    )
-    .fetch_one(pool)
-    .await?;
+    let (size,): (i64,) = sqlx::query_as("SELECT COALESCE(SUM(size_bytes), 0) FROM attachments")
+        .fetch_one(pool)
+        .await?;
     Ok(size)
 }
 
@@ -285,22 +278,18 @@ pub async fn get_attachment_by_storage_path(
     pool: &DbPool,
     storage_path: &str,
 ) -> Result<Option<Attachment>> {
-    sqlx::query_as::<_, Attachment>(
-        "SELECT * FROM attachments WHERE storage_path = ?",
-    )
-    .bind(storage_path)
-    .fetch_optional(pool)
-    .await
-    .map_err(Error::Database)
+    sqlx::query_as::<_, Attachment>("SELECT * FROM attachments WHERE storage_path = ?")
+        .bind(storage_path)
+        .fetch_optional(pool)
+        .await
+        .map_err(Error::Database)
 }
 
 /// List all unique storage paths (for cleanup operations).
 pub async fn list_all_storage_paths(pool: &DbPool) -> Result<Vec<String>> {
-    let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT storage_path FROM attachments",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<(String,)> = sqlx::query_as("SELECT storage_path FROM attachments")
+        .fetch_all(pool)
+        .await?;
 
     Ok(rows.into_iter().map(|(path,)| path).collect())
 }
@@ -328,37 +317,49 @@ pub async fn get_attachments_by_ids(pool: &DbPool, ids: &[String]) -> Result<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{init_pool, migrate, create_project, CreateProject, create_memory, CreateMemory, MemoryType};
+    use crate::db::{
+        create_memory, create_project, init_pool, migrate, CreateMemory, CreateProject, MemoryType,
+    };
 
     async fn setup_test_db() -> DbPool {
         let pool = init_pool(":memory:").await.unwrap();
         migrate(&pool).await.unwrap();
 
-        create_project(&pool, CreateProject {
-            id: "proj-1".to_string(),
-            slug: "test".to_string(),
-            name: "Test".to_string(),
-            description: None,
-        }).await.unwrap();
+        create_project(
+            &pool,
+            CreateProject {
+                id: "proj-1".to_string(),
+                slug: "test".to_string(),
+                name: "Test".to_string(),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
 
-        create_memory(&pool, CreateMemory {
-            id: "mem-1".to_string(),
-            project_id: "proj-1".to_string(),
-            repository_id: None,
-            memory_type: MemoryType::General,
-            source: None,
-            title: Some("Test".to_string()),
-            content: Some("Content".to_string()),
-            content_hash: None,
-            content_storage: "filesystem".to_string(),
-            file_path: None,
-            language: None,
-            git_branch: None,
-            git_commit_sha: None,
-            author: None,
-            keywords: None,
-            tags: None,
-        }).await.unwrap();
+        create_memory(
+            &pool,
+            CreateMemory {
+                id: "mem-1".to_string(),
+                project_id: "proj-1".to_string(),
+                repository_id: None,
+                memory_type: MemoryType::General,
+                source: None,
+                title: Some("Test".to_string()),
+                content: Some("Content".to_string()),
+                content_hash: None,
+                content_storage: "filesystem".to_string(),
+                file_path: None,
+                language: None,
+                git_branch: None,
+                git_commit_sha: None,
+                author: None,
+                keywords: None,
+                tags: None,
+            },
+        )
+        .await
+        .unwrap();
 
         pool
     }
@@ -367,14 +368,19 @@ mod tests {
     async fn test_create_and_get_attachment() {
         let pool = setup_test_db().await;
 
-        let attachment = create_attachment(&pool, CreateAttachment {
-            id: "att-1".to_string(),
-            memory_id: "mem-1".to_string(),
-            filename: "document.pdf".to_string(),
-            content_type: "application/pdf".to_string(),
-            size_bytes: 1024 * 1024,
-            storage_path: "/data/attachments/att-1.pdf".to_string(),
-        }).await.unwrap();
+        let attachment = create_attachment(
+            &pool,
+            CreateAttachment {
+                id: "att-1".to_string(),
+                memory_id: "mem-1".to_string(),
+                filename: "document.pdf".to_string(),
+                content_type: "application/pdf".to_string(),
+                size_bytes: 1024 * 1024,
+                storage_path: "/data/attachments/att-1.pdf".to_string(),
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(attachment.id, "att-1");
         assert!(attachment.is_pdf());
@@ -390,14 +396,19 @@ mod tests {
         let pool = setup_test_db().await;
 
         for i in 1..=3 {
-            create_attachment(&pool, CreateAttachment {
-                id: format!("att-{}", i),
-                memory_id: "mem-1".to_string(),
-                filename: format!("file-{}.txt", i),
-                content_type: "text/plain".to_string(),
-                size_bytes: 100 * i,
-                storage_path: format!("/data/att-{}.txt", i),
-            }).await.unwrap();
+            create_attachment(
+                &pool,
+                CreateAttachment {
+                    id: format!("att-{}", i),
+                    memory_id: "mem-1".to_string(),
+                    filename: format!("file-{}.txt", i),
+                    content_type: "text/plain".to_string(),
+                    size_bytes: 100 * i,
+                    storage_path: format!("/data/att-{}.txt", i),
+                },
+            )
+            .await
+            .unwrap();
         }
 
         let attachments = list_memory_attachments(&pool, "mem-1").await.unwrap();
@@ -414,14 +425,19 @@ mod tests {
     async fn test_delete_memory_attachments() {
         let pool = setup_test_db().await;
 
-        create_attachment(&pool, CreateAttachment {
-            id: "att-1".to_string(),
-            memory_id: "mem-1".to_string(),
-            filename: "file.txt".to_string(),
-            content_type: "text/plain".to_string(),
-            size_bytes: 100,
-            storage_path: "/data/att-1.txt".to_string(),
-        }).await.unwrap();
+        create_attachment(
+            &pool,
+            CreateAttachment {
+                id: "att-1".to_string(),
+                memory_id: "mem-1".to_string(),
+                filename: "file.txt".to_string(),
+                content_type: "text/plain".to_string(),
+                size_bytes: 100,
+                storage_path: "/data/att-1.txt".to_string(),
+            },
+        )
+        .await
+        .unwrap();
 
         let deleted = delete_memory_attachments(&pool, "mem-1").await.unwrap();
         assert_eq!(deleted.len(), 1);

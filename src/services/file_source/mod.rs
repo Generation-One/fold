@@ -158,12 +158,7 @@ pub trait FileSourceProvider: Send + Sync {
     /// - `token`: Access token
     ///
     /// Returns Ok(()) on success. Not all providers support deletion.
-    async fn delete_file(
-        &self,
-        source: &SourceInfo,
-        path: &str,
-        token: &str,
-    ) -> Result<()> {
+    async fn delete_file(&self, source: &SourceInfo, path: &str, token: &str) -> Result<()> {
         let _ = (source, path, token);
         Err(crate::error::Error::Validation(
             "Delete not supported by this provider".to_string(),

@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use reqwest::{Client, header};
+use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -132,14 +132,8 @@ impl GitLabService {
     /// Build headers with authentication.
     fn build_headers(&self, token: &str) -> header::HeaderMap {
         let mut headers = header::HeaderMap::new();
-        headers.insert(
-            "PRIVATE-TOKEN",
-            token.parse().unwrap(),
-        );
-        headers.insert(
-            header::CONTENT_TYPE,
-            "application/json".parse().unwrap(),
-        );
+        headers.insert("PRIVATE-TOKEN", token.parse().unwrap());
+        headers.insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
         headers
     }
 
@@ -164,7 +158,10 @@ impl GitLabService {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(Error::GitLab(format!("GitLab API error {}: {}", status, text)));
+            return Err(Error::GitLab(format!(
+                "GitLab API error {}: {}",
+                status, text
+            )));
         }
 
         response
@@ -205,7 +202,10 @@ impl GitLabService {
                 return Err(Error::NotFound(format!("File not found: {}", path)));
             }
             let text = response.text().await.unwrap_or_default();
-            return Err(Error::GitLab(format!("GitLab API error {}: {}", status, text)));
+            return Err(Error::GitLab(format!(
+                "GitLab API error {}: {}",
+                status, text
+            )));
         }
 
         let mut file_content: FileContent = response
@@ -263,7 +263,10 @@ impl GitLabService {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(Error::GitLab(format!("GitLab API error {}: {}", status, text)));
+            return Err(Error::GitLab(format!(
+                "GitLab API error {}: {}",
+                status, text
+            )));
         }
 
         response
@@ -297,7 +300,10 @@ impl GitLabService {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(Error::GitLab(format!("GitLab API error {}: {}", status, text)));
+            return Err(Error::GitLab(format!(
+                "GitLab API error {}: {}",
+                status, text
+            )));
         }
 
         response
@@ -331,7 +337,10 @@ impl GitLabService {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(Error::GitLab(format!("GitLab API error {}: {}", status, text)));
+            return Err(Error::GitLab(format!(
+                "GitLab API error {}: {}",
+                status, text
+            )));
         }
 
         response
@@ -411,7 +420,10 @@ impl GitLabService {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(Error::GitLab(format!("GitLab API error {}: {}", status, text)));
+            return Err(Error::GitLab(format!(
+                "GitLab API error {}: {}",
+                status, text
+            )));
         }
 
         let webhook: GitLabWebhook = response
@@ -454,7 +466,10 @@ impl GitLabService {
         if !response.status().is_success() && response.status().as_u16() != 404 {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(Error::GitLab(format!("GitLab API error {}: {}", status, text)));
+            return Err(Error::GitLab(format!(
+                "GitLab API error {}: {}",
+                status, text
+            )));
         }
 
         info!(
@@ -488,7 +503,10 @@ impl GitLabService {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(Error::GitLab(format!("GitLab API error {}: {}", status, text)));
+            return Err(Error::GitLab(format!(
+                "GitLab API error {}: {}",
+                status, text
+            )));
         }
 
         response

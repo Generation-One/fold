@@ -15,9 +15,7 @@ use crate::models::{
     CommitInfo, GitCommit, Memory, MemoryCreate, MemoryLink, MemoryType, Project, Repository,
 };
 
-use super::{
-    GitHubService, GitLabService, IndexerService, LlmService, MemoryService,
-};
+use super::{GitHubService, GitLabService, IndexerService, LlmService, MemoryService};
 
 /// Service for processing git webhooks and syncing repositories.
 #[derive(Clone)]
@@ -313,15 +311,18 @@ impl GitSyncService {
         ];
 
         // Check global patterns
-        if global_patterns.iter().any(|pattern| author.contains(pattern)) {
+        if global_patterns
+            .iter()
+            .any(|pattern| author.contains(pattern))
+        {
             return true;
         }
 
         // Check project-specific patterns
         let project_patterns = project.ignored_commit_authors_vec();
-        project_patterns.iter().any(|pattern| {
-            author.contains(&pattern.to_lowercase())
-        })
+        project_patterns
+            .iter()
+            .any(|pattern| author.contains(&pattern.to_lowercase()))
     }
 
     /// Process a single commit.
@@ -366,11 +367,21 @@ impl GitSyncService {
                 Ok(s) => s,
                 Err(e) => {
                     warn!(error = %e, "Failed to generate commit summary");
-                    commit.message.lines().next().unwrap_or(&commit.message).to_string()
+                    commit
+                        .message
+                        .lines()
+                        .next()
+                        .unwrap_or(&commit.message)
+                        .to_string()
                 }
             }
         } else {
-            commit.message.lines().next().unwrap_or(&commit.message).to_string()
+            commit
+                .message
+                .lines()
+                .next()
+                .unwrap_or(&commit.message)
+                .to_string()
         };
 
         // Create commit memory
@@ -391,8 +402,14 @@ impl GitSyncService {
                     tags: vec!["commit".to_string()],
                     metadata: [
                         ("sha".to_string(), serde_json::json!(commit.sha)),
-                        ("repository_id".to_string(), serde_json::json!(repository.id)),
-                        ("insertions".to_string(), serde_json::json!(commit.insertions)),
+                        (
+                            "repository_id".to_string(),
+                            serde_json::json!(repository.id),
+                        ),
+                        (
+                            "insertions".to_string(),
+                            serde_json::json!(commit.insertions),
+                        ),
                         ("deletions".to_string(), serde_json::json!(commit.deletions)),
                     ]
                     .into_iter()
@@ -579,11 +596,7 @@ impl GitSyncService {
     }
 
     /// Update repository last indexed timestamp and commit SHA.
-    async fn update_repository_last_indexed(
-        &self,
-        repository_id: &str,
-        sha: &str,
-    ) -> Result<()> {
+    async fn update_repository_last_indexed(&self, repository_id: &str, sha: &str) -> Result<()> {
         sqlx::query(
             r#"
             UPDATE repositories
@@ -632,43 +645,50 @@ impl GitSyncService {
     /// Extracts repository info from payload and dispatches to provider-specific handler.
     pub async fn process_push_webhook(&self, payload: &serde_json::Value) -> Result<WebhookResult> {
         // Extract repository ID from payload
-        let repo_id = payload.get("repository_id")
+        let repo_id = payload
+            .get("repository_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| Error::Validation("Missing repository_id in webhook payload".to_string()))?;
+            .ok_or_else(|| {
+                Error::Validation("Missing repository_id in webhook payload".to_string())
+            })?;
 
         // Get repository
-        let repo = self.get_repository(repo_id).await?
+        let repo = self
+            .get_repository(repo_id)
+            .await?
             .ok_or_else(|| Error::NotFound(format!("Repository not found: {}", repo_id)))?;
 
         // Get project
-        let project: Project = sqlx::query_as(
-            "SELECT * FROM projects WHERE id = ?"
-        )
-        .bind(&repo.project_id)
-        .fetch_one(&self.db)
-        .await?;
+        let project: Project = sqlx::query_as("SELECT * FROM projects WHERE id = ?")
+            .bind(&repo.project_id)
+            .fetch_one(&self.db)
+            .await?;
 
         // Dispatch based on provider
         match repo.provider.as_str() {
             "github" => {
                 // Parse GitHub push payload
-                let push_payload: GitHubPushPayload = serde_json::from_value(
-                    payload.get("data").cloned().unwrap_or_default()
-                ).map_err(|e| Error::Validation(format!("Invalid GitHub push payload: {}", e)))?;
+                let push_payload: GitHubPushPayload =
+                    serde_json::from_value(payload.get("data").cloned().unwrap_or_default())
+                        .map_err(|e| {
+                            Error::Validation(format!("Invalid GitHub push payload: {}", e))
+                        })?;
 
-                self.process_github_push(push_payload, &repo, &project).await
+                self.process_github_push(push_payload, &repo, &project)
+                    .await
             }
             "gitlab" => {
                 // Parse GitLab push payload
-                let push_payload: GitLabPushPayload = serde_json::from_value(
-                    payload.get("data").cloned().unwrap_or_default()
-                ).map_err(|e| Error::Validation(format!("Invalid GitLab push payload: {}", e)))?;
+                let push_payload: GitLabPushPayload =
+                    serde_json::from_value(payload.get("data").cloned().unwrap_or_default())
+                        .map_err(|e| {
+                            Error::Validation(format!("Invalid GitLab push payload: {}", e))
+                        })?;
 
-                self.process_gitlab_push(push_payload, &repo, &project).await
+                self.process_gitlab_push(push_payload, &repo, &project)
+                    .await
             }
-            provider => {
-                Err(Error::Validation(format!("Unknown provider: {}", provider)))
-            }
+            provider => Err(Error::Validation(format!("Unknown provider: {}", provider))),
         }
     }
 
@@ -676,16 +696,24 @@ impl GitSyncService {
     /// For now, logs the event and returns success. Full implementation can be added later.
     pub async fn process_pr_webhook(&self, payload: &serde_json::Value) -> Result<WebhookResult> {
         // Extract repository ID from payload
-        let repo_id = payload.get("repository_id")
+        let repo_id = payload
+            .get("repository_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| Error::Validation("Missing repository_id in webhook payload".to_string()))?;
+            .ok_or_else(|| {
+                Error::Validation("Missing repository_id in webhook payload".to_string())
+            })?;
 
         // Get repository
-        let repo = self.get_repository(repo_id).await?
+        let repo = self
+            .get_repository(repo_id)
+            .await?
             .ok_or_else(|| Error::NotFound(format!("Repository not found: {}", repo_id)))?;
 
         // Extract PR action and number for logging
-        let action = payload.get("action").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let action = payload
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         let pr_number = payload.get("number").and_then(|v| v.as_i64()).unwrap_or(0);
 
         info!(

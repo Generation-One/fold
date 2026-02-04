@@ -194,8 +194,7 @@ impl ContentResolverService {
                 if let Some(file_path) = &memory.file_path {
                     // Try repository local_path
                     if let Some(repo_id) = &memory.repository_id {
-                        if let Ok(Some(repo)) =
-                            db::get_repository_optional(&self.db, repo_id).await
+                        if let Ok(Some(repo)) = db::get_repository_optional(&self.db, repo_id).await
                         {
                             if let Some(local_path) = &repo.local_path {
                                 let full_path = Path::new(local_path).join(file_path);
@@ -216,9 +215,7 @@ impl ContentResolverService {
                 }
                 false
             }
-            ContentStorage::Filesystem => {
-                self.meta_storage.memory_exists(project_slug, &memory.id)
-            }
+            ContentStorage::Filesystem => self.meta_storage.memory_exists(project_slug, &memory.id),
         }
     }
 }
