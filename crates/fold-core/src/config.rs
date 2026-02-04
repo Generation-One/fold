@@ -336,15 +336,15 @@ impl Config {
     fn parse_embedding_config() -> EmbeddingConfig {
         let mut providers = Vec::new();
 
-        // Gemini embeddings (priority 1 - free tier)
+        // Gemini embeddings (priority 5 for index, 10 for search)
         if let Ok(api_key) = env::var("GOOGLE_API_KEY") {
             providers.push(EmbeddingProvider {
                 name: "gemini".to_string(),
                 base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
                 model: env_or("GEMINI_EMBEDDING_MODEL", "text-embedding-004"),
                 api_key,
-                priority: 1,
-                search_priority: None,
+                priority: 5,
+                search_priority: Some(10),
             });
         }
 
@@ -360,18 +360,21 @@ impl Config {
             });
         }
 
-        // Ollama embeddings - local/self-hosted (priority 1 - if available, prefer local)
+        // Ollama embeddings - local/self-hosted (priority 10 for index, 1 for search)
         if let Ok(ollama_url) = env::var("OLLAMA_URL") {
-            let priority = env_or("OLLAMA_PRIORITY", "1")
+            let priority = env_or("OLLAMA_PRIORITY", "10")
+                .parse()
+                .unwrap_or(10);
+            let search_priority = env_or("OLLAMA_SEARCH_PRIORITY", "1")
                 .parse()
                 .unwrap_or(1);
             providers.push(EmbeddingProvider {
                 name: "ollama".to_string(),
                 base_url: ollama_url,
-                model: env_or("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text"),
+                model: env_or("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest"),
                 api_key: String::new(), // No authentication needed
                 priority,
-                search_priority: Some(0), // Prefer local for search
+                search_priority: Some(search_priority),
             });
         }
 

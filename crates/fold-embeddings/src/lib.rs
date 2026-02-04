@@ -197,7 +197,7 @@ pub fn default_model(name: &str) -> String {
     match name {
         "gemini" => "text-embedding-004".to_string(),
         "openai" => "text-embedding-3-small".to_string(),
-        "ollama" => "nomic-embed-text".to_string(),
+        "ollama" => "nomic-embed-text:latest".to_string(),
         _ => "text-embedding-3-small".to_string(),
     }
 }
