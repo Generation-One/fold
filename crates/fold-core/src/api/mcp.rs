@@ -425,7 +425,7 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
                         "description": "Filter by memory source"
                     },
                     "limit": { "type": "integer", "default": 10, "description": "Max results" },
-                    "min_score": { "type": "number", "default": 0.65, "description": "Minimum similarity score (0-1). Default 0.65 filters to relevant matches only." }
+                    "min_score": { "type": "number", "default": 0.4, "description": "Minimum similarity score (0-1). Default 0.4 filters to relevant matches only." }
                 },
                 "required": ["project", "query"]
             }),
@@ -788,7 +788,7 @@ async fn execute_memory_search(state: &AppState, args: Value) -> Result<String> 
     }
 
     fn default_min_score() -> f32 {
-        0.65
+        0.4
     }
 
     let params: Params = serde_json::from_value(args)?;

@@ -78,7 +78,7 @@ fn default_limit() -> u32 {
 }
 
 fn default_min_score() -> f32 {
-    0.65
+    0.4
 }
 
 /// Context retrieval request.

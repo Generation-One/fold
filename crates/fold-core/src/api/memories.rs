@@ -166,7 +166,7 @@ fn default_search_limit() -> u32 {
 }
 
 fn default_min_score() -> f32 {
-    0.65
+    0.4
 }
 
 /// Query parameters for context retrieval.
