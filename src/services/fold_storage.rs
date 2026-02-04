@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
-use tracing::{debug, info, warn};
+use tracing::info;
 
 use crate::error::{Error, Result};
 use crate::models::Memory;

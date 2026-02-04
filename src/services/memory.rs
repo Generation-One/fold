@@ -23,7 +23,7 @@ use crate::db::{self, DbPool};
 use crate::error::{Error, Result};
 use crate::models::{ChunkMatch, Memory, MemoryCreate, MemorySearchResult, MemoryType, MemoryUpdate};
 
-use super::decay::{calculate_strength, blend_scores, DecayConfig, DEFAULT_HALF_LIFE_DAYS, DEFAULT_STRENGTH_WEIGHT};
+use super::decay::{calculate_strength, blend_scores, DEFAULT_HALF_LIFE_DAYS, DEFAULT_STRENGTH_WEIGHT};
 use super::fold_storage::FoldStorageService;
 use super::qdrant::{QdrantService, SearchFilter};
 use super::EmbeddingService;
