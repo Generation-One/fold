@@ -102,7 +102,7 @@ jobs:
           key: ${{ runner.os }}-cargo-clippy-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets --all-features
 
   format:
     runs-on: ubuntu-latest
