@@ -789,6 +789,22 @@ async fn connect_repository(
         }
     }
 
+    // Queue an index job immediately for the new repository
+    let job_id = crate::models::new_id();
+    let index_job = db::create_job(
+        &state.db,
+        db::CreateJob::new(job_id.clone(), db::JobType::IndexRepo)
+            .with_project(project.id.clone())
+            .with_repository(repo_id.clone()),
+    )
+    .await?;
+
+    info!(
+        repo = %repo.full_name(),
+        job_id = %index_job.id,
+        "Queued initial index job for new repository"
+    );
+
     let now = Utc::now();
     let full_name = repo.full_name();
     Ok(Json(RepositoryResponse {
