@@ -719,7 +719,7 @@ impl IndexerService {
 
     /// Index a single file by path (for webhook-triggered updates).
     ///
-    /// Uses path-based hash for memory ID (stable across content changes) and writes summary to fold/.
+    /// Uses path-based hash for memory ID (stable across content changes). Summary is stored in SQLite.
     pub async fn index_single_file(
         &self,
         project: &Project,
@@ -790,7 +790,7 @@ impl IndexerService {
             } else {
                 Some(language.clone())
             },
-            source: Some(MemorySource::Agent),
+            source: Some(MemorySource::File),
             metadata,
             ..Default::default()
         };

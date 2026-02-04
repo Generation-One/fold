@@ -392,25 +392,25 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
                 "required": ["repo_url", "name"]
             }),
         },
-        // ToolDefinition {
-        //     name: "memory_add".into(),
-        //     description: "Add a memory to a project".into(),
-        //     input_schema: serde_json::json!({
-        //         "type": "object",
-        //         "properties": {
-        //             "project": { "type": "string", "description": "Project ID or slug" },
-        //             "content": { "type": "string", "description": "Memory content" },
-        //             "title": { "type": "string", "description": "Optional title" },
-        //             "author": { "type": "string", "description": "Who created this memory" },
-        //             "tags": {
-        //                 "type": "array",
-        //                 "items": { "type": "string" },
-        //                 "description": "Optional tags"
-        //             }
-        //         },
-        //         "required": ["project", "content"]
-        //     }),
-        // },
+        ToolDefinition {
+            name: "memory_add".into(),
+            description: "Add a memory to a project. Agent memories are stored in the fold/ directory and indexed for semantic search. Use this to persist knowledge, decisions, context, or any information that should be recalled later.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string", "description": "Project ID or slug" },
+                    "content": { "type": "string", "description": "Memory content - the full text to remember" },
+                    "title": { "type": "string", "description": "Short descriptive title for the memory" },
+                    "author": { "type": "string", "description": "Who created this memory (e.g. 'claude', 'user')" },
+                    "tags": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional tags for categorisation"
+                    }
+                },
+                "required": ["project", "content"]
+            }),
+        },
         ToolDefinition {
             name: "memory_search".into(),
             description: "Search memories using semantic similarity. The query is embedded and compared against stored memory embeddings. Use natural language descriptions of what you're looking for - the more descriptive and context-rich, the better. For example: 'authentication flow for user login' or 'how the API handles error responses'. Avoid keyword-style queries.".into(),
@@ -462,6 +462,18 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
             }),
         },
         ToolDefinition {
+            name: "memory_delete".into(),
+            description: "Delete an agent memory. Only memories with source 'agent' (stored in fold/) can be deleted via MCP. File and git memories are managed by the indexer.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string", "description": "Project ID or slug" },
+                    "memory_id": { "type": "string", "description": "ID of the memory to delete" }
+                },
+                "required": ["project", "memory_id"]
+            }),
+        },
+        ToolDefinition {
             name: "project_stats".into(),
             description: "Get statistics for a project including memory counts, vector counts, and more".into(),
             input_schema: serde_json::json!({
@@ -498,10 +510,11 @@ async fn handle_tools_call(state: &AppState, id: Option<Value>, params: Value) -
         "project_list" => execute_project_list(state).await,
         "github_project_create" => execute_github_project_create(state, call_params.arguments).await,
         "project_stats" => execute_project_stats(state, call_params.arguments).await,
-        // "memory_add" => execute_memory_add(state, call_params.arguments).await,
+        "memory_add" => execute_memory_add(state, call_params.arguments).await,
         "memory_search" => execute_memory_search(state, call_params.arguments).await,
         "memory_list" => execute_memory_list(state, call_params.arguments).await,
         "memory_context" => execute_memory_context(state, call_params.arguments).await,
+        "memory_delete" => execute_memory_delete(state, call_params.arguments).await,
         _ => {
             return JsonRpcResponse::error(
                 id,
@@ -1010,6 +1023,47 @@ async fn execute_memory_context(state: &AppState, args: Value) -> Result<String>
         },
         "related": related,
         "similar": similar
+    }))?)
+}
+
+async fn execute_memory_delete(state: &AppState, args: Value) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Params {
+        project: String,
+        memory_id: String,
+    }
+
+    let params: Params = serde_json::from_value(args)?;
+
+    // Get project
+    let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
+
+    // Get the memory to check its source
+    let memory = state
+        .memory
+        .get(&project.id, &params.memory_id)
+        .await?
+        .ok_or_else(|| Error::NotFound("Memory not found".into()))?;
+
+    // Only allow deleting agent memories via MCP
+    let source = memory.source.as_deref().unwrap_or("agent");
+    if source != "agent" {
+        return Err(Error::Validation(format!(
+            "Cannot delete {} memory via MCP. Only agent memories can be deleted. File and git memories are managed by the indexer.",
+            source
+        )));
+    }
+
+    // Delete the memory (handles SQLite, Qdrant, and fold/ file cleanup)
+    state
+        .memory
+        .delete(&project.id, &project.slug, &params.memory_id)
+        .await?;
+
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "deleted": true,
+        "memory_id": params.memory_id,
+        "project": project.slug
     }))?)
 }
 
