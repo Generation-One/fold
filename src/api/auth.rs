@@ -57,6 +57,17 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route(
             "/tokens/:token_id",
             delete(revoke_token)
+                .layer(middleware::from_fn_with_state(state.clone(), require_auth)),
+        )
+        // Admin token management (admin only)
+        .route(
+            "/admin/users/:user_id/tokens",
+            get(admin_list_user_tokens)
+                .layer(middleware::from_fn_with_state(state.clone(), require_auth)),
+        )
+        .route(
+            "/admin/users/:user_id/tokens/:token_id",
+            delete(admin_revoke_user_token)
                 .layer(middleware::from_fn_with_state(state, require_auth)),
         )
 }
@@ -126,6 +137,8 @@ pub struct CreateTokenRequest {
     pub scopes: Vec<String>,
     /// Optional expiry in days from now
     pub expires_in_days: Option<i64>,
+    /// Optional user_id for admin to create tokens for other users
+    pub user_id: Option<String>,
 }
 
 /// Response containing a newly created API token.
@@ -628,12 +641,14 @@ async fn list_tokens(
     Ok(Json(ListTokensResponse { tokens }))
 }
 
-/// Create a new API token for the authenticated user.
+/// Create a new API token for the authenticated user or another user (admin only).
 ///
 /// POST /auth/tokens
 ///
 /// Creates a new API token with the specified name and optional expiry.
 /// The full token value is returned only once in the response.
+///
+/// If user_id is provided, only admins can create tokens for other users.
 #[axum::debug_handler]
 async fn create_token(
     State(state): State<AppState>,
@@ -648,6 +663,21 @@ async fn create_token(
     if name.len() > 100 {
         return Err(Error::InvalidInput("Token name too long (max 100 characters)".into()));
     }
+
+    // Determine which user to create the token for
+    eprintln!("DEBUG create_token: request.user_id = {:?}, authenticated user = {}, is_admin = {}", request.user_id, user.user_id, user.is_admin());
+    let target_user_id = if let Some(user_id) = request.user_id {
+        eprintln!("DEBUG: Creating token for specified user: {}", user_id);
+        // Only admins can create tokens for other users
+        if user_id != user.user_id && !user.is_admin() {
+            return Err(Error::Forbidden);
+        }
+        user_id
+    } else {
+        eprintln!("DEBUG: No user_id provided, using authenticated user: {}", user.user_id);
+        user.user_id.clone()
+    };
+    eprintln!("DEBUG: Final target_user_id = {}", target_user_id);
 
     // Generate API token in format: fold_{prefix}_{secret}
     let prefix = nanoid::nanoid!(8);
@@ -675,7 +705,7 @@ async fn create_token(
         "#,
     )
     .bind(&token_id)
-    .bind(&user.user_id)
+    .bind(&target_user_id)
     .bind(name)
     .bind(&token_hash)
     .bind(&prefix)
@@ -727,6 +757,86 @@ async fn revoke_token(
     .bind(&token_id)
     .execute(&state.db)
     .await?;
+
+    Ok(Json(serde_json::json!({
+        "message": "Token revoked successfully",
+        "token_id": token_id
+    })))
+}
+
+/// List API tokens for any user (admin only).
+#[axum::debug_handler]
+async fn admin_list_user_tokens(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path(user_id): Path<String>,
+) -> Result<Json<ListTokensResponse>> {
+    // Only admins can list tokens for other users
+    if !auth.is_admin() {
+        return Err(Error::Forbidden);
+    }
+
+    let result: Vec<(String, String, String, String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        r#"
+        SELECT id, name, token_prefix, created_at, last_used, expires_at, revoked_at
+        FROM api_tokens
+        WHERE user_id = ? AND revoked_at IS NULL
+        ORDER BY created_at DESC
+        "#,
+    )
+    .bind(&user_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let tokens = result
+        .into_iter()
+        .map(|(id, name, token_prefix, created_at, last_used, expires_at, revoked_at)| ApiTokenInfo {
+            id,
+            name,
+            token_prefix,
+            created_at,
+            last_used,
+            expires_at,
+            revoked_at,
+        })
+        .collect();
+
+    Ok(Json(ListTokensResponse { tokens }))
+}
+
+/// Revoke an API token for any user (admin only).
+#[axum::debug_handler]
+async fn admin_revoke_user_token(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path((user_id, token_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>> {
+    // Only admins can revoke tokens for other users
+    if !auth.is_admin() {
+        return Err(Error::Forbidden);
+    }
+
+    // Verify the token belongs to the user
+    let token_user: Option<(String,)> = sqlx::query_as("SELECT user_id FROM api_tokens WHERE id = ?")
+        .bind(&token_id)
+        .fetch_optional(&state.db)
+        .await?;
+
+    match token_user {
+        None => return Err(Error::NotFound("Token not found".to_string())),
+        Some((token_user_id,)) if token_user_id != user_id => {
+            return Err(Error::InvalidInput("Token does not belong to this user".to_string()))
+        }
+        _ => {}
+    }
+
+    // Mark as revoked
+    let revoked_at = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    sqlx::query("UPDATE api_tokens SET revoked_at = ? WHERE id = ?")
+        .bind(&revoked_at)
+        .bind(&token_id)
+        .execute(&state.db)
+        .await?;
 
     Ok(Json(serde_json::json!({
         "message": "Token revoked successfully",

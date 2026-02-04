@@ -270,6 +270,7 @@ CREATE TABLE IF NOT EXISTS users (
     avatar_url TEXT,
     role TEXT NOT NULL DEFAULT 'member',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     last_login TEXT,
 
     UNIQUE(provider, subject)

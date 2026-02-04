@@ -15,6 +15,7 @@ use std::collections::HashMap;
 
 use axum::{
     extract::{Path, Query, State},
+    middleware,
     routing::{get, post},
     Json, Router,
 };
@@ -25,17 +26,21 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::db;
-use crate::middleware::AuthContext;
+use crate::middleware::{AuthContext, require_project_read, require_project_write};
 use crate::models::MemorySource;
 use crate::{AppState, Error, Result};
 
 /// Build memory routes (project-scoped).
-pub fn routes() -> Router<AppState> {
+pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
-        .route("/", get(list_memories).post(create_memory))
-        .route("/:memory_id", get(get_memory).put(update_memory).delete(delete_memory))
+        // Read operations (list, search, context)
         .route("/search", post(search_memories))
         .route("/context/:memory_id", get(get_context))
+        .layer(middleware::from_fn_with_state(state.clone(), require_project_read))
+        // Write operations (create, update, delete)
+        .route("/", get(list_memories).post(create_memory))
+        .route("/:memory_id", get(get_memory).put(update_memory).delete(delete_memory))
+        .layer(middleware::from_fn_with_state(state, require_project_write))
 }
 
 /// Build global memory routes (cross-project).

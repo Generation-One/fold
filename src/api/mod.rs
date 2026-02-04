@@ -17,7 +17,7 @@ mod webhooks;
 
 use axum::Router;
 
-use crate::middleware::require_token;
+use crate::middleware::{require_token, require_auth};
 use crate::AppState;
 
 /// Build the complete API router.
@@ -46,6 +46,9 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .nest("/providers", admin_routes(state.clone()))
         // Global memories route (token auth)
         .nest("/memories", global_memories_routes(state.clone()))
+        // User and group management (token auth)
+        .nest("/users", users_routes(state.clone()))
+        .nest("/groups", groups_routes(state.clone()))
         // Protected API routes
         .nest("/projects", protected_routes(state))
 }
@@ -53,19 +56,16 @@ pub fn routes(state: AppState) -> Router<AppState> {
 /// Protected routes that require authentication.
 fn protected_routes(state: AppState) -> Router<AppState> {
     Router::<AppState>::new()
-        // User management (admin only)
-        .nest("/users", users::routes(state.clone()))
-        // Group management
-        .nest("/groups", groups::routes(state.clone()))
         // Project CRUD
-        .merge(projects::routes())
+        .merge(projects::routes(state.clone()))
+        // Merge project members routes (use merge instead of nest for proper path param handling)
+        .merge(projects::members_routes())
         // Nested project resources
-        .nest("/:project_id/members", projects::members_routes())
-        .nest("/:project_id/memories", memories::routes())
+        .nest("/:project_id/memories", memories::routes(state.clone()))
         .nest("/:project_id/repositories", repositories::routes())
         .nest("/:project_id/config", projects::config_routes())
         // Search and context endpoints
-        .merge(search::routes())
+        .merge(search::routes(state.clone()))
         // File source provider information (non-project-specific)
         .nest("/file-sources", repositories::file_source_routes())
         // Apply token authentication to all protected routes
@@ -87,4 +87,18 @@ fn global_memories_routes(state: AppState) -> Router<AppState> {
     Router::<AppState>::new()
         .merge(memories::global_routes())
         .layer(axum::middleware::from_fn_with_state(state, require_token))
+}
+
+/// User management routes (authenticated users can list, admins can CRUD).
+fn users_routes(state: AppState) -> Router<AppState> {
+    Router::<AppState>::new()
+        .merge(users::routes(state.clone()))
+        .layer(axum::middleware::from_fn_with_state(state, require_auth))
+}
+
+/// Group management routes (authenticated users can list, admins can CRUD).
+fn groups_routes(state: AppState) -> Router<AppState> {
+    Router::<AppState>::new()
+        .merge(groups::routes(state.clone()))
+        .layer(axum::middleware::from_fn_with_state(state, require_auth))
 }

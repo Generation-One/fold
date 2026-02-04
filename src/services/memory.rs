@@ -166,7 +166,7 @@ Return JSON:
     "context": "Detailed multi-sentence context paragraph...",
     "tags": ["category1", "category2", ...]
 }}"#,
-            &content[..content.len().min(4000)]
+            &content[..content.floor_char_boundary(content.len().min(4000))]
         );
 
         match self.llm.complete(&prompt, 800).await {
@@ -310,7 +310,7 @@ Return JSON:
     "new_tags_neighbourhood": [["tag1", "tag2"], ...]
 }}"#,
             memory.title.as_deref().unwrap_or(""),
-            &content[..content.len().min(1000)],
+            &content[..content.floor_char_boundary(content.len().min(1000))],
             memory.context.as_deref().unwrap_or(""),
             memory.keywords_vec(),
             memory.tags_vec(),
@@ -374,7 +374,7 @@ Return JSON:
                     .read_memory(project_root, &result.id)
                     .await
                 {
-                    nc[..nc.len().min(200)].to_string()
+                    nc[..nc.floor_char_boundary(nc.len().min(200))].to_string()
                 } else {
                     String::new()
                 };
@@ -1185,7 +1185,8 @@ Return JSON:
 
                 if let Some(chunk) = chunk {
                     let snippet = if chunk.content.len() > 100 {
-                        Some(format!("{}...", &chunk.content[..100]))
+                        let boundary = chunk.content.floor_char_boundary(100);
+                        Some(format!("{}...", &chunk.content[..boundary]))
                     } else {
                         Some(chunk.content.clone())
                     };

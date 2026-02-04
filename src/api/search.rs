@@ -8,6 +8,7 @@
 
 use axum::{
     extract::{Path, State},
+    middleware,
     routing::post,
     Json, Router,
 };
@@ -15,14 +16,16 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::middleware::require_project_read;
 use crate::models::{ChunkMatch, MemorySource};
 use crate::{db, AppState, Error, Result};
 
 /// Build search routes.
-pub fn routes() -> Router<AppState> {
+pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/:project_id/search", post(search))
         .route("/:project_id/context", post(get_context))
+        .layer(middleware::from_fn_with_state(state, require_project_read))
 }
 
 // ============================================================================

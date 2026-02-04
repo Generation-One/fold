@@ -10,7 +10,7 @@ mod session_auth;
 mod token_auth;
 
 pub use project_auth::{
-    require_project_read, require_project_write, require_admin, ProjectAccessContext,
+    require_project_read, require_project_write, require_admin, ProjectAccessContext, ProjectIdParams,
 };
 pub use session_auth::{
     require_session, SessionUser, SESSION_COOKIE_NAME,
@@ -100,9 +100,9 @@ pub async fn require_auth(
             if let Some(token) = auth_str.strip_prefix("Bearer ") {
                 if let Ok(auth_context) = validate_token_internal(&state, token).await {
                     // Convert AuthContext to AuthUser
-                    let user: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
+                    let user: Option<(String, Option<String>, Option<String>, String)> = sqlx::query_as(
                         r#"
-                        SELECT id, email, display_name
+                        SELECT id, email, display_name, role
                         FROM users
                         WHERE id = ?
                         "#,
@@ -111,12 +111,12 @@ pub async fn require_auth(
                     .fetch_optional(&state.db)
                     .await?;
 
-                    if let Some((user_id, email, name)) = user {
+                    if let Some((user_id, email, name, role)) = user {
                         let auth_user = AuthUser {
                             user_id,
                             email,
                             name,
-                            role: "member".to_string(), // API tokens are members, not admins
+                            role, // Use user's actual role (supports admin API tokens)
                         };
                         req.extensions_mut().insert(auth_user);
                         return Ok(next.run(req).await);

@@ -22,13 +22,17 @@ use uuid::Uuid;
 use crate::{AppState, Error, Result};
 
 /// Build project routes.
-pub fn routes() -> Router<AppState> {
+pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/", get(list_projects).post(create_project))
         .route(
             "/:id",
             get(get_project).put(update_project).delete(delete_project),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            state,
+            crate::middleware::require_auth,
+        ))
 }
 
 // ============================================================================
@@ -130,25 +134,88 @@ pub struct ListProjectsResponse {
 /// GET /projects
 ///
 /// Returns a paginated list of projects the user has access to.
+/// Users see only projects they have direct or group membership in.
+/// Admins see all projects.
 #[axum::debug_handler]
 async fn list_projects(
     State(state): State<AppState>,
     Query(query): Query<ListProjectsQuery>,
+    axum::extract::Extension(auth): axum::extract::Extension<crate::middleware::AuthUser>,
 ) -> Result<Json<ListProjectsResponse>> {
     let limit = query.limit.min(100);
 
-    // Fetch projects from database
-    let projects = crate::db::list_projects_paginated(
+    // Admin users see all projects
+    if auth.is_admin() {
+        // Fetch all projects from database
+        let projects = crate::db::list_projects_paginated(
+            &state.db,
+            limit as i64,
+            query.offset as i64,
+        )
+        .await?;
+
+        // Get total count
+        let total = crate::db::count_projects(&state.db).await.unwrap_or(0) as u32;
+
+        let project_responses: Vec<ProjectResponse> = projects
+            .into_iter()
+            .map(|p| {
+                let ignored_authors = p.ignored_commit_authors
+                    .as_ref()
+                    .and_then(|s| serde_json::from_str(s).ok())
+                    .unwrap_or_default();
+                ProjectResponse {
+                    id: p.id.parse().unwrap_or_default(),
+                    slug: p.slug,
+                    name: p.name,
+                    description: p.description,
+                    memory_count: 0,
+                    ignored_commit_authors: ignored_authors,
+                    created_at: p.created_at.parse().unwrap_or_else(|_| Utc::now()),
+                    updated_at: p.updated_at.parse().unwrap_or_else(|_| Utc::now()),
+                }
+            })
+            .collect();
+
+        return Ok(Json(ListProjectsResponse {
+            projects: project_responses,
+            total,
+            offset: query.offset,
+            limit,
+        }));
+    }
+
+    // Non-admin users: get projects they have access to
+    let perm_service = crate::services::PermissionService::new(state.db.clone());
+    let accessible_projects = perm_service
+        .get_accessible_projects(&auth.user_id, &auth.role)
+        .await?;
+
+    // Fetch all projects and filter to accessible ones
+    let all_projects = crate::db::list_projects_paginated(
         &state.db,
-        limit as i64,
-        query.offset as i64,
+        10000, // Large number to get all
+        0,
     )
     .await?;
 
-    // Get total count
-    let total = crate::db::count_projects(&state.db).await.unwrap_or(0) as u32;
+    let accessible_project_ids: std::collections::HashSet<String> =
+        accessible_projects.into_iter().collect();
 
-    let project_responses: Vec<ProjectResponse> = projects
+    let filtered_projects: Vec<_> = all_projects
+        .into_iter()
+        .filter(|p| accessible_project_ids.contains(&p.id))
+        .collect();
+
+    // Apply pagination to filtered results
+    let total = filtered_projects.len() as u32;
+    let paginated = filtered_projects
+        .into_iter()
+        .skip(query.offset as usize)
+        .take(limit as usize)
+        .collect::<Vec<_>>();
+
+    let project_responses: Vec<ProjectResponse> = paginated
         .into_iter()
         .map(|p| {
             let ignored_authors = p.ignored_commit_authors
@@ -368,11 +435,11 @@ fn is_valid_slug(s: &str) -> bool {
 
 /// Build project members routes.
 ///
-/// These are mounted under /projects/:project_id/members
+/// These routes use the full path pattern /:project_id/members
 pub fn members_routes() -> Router<AppState> {
     Router::new()
-        .route("/", get(list_members).post(add_member))
-        .route("/:user_id", get(get_member).put(update_member).delete(remove_member))
+        .route("/:project_id/members", get(list_members).post(add_member))
+        .route("/:project_id/members/:user_id", get(get_member).put(update_member).delete(remove_member))
 }
 
 // ============================================================================
@@ -475,6 +542,9 @@ async fn add_member(
 ) -> Result<Json<MemberResponse>> {
     // Verify project exists
     let project = crate::db::get_project_by_id_or_slug(&state.db, &project_id).await?;
+
+    // Verify user exists
+    let _ = crate::db::get_user(&state.db, &request.user_id).await?;
 
     // Validate role
     if request.role != "member" && request.role != "viewer" {
