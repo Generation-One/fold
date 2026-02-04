@@ -10,9 +10,10 @@ use axum::{
     response::Response,
 };
 use serde::Deserialize;
+use sqlx::FromRow;
 use tracing::{debug, warn};
 
-use crate::{error::Error, services::PermissionService, AppState};
+use crate::{error::Error, services::PermissionService, AppState, middleware::token_auth};
 
 /// Context injected into requests for project-scoped operations.
 #[derive(Clone, Debug)]
@@ -24,9 +25,9 @@ pub struct ProjectAccessContext {
 
 /// Extract project_id from path parameters.
 #[derive(Deserialize)]
-struct ProjectIdParams {
+pub struct ProjectIdParams {
     #[serde(alias = "id")]
-    project_id: String,
+    pub project_id: String,
 }
 
 /// Middleware that requires read access to a specific project.
@@ -46,11 +47,41 @@ pub async fn require_project_read(
     mut req: Request<Body>,
     next: Next,
 ) -> Result<Response, Error> {
-    let auth_user = req
-        .extensions()
-        .get::<crate::middleware::AuthUser>()
-        .cloned()
-        .ok_or(Error::Unauthenticated)?;
+    // Try to get AuthUser first (from session auth)
+    let auth_user = if let Some(user) = req.extensions().get::<crate::middleware::AuthUser>() {
+        user.clone()
+    } else if let Some(auth_context) = req.extensions().get::<token_auth::AuthContext>().cloned() {
+        // Convert AuthContext to AuthUser by looking up the user in the database
+        #[derive(FromRow)]
+        struct UserRow {
+            id: String,
+            email: Option<String>,
+            display_name: Option<String>,
+            role: String,
+        }
+
+        let user_row: Option<UserRow> = sqlx::query_as(
+            r#"
+            SELECT id, email, display_name, role
+            FROM users
+            WHERE id = ?
+            "#,
+        )
+        .bind(&auth_context.user_id)
+        .fetch_optional(&state.db)
+        .await?;
+
+        let user_row = user_row.ok_or(Error::Unauthenticated)?;
+
+        crate::middleware::AuthUser {
+            user_id: user_row.id,
+            email: user_row.email,
+            name: user_row.display_name,
+            role: user_row.role,
+        }
+    } else {
+        return Err(Error::Unauthenticated);
+    };
 
     let perm_service = PermissionService::new(state.db.clone());
 
@@ -95,11 +126,41 @@ pub async fn require_project_write(
     mut req: Request<Body>,
     next: Next,
 ) -> Result<Response, Error> {
-    let auth_user = req
-        .extensions()
-        .get::<crate::middleware::AuthUser>()
-        .cloned()
-        .ok_or(Error::Unauthenticated)?;
+    // Try to get AuthUser first (from session auth)
+    let auth_user = if let Some(user) = req.extensions().get::<crate::middleware::AuthUser>() {
+        user.clone()
+    } else if let Some(auth_context) = req.extensions().get::<token_auth::AuthContext>().cloned() {
+        // Convert AuthContext to AuthUser by looking up the user in the database
+        #[derive(FromRow)]
+        struct UserRow {
+            id: String,
+            email: Option<String>,
+            display_name: Option<String>,
+            role: String,
+        }
+
+        let user_row: Option<UserRow> = sqlx::query_as(
+            r#"
+            SELECT id, email, display_name, role
+            FROM users
+            WHERE id = ?
+            "#,
+        )
+        .bind(&auth_context.user_id)
+        .fetch_optional(&state.db)
+        .await?;
+
+        let user_row = user_row.ok_or(Error::Unauthenticated)?;
+
+        crate::middleware::AuthUser {
+            user_id: user_row.id,
+            email: user_row.email,
+            name: user_row.display_name,
+            role: user_row.role,
+        }
+    } else {
+        return Err(Error::Unauthenticated);
+    };
 
     let perm_service = PermissionService::new(state.db.clone());
 
