@@ -445,76 +445,59 @@ async fn create_memory(
     Json(request): Json<CreateMemoryRequest>,
 ) -> Result<Json<MemoryResponse>> {
     // Resolve project by ID or slug
-    let project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
+    let db_project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
 
     // Validate content
     if request.content.trim().is_empty() {
         return Err(Error::Validation("Content cannot be empty".into()));
     }
 
-    // Generate embedding for the content
-    let _embedding = state
-        .embeddings
-        .embed_single(&request.content)
-        .await
-        .map_err(|e| Error::Embedding(e.to_string()))?;
+    // Use provided file_path or generate synthetic one from title for agent memories
+    let file_path = request.file_path.unwrap_or_else(|| {
+        let title = request.title.as_deref().unwrap_or("memory");
+        format!("{}.txt", title.to_lowercase().replace(" ", "_"))
+    });
 
-    // Determine source - file if file_path is provided, otherwise agent
-    let source = if request.file_path.is_some() {
-        MemorySource::File
-    } else {
-        MemorySource::Agent
+    // Convert db::Project to models::Project for the indexer
+    let project = crate::models::Project {
+        id: db_project.id.clone(),
+        slug: db_project.slug.clone(),
+        name: db_project.name.clone(),
+        description: db_project.description.clone(),
+        root_path: db_project.root_path.clone(),
+        index_patterns: None,
+        ignore_patterns: None,
+        team_members: None,
+        owner: None,
+        metadata: None,
+        metadata_repo_enabled: db_project.is_metadata_sync_enabled(),
+        metadata_repo_mode: db_project.metadata_repo_mode.clone(),
+        metadata_repo_provider: db_project.metadata_repo_provider.clone(),
+        metadata_repo_owner: db_project.metadata_repo_owner.clone(),
+        metadata_repo_name: db_project.metadata_repo_name.clone(),
+        metadata_repo_branch: db_project.metadata_repo_branch.clone(),
+        metadata_repo_token: db_project.metadata_repo_token.clone(),
+        metadata_repo_source_id: db_project.metadata_repo_source_id.clone(),
+        metadata_repo_path_prefix: db_project.metadata_repo_path_prefix.clone(),
+        ignored_commit_authors: db_project.ignored_commit_authors.clone(),
+        decay_strength_weight: db_project.decay_strength_weight,
+        decay_half_life_days: db_project.decay_half_life_days,
+        auto_commit_enabled: Some(true),
+        created_at: chrono::DateTime::parse_from_rfc3339(&db_project.created_at)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now()),
+        updated_at: chrono::DateTime::parse_from_rfc3339(&db_project.updated_at)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now()),
     };
 
-    // Create memory in database
-    let memory_id = Uuid::new_v4().to_string();
-    let input = db::CreateMemory {
-        id: memory_id,
-        project_id: project.id,
-        repository_id: None,
-        memory_type: db::MemoryType::General, // Default type, source is more important now
-        title: request.title,
-        content: Some(request.content),
-        content_hash: None,
-        content_storage: "filesystem".to_string(),
-        file_path: request.file_path,
-        language: None,
-        git_branch: None,
-        git_commit_sha: None,
-        author: request.author,
-        keywords: None,
-        tags: if request.tags.is_empty() {
-            None
-        } else {
-            Some(request.tags)
-        },
-        source: Some(source),
-    };
+    // Trigger full indexing pipeline: LLM summarization, semantic chunking, auto-linking
+    let memory = state
+        .indexer
+        .index_single_file(&project, &file_path, &request.content, request.author.as_deref())
+        .await?;
 
-    let memory = db::create_memory(&state.db, input).await?;
-
-    // Build metadata payload for Qdrant
-    let mut payload = HashMap::new();
-    payload.insert("memory_id".to_string(), json!(memory.id));
-    payload.insert("project_id".to_string(), json!(memory.project_id));
-    payload.insert("source".to_string(), json!(source.as_str()));
-    if let Some(ref author) = memory.author {
-        payload.insert("author".to_string(), json!(author));
-    }
-    if let Some(ref file_path) = memory.file_path {
-        payload.insert("file_path".to_string(), json!(file_path));
-    }
-
-    // Store embedding in Qdrant (non-blocking)
-    if let Err(e) = state
-        .qdrant
-        .upsert(&project.slug, &memory.id, _embedding, payload)
-        .await
-    {
-        warn!(error = %e, memory_id = %memory.id, "Failed to store embedding in Qdrant");
-    }
-
-    Ok(Json(memory_to_response(memory)))
+    Ok(Json(memory_to_response_from_model(memory)))
 }
 
 /// Get a memory by ID.
