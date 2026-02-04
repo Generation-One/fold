@@ -6,8 +6,9 @@
 //! - Neighbour metadata updates during evolution
 //! - Link traversal for holographic context retrieval
 //!
-//! Content is stored externally via FoldStorageService:
-//! - All memories: content stored in fold/{char1}/{char2}/{hash}.md
+//! Content storage depends on source:
+//! - Agent memories: content stored in fold/{char1}/{char2}/{hash}.md
+//! - File/Git memories: content (LLM summaries) stored in SQLite
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -22,7 +23,7 @@ use tracing::{debug, info, warn};
 use crate::db::{self, DbPool};
 use crate::error::{Error, Result};
 use crate::models::{
-    ChunkMatch, Memory, MemoryCreate, MemorySearchResult, MemoryType, MemoryUpdate,
+    ChunkMatch, Memory, MemoryCreate, MemorySearchResult, MemorySource, MemoryType, MemoryUpdate,
 };
 
 use super::decay::{
@@ -553,6 +554,10 @@ Return JSON:
     // =========================================================================
 
     /// Add a memory with automatic analysis and evolution.
+    ///
+    /// Content storage depends on source:
+    /// - Agent (or None): content stored in fold/ directory, SQLite content is NULL
+    /// - File/Git: content (LLM summary) stored in SQLite, nothing written to fold/
     pub async fn add(
         &self,
         project_id: &str,
@@ -609,15 +614,32 @@ Return JSON:
             hex::encode(hasher.finalize())
         };
 
+        // Determine if this is an agent memory (writes to fold/) or indexed memory (stores in SQLite)
+        let is_agent_memory = match data.source {
+            Some(MemorySource::File) | Some(MemorySource::Git) => false,
+            Some(MemorySource::Agent) | None => true,
+        };
+
         let memory = Memory {
             id: data.id.clone().unwrap_or_else(crate::models::new_id),
             project_id: project_id.to_string(),
             repository_id: None,
             memory_type: data.memory_type.as_str().to_string(),
             source: data.source.map(|s| s.as_str().to_string()),
-            content: None, // Content stored in fold/
+            // For agent memories: content stored in fold/, SQLite content is NULL
+            // For file/git memories: content (summary) stored in SQLite
+            content: if is_agent_memory {
+                None
+            } else {
+                Some(data.content.clone())
+            },
             content_hash: Some(content_hash),
-            content_storage: Some("fold".to_string()),
+            // Deprecated field - kept for backwards compatibility
+            content_storage: if is_agent_memory {
+                Some("fold".to_string())
+            } else {
+                None
+            },
             title: data.title.clone(),
             author: data.author.clone(),
             keywords: if keywords.is_empty() {
@@ -648,12 +670,14 @@ Return JSON:
             last_accessed: None,
         };
 
-        // Write to fold/ directory
-        self.fold_storage
-            .write_memory(&project_root, &memory, &data.content)
-            .await?;
+        // Only write to fold/ directory for agent memories
+        if is_agent_memory {
+            self.fold_storage
+                .write_memory(&project_root, &memory, &data.content)
+                .await?;
+        }
 
-        // Insert metadata into SQLite
+        // Insert metadata into SQLite (content included for file/git memories)
         self.insert_memory(&memory).await?;
 
         // Generate embedding
@@ -689,18 +713,22 @@ Return JSON:
             .upsert(project_slug, &memory.id, embedding.clone(), payload)
             .await?;
 
-        // Process memory evolution (agentic linking)
-        self.process_memory_evolution(
-            &memory.id,
-            project_id,
-            project_slug,
-            &project_root,
-            &embedding,
-            &data.content,
-        )
-        .await?;
+        // Process memory evolution (agentic linking) - only for agent memories
+        // File/git memories don't need evolution as they're indexed content
+        if is_agent_memory {
+            self.process_memory_evolution(
+                &memory.id,
+                project_id,
+                project_slug,
+                &project_root,
+                &embedding,
+                &data.content,
+            )
+            .await?;
+        }
 
-        info!(id = %memory.id, memory_type = %memory.memory_type, "Added memory with agentic evolution");
+        let source_str = if is_agent_memory { "agent" } else { "indexed" };
+        info!(id = %memory.id, memory_type = %memory.memory_type, source = %source_str, "Added memory");
 
         // Return memory with content populated
         let mut result = memory;
@@ -708,7 +736,11 @@ Return JSON:
         Ok(result)
     }
 
-    /// Get a memory by ID with content from fold/.
+    /// Get a memory by ID with content resolved based on source.
+    ///
+    /// Content resolution:
+    /// - Agent memories: read from fold/ directory
+    /// - File/Git memories: content already in SQLite (from indexing)
     pub async fn get(&self, project_id: &str, memory_id: &str) -> Result<Option<Memory>> {
         let memory = sqlx::query_as::<_, Memory>(
             r#"
@@ -739,29 +771,43 @@ Return JSON:
         .execute(&self.db)
         .await;
 
-        // Resolve content from fold/
-        if let Ok(project) = crate::db::get_project(&self.db, project_id).await {
-            let project_root = project
-                .root_path
-                .as_ref()
-                .map(|p| std::path::PathBuf::from(p))
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
+        // Resolve content based on source
+        // - File/Git memories: content already in SQLite (summary from LLM)
+        // - Agent memories: content stored in fold/ directory
+        let source = memory.source.as_deref().unwrap_or("agent");
+        let needs_fold_content = match source {
+            "file" | "git" => {
+                // Content should be in SQLite, but check if it's missing (legacy records)
+                memory.content.is_none() || memory.content.as_ref().is_some_and(|c| c.is_empty())
+            }
+            _ => true, // Agent memories always read from fold/
+        };
 
-            match self
-                .fold_storage
-                .read_memory(&project_root, memory_id)
-                .await
-            {
-                Ok((_, content)) => {
-                    memory.content = Some(content);
-                }
-                Err(e) => {
-                    debug!(
-                        memory_id = %memory_id,
-                        project_root = %project_root.display(),
-                        error = %e,
-                        "Failed to read memory content from fold/"
-                    );
+        if needs_fold_content {
+            if let Ok(project) = crate::db::get_project(&self.db, project_id).await {
+                let project_root = project
+                    .root_path
+                    .as_ref()
+                    .map(|p| std::path::PathBuf::from(p))
+                    .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+                match self
+                    .fold_storage
+                    .read_memory(&project_root, memory_id)
+                    .await
+                {
+                    Ok((_, content)) => {
+                        memory.content = Some(content);
+                    }
+                    Err(e) => {
+                        debug!(
+                            memory_id = %memory_id,
+                            source = %source,
+                            project_root = %project_root.display(),
+                            error = %e,
+                            "Failed to read memory content from fold/"
+                        );
+                    }
                 }
             }
         }
@@ -830,7 +876,11 @@ Return JSON:
         Ok(memories)
     }
 
-    /// List memories with content resolved from fold/.
+    /// List memories with content resolved based on source.
+    ///
+    /// Content resolution:
+    /// - File/Git memories: content already in SQLite
+    /// - Agent memories: read from fold/ directory
     pub async fn list_with_content(
         &self,
         project_id: &str,
@@ -844,7 +894,7 @@ Return JSON:
             .list(project_id, memory_type, author, limit, offset)
             .await?;
 
-        // Resolve content for each memory
+        // Resolve content for memories that need it (agent memories without content)
         if let Ok(project) = crate::db::get_project(&self.db, project_id).await {
             let project_root = project
                 .root_path
@@ -853,12 +903,17 @@ Return JSON:
                 .unwrap_or_else(|| std::path::PathBuf::from("."));
 
             for memory in &mut memories {
-                if let Ok((_, content)) = self
-                    .fold_storage
-                    .read_memory(&project_root, &memory.id)
-                    .await
+                // Only read from fold/ if content is missing
+                // File/Git memories already have content in SQLite
+                if memory.content.is_none() || memory.content.as_ref().is_some_and(|c| c.is_empty())
                 {
-                    memory.content = Some(content);
+                    if let Ok((_, content)) = self
+                        .fold_storage
+                        .read_memory(&project_root, &memory.id)
+                        .await
+                    {
+                        memory.content = Some(content);
+                    }
                 }
             }
         }
@@ -867,6 +922,10 @@ Return JSON:
     }
 
     /// Update a memory.
+    ///
+    /// Content handling depends on source:
+    /// - Agent memories: content stored in fold/ directory
+    /// - File/Git memories: content stored in SQLite
     pub async fn update(
         &self,
         project_id: &str,
@@ -887,13 +946,22 @@ Return JSON:
             .map(|p| std::path::PathBuf::from(p))
             .unwrap_or_else(|| std::path::PathBuf::from("."));
 
-        // Get current content from fold/
-        let current_content = self
-            .fold_storage
-            .read_memory(&project_root, memory_id)
-            .await
-            .map(|(_, c)| c)
-            .unwrap_or_default();
+        // Determine if this is an agent memory (stored in fold/)
+        let source = existing.source.as_deref().unwrap_or("agent");
+        let is_agent_memory = !matches!(source, "file" | "git");
+
+        // Get current content based on source
+        let current_content = if is_agent_memory {
+            // Agent memories: read from fold/
+            self.fold_storage
+                .read_memory(&project_root, memory_id)
+                .await
+                .map(|(_, c)| c)
+                .unwrap_or_default()
+        } else {
+            // File/Git memories: content already in existing.content from SQLite
+            existing.content.clone().unwrap_or_default()
+        };
 
         // Determine new content
         let new_content = update.content.clone().unwrap_or(current_content);
@@ -917,7 +985,14 @@ Return JSON:
             .map(|m| serde_json::to_string(&m).unwrap())
             .or(existing.metadata.clone());
 
-        // Update metadata in SQLite
+        // For file/git memories, also update content in SQLite
+        let content_for_db = if is_agent_memory {
+            None
+        } else {
+            Some(new_content.clone())
+        };
+
+        // Update metadata (and content for file/git) in SQLite
         sqlx::query(
             r#"
             UPDATE memories
@@ -928,6 +1003,7 @@ Return JSON:
                 status = ?,
                 assignee = ?,
                 metadata = ?,
+                content = ?,
                 updated_at = ?
             WHERE id = ? AND project_id = ?
             "#,
@@ -939,6 +1015,7 @@ Return JSON:
         .bind(&status)
         .bind(&assignee)
         .bind(&metadata)
+        .bind(&content_for_db)
         .bind(now)
         .bind(memory_id)
         .bind(project_id)
@@ -959,10 +1036,12 @@ Return JSON:
             ..existing
         };
 
-        // Update fold/ file
-        self.fold_storage
-            .write_memory(&project_root, &updated, &new_content)
-            .await?;
+        // Only update fold/ file for agent memories
+        if is_agent_memory {
+            self.fold_storage
+                .write_memory(&project_root, &updated, &new_content)
+                .await?;
+        }
 
         // Re-embed with new content
         let embed_text = self.build_embedding_text(&updated, &new_content);
@@ -1119,18 +1198,22 @@ Return JSON:
                 None => continue,
             };
 
-            // Resolve content from fold/
-            match self.fold_storage.read_memory(&project_root, &vr.id).await {
-                Ok((_, content)) => {
-                    memory.content = Some(content);
-                }
-                Err(e) => {
-                    debug!(
-                        memory_id = %vr.id,
-                        project_root = %project_root.display(),
-                        error = %e,
-                        "Failed to read memory content from fold/"
-                    );
+            // Resolve content based on source
+            // File/Git memories: content already in SQLite
+            // Agent memories: read from fold/
+            if memory.content.is_none() || memory.content.as_ref().is_some_and(|c| c.is_empty()) {
+                match self.fold_storage.read_memory(&project_root, &vr.id).await {
+                    Ok((_, content)) => {
+                        memory.content = Some(content);
+                    }
+                    Err(e) => {
+                        debug!(
+                            memory_id = %vr.id,
+                            project_root = %project_root.display(),
+                            error = %e,
+                            "Failed to read memory content from fold/"
+                        );
+                    }
                 }
             }
 
@@ -1277,9 +1360,12 @@ Return JSON:
                 None => continue,
             };
 
-            // Resolve content from fold/
-            if let Ok((_, content)) = self.fold_storage.read_memory(&project_root, &vr.id).await {
-                memory.content = Some(content);
+            // Resolve content if not already in SQLite (agent memories)
+            if memory.content.is_none() || memory.content.as_ref().is_some_and(|c| c.is_empty()) {
+                if let Ok((_, content)) = self.fold_storage.read_memory(&project_root, &vr.id).await
+                {
+                    memory.content = Some(content);
+                }
             }
 
             let strength = calculate_strength(
@@ -1317,13 +1403,15 @@ Return JSON:
                 None => continue,
             };
 
-            // Resolve content from fold/
-            if let Ok((_, content)) = self
-                .fold_storage
-                .read_memory(&project_root, &memory_id)
-                .await
-            {
-                memory.content = Some(content);
+            // Resolve content if not already in SQLite (agent memories)
+            if memory.content.is_none() || memory.content.as_ref().is_some_and(|c| c.is_empty()) {
+                if let Ok((_, content)) = self
+                    .fold_storage
+                    .read_memory(&project_root, &memory_id)
+                    .await
+                {
+                    memory.content = Some(content);
+                }
             }
 
             let strength = calculate_strength(

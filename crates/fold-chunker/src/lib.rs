@@ -115,9 +115,24 @@ impl ChunkerService {
     /// Select chunking strategy based on language
     pub fn select_strategy(&self, language: &str) -> ChunkStrategy {
         match language.to_lowercase().as_str() {
-            "rust" | "typescript" | "javascript" | "python" | "go" | "tsx" | "jsx" => {
-                ChunkStrategy::TreeSitter
-            }
+            // Systems languages
+            "rust" | "c" | "cpp" | "c++" | "cc" | "cxx" | "zig" |
+            // JVM languages
+            "java" | "kotlin" | "kt" | "scala" |
+            // .NET languages
+            "csharp" | "cs" | "c#" |
+            // Scripting languages
+            "python" | "py" | "ruby" | "rb" | "php" | "lua" | "elixir" | "ex" | "exs" |
+            "bash" | "sh" | "shell" | "zsh" |
+            // Web languages
+            "javascript" | "js" | "typescript" | "ts" | "tsx" | "jsx" |
+            "html" | "htm" | "css" | "scss" | "sass" |
+            // Mobile languages
+            "swift" |
+            // Other
+            "go" | "golang" |
+            // Data/config formats
+            "json" | "toml" | "yaml" | "yml" => ChunkStrategy::TreeSitter,
             "markdown" | "md" => ChunkStrategy::HeadingBased,
             "" | "text" | "txt" => ChunkStrategy::ParagraphBased,
             _ => ChunkStrategy::LineBased,
@@ -178,23 +193,55 @@ impl ChunkerService {
 
     /// Create a tree-sitter parser for the given language
     fn create_parser(&self, language: &str) -> Option<tree_sitter::Parser> {
-        let lang = match language.to_lowercase().as_str() {
-            "rust" => tree_sitter_rust::LANGUAGE,
-            "typescript" | "tsx" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
-            "javascript" | "jsx" => tree_sitter_javascript::LANGUAGE,
-            "python" => tree_sitter_python::LANGUAGE,
-            "go" => tree_sitter_go::LANGUAGE,
+        let mut parser = tree_sitter::Parser::new();
+
+        // Most grammars use the new LanguageFn API (LANGUAGE constant)
+        // Some older grammars use the old Language API (language() function)
+        let result = match language.to_lowercase().as_str() {
+            // Systems languages
+            "rust" => parser.set_language(&tree_sitter_rust::LANGUAGE.into()),
+            "c" => parser.set_language(&tree_sitter_c::LANGUAGE.into()),
+            "cpp" | "c++" | "cc" | "cxx" => parser.set_language(&tree_sitter_cpp::LANGUAGE.into()),
+            "zig" => parser.set_language(&tree_sitter_zig::LANGUAGE.into()),
+            // JVM languages
+            "java" => parser.set_language(&tree_sitter_java::LANGUAGE.into()),
+            "kotlin" | "kt" => parser.set_language(&tree_sitter_kotlin_ng::LANGUAGE.into()),
+            "scala" => parser.set_language(&tree_sitter_scala::LANGUAGE.into()),
+            // .NET languages
+            "csharp" | "cs" | "c#" => parser.set_language(&tree_sitter_c_sharp::LANGUAGE.into()),
+            // Scripting languages
+            "python" | "py" => parser.set_language(&tree_sitter_python::LANGUAGE.into()),
+            "ruby" | "rb" => parser.set_language(&tree_sitter_ruby::LANGUAGE.into()),
+            "php" => parser.set_language(&tree_sitter_php::LANGUAGE_PHP.into()),
+            "lua" => parser.set_language(&tree_sitter_lua::LANGUAGE.into()),
+            "elixir" | "ex" | "exs" => parser.set_language(&tree_sitter_elixir::LANGUAGE.into()),
+            "bash" | "sh" | "shell" | "zsh" => parser.set_language(&tree_sitter_bash::LANGUAGE.into()),
+            // Web languages
+            "typescript" | "ts" => parser.set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+            "tsx" => parser.set_language(&tree_sitter_typescript::LANGUAGE_TSX.into()),
+            "javascript" | "js" => parser.set_language(&tree_sitter_javascript::LANGUAGE.into()),
+            "jsx" => parser.set_language(&tree_sitter_javascript::LANGUAGE.into()), // JSX uses same grammar
+            "html" | "htm" => parser.set_language(&tree_sitter_html::LANGUAGE.into()),
+            "css" | "scss" | "sass" => parser.set_language(&tree_sitter_css::LANGUAGE.into()),
+            // Mobile languages
+            "swift" => parser.set_language(&tree_sitter_swift::LANGUAGE.into()),
+            // Other
+            "go" | "golang" => parser.set_language(&tree_sitter_go::LANGUAGE.into()),
+            // Data/config formats
+            "json" => parser.set_language(&tree_sitter_json::LANGUAGE.into()),
+            "toml" => parser.set_language(&tree_sitter_toml_ng::LANGUAGE.into()),
+            "yaml" | "yml" => parser.set_language(&tree_sitter_yaml::LANGUAGE.into()),
             _ => return None,
         };
 
-        let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&lang.into()).ok()?;
+        result.ok()?;
         Some(parser)
     }
 
     /// Get interesting node types for a language
     fn interesting_node_types(&self, language: &str) -> Vec<&'static str> {
         match language.to_lowercase().as_str() {
+            // Systems languages
             "rust" => vec![
                 "function_item",
                 "impl_item",
@@ -204,30 +251,156 @@ impl ChunkerService {
                 "mod_item",
                 "macro_definition",
             ],
-            "typescript" | "tsx" => vec![
+            "c" => vec![
+                "function_definition",
+                "struct_specifier",
+                "enum_specifier",
+                "type_definition",
+                "preproc_function_def",
+            ],
+            "cpp" | "c++" | "cc" | "cxx" => vec![
+                "function_definition",
+                "class_specifier",
+                "struct_specifier",
+                "enum_specifier",
+                "namespace_definition",
+                "template_declaration",
+                "type_definition",
+            ],
+            "zig" => vec![
+                "function_declaration",
+                "container_declaration",
+                "test_declaration",
+            ],
+            // JVM languages
+            "java" => vec![
+                "method_declaration",
+                "class_declaration",
+                "interface_declaration",
+                "enum_declaration",
+                "constructor_declaration",
+                "annotation_type_declaration",
+            ],
+            "kotlin" | "kt" => vec![
+                "function_declaration",
+                "class_declaration",
+                "object_declaration",
+                "interface_declaration",
+                "property_declaration",
+            ],
+            "scala" => vec![
+                "function_definition",
+                "class_definition",
+                "object_definition",
+                "trait_definition",
+                "val_definition",
+            ],
+            // .NET languages
+            "csharp" | "cs" | "c#" => vec![
+                "method_declaration",
+                "class_declaration",
+                "struct_declaration",
+                "interface_declaration",
+                "enum_declaration",
+                "namespace_declaration",
+                "property_declaration",
+                "constructor_declaration",
+                "record_declaration",
+            ],
+            // Scripting languages
+            "python" | "py" => vec![
+                "function_definition",
+                "class_definition",
+                "decorated_definition",
+            ],
+            "ruby" | "rb" => vec![
+                "method",
+                "singleton_method",
+                "class",
+                "module",
+            ],
+            "php" => vec![
+                "function_definition",
+                "method_declaration",
+                "class_declaration",
+                "interface_declaration",
+                "trait_declaration",
+                "namespace_definition",
+            ],
+            "lua" => vec![
+                "function_declaration",
+                "function_definition",
+                "local_function",
+            ],
+            "elixir" | "ex" | "exs" => vec![
+                "call", // def, defp, defmodule are all calls in Elixir AST
+            ],
+            "bash" | "sh" | "shell" | "zsh" => vec![
+                "function_definition",
+            ],
+            // Web languages
+            "typescript" | "ts" => vec![
                 "function_declaration",
                 "class_declaration",
                 "interface_declaration",
                 "type_alias_declaration",
                 "method_definition",
                 "export_statement",
+                "enum_declaration",
             ],
-            "javascript" | "jsx" => vec![
+            "tsx" => vec![
+                "function_declaration",
+                "class_declaration",
+                "interface_declaration",
+                "type_alias_declaration",
+                "method_definition",
+                "export_statement",
+                "enum_declaration",
+                "jsx_element",
+            ],
+            "javascript" | "js" => vec![
                 "function_declaration",
                 "class_declaration",
                 "method_definition",
                 "export_statement",
             ],
-            "python" => vec![
-                "function_definition",
-                "class_definition",
-                "decorated_definition",
+            "jsx" => vec![
+                "function_declaration",
+                "class_declaration",
+                "method_definition",
+                "export_statement",
+                "jsx_element",
             ],
-            "go" => vec![
+            "html" | "htm" => vec![
+                "element",
+                "script_element",
+                "style_element",
+            ],
+            "css" | "scss" | "sass" => vec![
+                "rule_set",
+                "media_statement",
+                "keyframes_statement",
+                "import_statement",
+            ],
+            // Mobile languages
+            "swift" => vec![
+                "function_declaration",
+                "class_declaration",
+                "struct_declaration",
+                "enum_declaration",
+                "protocol_declaration",
+                "extension_declaration",
+            ],
+            // Other
+            "go" | "golang" => vec![
                 "function_declaration",
                 "method_declaration",
                 "type_declaration",
             ],
+            // Data/config formats - use document-level chunking
+            "json" => vec!["object", "array"],
+            "toml" => vec!["table", "table_array_element"],
+            "yaml" | "yml" => vec!["block_mapping", "block_sequence"],
             _ => vec![],
         }
     }
@@ -288,19 +461,62 @@ impl ChunkerService {
     /// Normalise tree-sitter node types to simpler names
     fn normalise_node_type(&self, node_type: &str) -> String {
         match node_type {
-            "function_item" | "function_declaration" | "function_definition" => "function",
-            "class_declaration" | "class_definition" => "class",
-            "struct_item" => "struct",
-            "enum_item" => "enum",
-            "trait_item" => "trait",
-            "impl_item" => "impl",
-            "mod_item" => "module",
-            "interface_declaration" => "interface",
-            "type_alias_declaration" | "type_declaration" => "type",
-            "method_definition" | "method_declaration" => "method",
+            // Functions
+            "function_item" | "function_declaration" | "function_definition" |
+            "local_function" | "preproc_function_def" => "function",
+            // Methods
+            "method_definition" | "method_declaration" | "method" | "singleton_method" => "method",
+            // Classes
+            "class_declaration" | "class_definition" | "class" | "class_specifier" => "class",
+            // Structs
+            "struct_item" | "struct_declaration" | "struct_specifier" => "struct",
+            // Enums
+            "enum_item" | "enum_declaration" | "enum_specifier" => "enum",
+            // Interfaces/Protocols/Traits
+            "trait_item" | "trait_definition" | "trait_declaration" => "trait",
+            "interface_declaration" | "protocol_declaration" => "interface",
+            // Implementations/Extensions
+            "impl_item" | "extension_declaration" => "impl",
+            // Modules/Namespaces
+            "mod_item" | "module" | "namespace_definition" | "namespace_declaration" => "module",
+            // Types
+            "type_alias_declaration" | "type_declaration" | "type_definition" => "type",
+            // Records (C#)
+            "record_declaration" => "record",
+            // Objects (Kotlin, Scala)
+            "object_declaration" | "object_definition" => "object",
+            // Properties
+            "property_declaration" | "val_definition" => "property",
+            // Constructors
+            "constructor_declaration" => "constructor",
+            // Annotations
+            "annotation_type_declaration" => "annotation",
+            // Macros
             "macro_definition" => "macro",
+            // Decorated (Python)
             "decorated_definition" => "decorated",
+            // Exports
             "export_statement" => "export",
+            // Templates (C++)
+            "template_declaration" => "template",
+            // Container (Zig)
+            "container_declaration" => "container",
+            // Tests (Zig)
+            "test_declaration" => "test",
+            // Elixir calls (def, defmodule, etc.)
+            "call" => "definition",
+            // HTML elements
+            "element" | "script_element" | "style_element" => "element",
+            // JSX
+            "jsx_element" => "component",
+            // CSS
+            "rule_set" => "rule",
+            "media_statement" => "media",
+            "keyframes_statement" => "keyframes",
+            "import_statement" => "import",
+            // Data formats
+            "object" | "block_mapping" | "table" => "object",
+            "array" | "block_sequence" | "table_array_element" => "array",
             other => other,
         }
         .to_string()

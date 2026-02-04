@@ -437,7 +437,13 @@ async fn update_project(
 ///
 /// DELETE /projects/:id
 ///
-/// Deletes the project and all associated data (memories, attachments, etc.).
+/// Deletes the project and all associated data:
+/// - Cancels all pending/running jobs
+/// - Removes repository clones from disk
+/// - Deletes all jobs for the project
+/// - Deletes the project (cascades to memories, links, repositories, etc.)
+/// - Deletes the Qdrant vector collection
+///
 /// This action is irreversible.
 #[axum::debug_handler]
 async fn delete_project(
@@ -447,18 +453,70 @@ async fn delete_project(
     // First fetch the project to get its actual ID (in case user passed a slug)
     let existing = crate::db::get_project_by_id_or_slug(&state.db, &id).await?;
 
-    // Delete project and all associated data (cascade handled by DB)
+    info!(project_id = %existing.id, slug = %existing.slug, "Deleting project and all associated data");
+
+    // 1. Cancel all pending/running jobs for this project
+    let cancelled_jobs = crate::db::cancel_project_jobs(&state.db, &existing.id).await?;
+    if cancelled_jobs > 0 {
+        info!(project_id = %existing.id, count = cancelled_jobs, "Cancelled pending jobs");
+    }
+
+    // 2. Get all repositories and delete their local clones from disk
+    let repositories = crate::db::list_project_repositories(&state.db, &existing.id).await?;
+    for repo in &repositories {
+        if let Some(local_path) = &repo.local_path {
+            let path = std::path::Path::new(local_path);
+            if path.exists() {
+                match tokio::fs::remove_dir_all(path).await {
+                    Ok(()) => {
+                        info!(
+                            repo_id = %repo.id,
+                            path = %local_path,
+                            "Deleted repository clone from disk"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            repo_id = %repo.id,
+                            path = %local_path,
+                            error = %e,
+                            "Failed to delete repository clone from disk"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Delete all jobs for this project (including completed/failed)
+    let deleted_jobs = crate::db::delete_project_jobs(&state.db, &existing.id).await?;
+    if deleted_jobs > 0 {
+        info!(project_id = %existing.id, count = deleted_jobs, "Deleted jobs");
+    }
+
+    // 4. Delete project and all associated data (cascade handled by DB)
+    // This deletes: memories, memory_links, repositories, chunks, project_members, etc.
     crate::db::delete_project(&state.db, &existing.id).await?;
 
-    // Delete Qdrant collection (non-blocking cleanup)
+    // 5. Delete Qdrant collection (vector database cleanup)
     match state.qdrant.delete_collection(&existing.slug).await {
         Ok(()) => info!(slug = %existing.slug, "Deleted Qdrant collection"),
         Err(e) => warn!(error = %e, slug = %existing.slug, "Failed to delete Qdrant collection"),
     }
 
+    info!(
+        project_id = %existing.id,
+        slug = %existing.slug,
+        repos_cleaned = repositories.len(),
+        "Project deletion complete"
+    );
+
     Ok(Json(serde_json::json!({
         "deleted": true,
-        "id": existing.id
+        "id": existing.id,
+        "repositories_cleaned": repositories.len(),
+        "jobs_cancelled": cancelled_jobs,
+        "jobs_deleted": deleted_jobs
     })))
 }
 

@@ -761,6 +761,42 @@ pub async fn cancel_job(pool: &DbPool, id: &str) -> Result<Job> {
     .ok_or_else(|| Error::NotFound(format!("Job not found or not cancellable: {}", id)))
 }
 
+/// Cancel all pending/running/retry jobs for a project.
+///
+/// Returns the number of jobs cancelled.
+/// Running jobs are marked as cancelled but may still be executing until they check status.
+pub async fn cancel_project_jobs(pool: &DbPool, project_id: &str) -> Result<u64> {
+    let result = sqlx::query(
+        r#"
+        UPDATE jobs SET
+            status = 'cancelled',
+            completed_at = datetime('now'),
+            locked_at = NULL,
+            locked_by = NULL,
+            last_error = 'Project deleted'
+        WHERE project_id = ?
+        AND status IN ('pending', 'running', 'retry', 'paused')
+        "#,
+    )
+    .bind(project_id)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
+}
+
+/// Delete all jobs for a project (including completed/failed).
+///
+/// Returns the number of jobs deleted.
+pub async fn delete_project_jobs(pool: &DbPool, project_id: &str) -> Result<u64> {
+    let result = sqlx::query("DELETE FROM jobs WHERE project_id = ?")
+        .bind(project_id)
+        .execute(pool)
+        .await?;
+
+    Ok(result.rows_affected())
+}
+
 /// Pause a job (waiting for external resources like LLM/embedding providers).
 pub async fn pause_job(pool: &DbPool, id: &str, reason: &str) -> Result<Job> {
     sqlx::query_as::<_, Job>(

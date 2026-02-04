@@ -59,18 +59,23 @@ Processes files from repositories and creates memories.
 7. Create memory and store
 
 ### 3. Fold Storage Service (`src/services/fold_storage.rs`)
-Manages hash-based markdown storage in `fold/a/b/hash.md`.
+Manages hash-based markdown storage in `fold/a/b/hash.md` for **agent memories only**.
+
+**Content storage by source:**
+- **Agent memories**: stored in fold/ directory as markdown files
+- **File memories**: LLM summaries stored in SQLite (not in fold/)
+- **Git memories**: commit summaries stored in SQLite (not in fold/)
 
 **Format:**
 ```
 fold/
 ├── a/
 │   ├── b/
-│   │   ├── aBcD123456789abc.md  (16-char hash ID)
-│   │   └── aC12def456789abcd.md
+│   │   ├── aBcD123456789abc.md  (agent memory)
+│   │   └── aC12def456789abcd.md (agent memory)
 ```
 
-Each file contains YAML frontmatter + markdown content.
+Each file contains YAML frontmatter + markdown content. The fold/ directory is reserved for human and AI-authored content (sessions, decisions, specs, tasks, general notes).
 
 ### 4. Job Worker (`src/services/job_worker.rs`)
 Background task processing with atomic job claiming and retry logic.
@@ -279,13 +284,16 @@ pub struct Memory {
     pub project_id: String,
     pub repository_id: Option<String>,
 
-    // Content reference
+    // Content storage depends on source:
+    // - agent: content in fold/ directory, this field is NULL
+    // - file/git: content (LLM summary) stored here in SQLite
+    pub content: Option<String>,
     pub content_hash: Option<String>,     // Full SHA256 of content
-    pub content_storage: Option<String>,  // "fold"
+    pub content_storage: Option<String>,  // DEPRECATED: use source field
 
     // Classification
     pub memory_type: String,         // codebase, session, spec, decision, etc.
-    pub source: Option<String>,      // file, agent, git
+    pub source: Option<String>,      // file, agent, git (determines storage)
 
     // Metadata
     pub title: Option<String>,
