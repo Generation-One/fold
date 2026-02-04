@@ -150,8 +150,13 @@ pub struct CreateEmbeddingProviderRequest {
     pub name: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Priority for indexing (lower = higher priority).
     #[serde(default)]
     pub priority: i32,
+    /// Priority for search queries (lower = higher priority).
+    /// Use this to prefer fast local providers (e.g., Ollama) for search
+    /// while using higher-quality providers (e.g., OpenAI) for indexing.
+    pub search_priority: Option<i32>,
     #[serde(default = "default_api_key")]
     pub auth_type: String,
     pub api_key: Option<String>,
@@ -164,6 +169,8 @@ pub struct CreateEmbeddingProviderRequest {
 pub struct UpdateEmbeddingProviderRequest {
     pub enabled: Option<bool>,
     pub priority: Option<i32>,
+    /// Priority for search queries (lower = higher priority).
+    pub search_priority: Option<i32>,
     pub api_key: Option<String>,
     pub config: Option<JsonValue>,
 }
@@ -223,7 +230,11 @@ pub struct EmbeddingProviderResponse {
     pub id: String,
     pub name: String,
     pub enabled: bool,
+    /// Priority for indexing (lower = higher priority).
     pub priority: i32,
+    /// Priority for search queries (lower = higher priority).
+    /// If None, uses the same priority as indexing.
+    pub search_priority: Option<i32>,
     pub auth_type: String,
     pub has_api_key: bool,
     pub has_oauth_token: bool,
@@ -860,12 +871,14 @@ async fn list_embedding(
             let has_api_key = p.api_key.is_some();
             let has_oauth_token = p.oauth_access_token.is_some();
             let oauth_token_expired = p.is_oauth_token_expired();
+            let search_priority = p.search_priority();
             let config_json = serde_json::from_str(&p.config).unwrap_or(json!({}));
             EmbeddingProviderResponse {
                 id: p.id,
                 name: p.name,
                 enabled,
                 priority: p.priority,
+                search_priority,
                 auth_type: p.auth_type,
                 has_api_key,
                 has_oauth_token,
@@ -907,6 +920,7 @@ async fn create_embedding(
             name: req.name,
             enabled: req.enabled,
             priority: req.priority,
+            search_priority: req.search_priority,
             auth_type: req.auth_type,
             api_key: req.api_key,
             config: req.config,
@@ -921,6 +935,7 @@ async fn create_embedding(
     let has_api_key = provider.api_key.is_some();
     let has_oauth_token = provider.oauth_access_token.is_some();
     let oauth_token_expired = provider.is_oauth_token_expired();
+    let search_priority = provider.search_priority();
     let config_json = serde_json::from_str(&provider.config).unwrap_or(json!({}));
 
     Ok(Json(EmbeddingProviderResponse {
@@ -928,6 +943,7 @@ async fn create_embedding(
         name: provider.name,
         enabled,
         priority: provider.priority,
+        search_priority,
         auth_type: provider.auth_type,
         has_api_key,
         has_oauth_token,
@@ -959,6 +975,7 @@ async fn get_embedding(
     let has_api_key = provider.api_key.is_some();
     let has_oauth_token = provider.oauth_access_token.is_some();
     let oauth_token_expired = provider.is_oauth_token_expired();
+    let search_priority = provider.search_priority();
     let config_json = serde_json::from_str(&provider.config).unwrap_or(json!({}));
 
     Ok(Json(EmbeddingProviderResponse {
@@ -966,6 +983,7 @@ async fn get_embedding(
         name: provider.name,
         enabled,
         priority: provider.priority,
+        search_priority,
         auth_type: provider.auth_type,
         has_api_key,
         has_oauth_token,
@@ -995,6 +1013,7 @@ async fn update_embedding(
         UpdateEmbeddingProvider {
             enabled: req.enabled,
             priority: req.priority,
+            search_priority: req.search_priority,
             api_key: req.api_key,
             config: req.config,
             ..Default::default()
@@ -1009,6 +1028,7 @@ async fn update_embedding(
     let has_api_key = provider.api_key.is_some();
     let has_oauth_token = provider.oauth_access_token.is_some();
     let oauth_token_expired = provider.is_oauth_token_expired();
+    let search_priority = provider.search_priority();
     let config_json = serde_json::from_str(&provider.config).unwrap_or(json!({}));
 
     Ok(Json(EmbeddingProviderResponse {
@@ -1016,6 +1036,7 @@ async fn update_embedding(
         name: provider.name,
         enabled,
         priority: provider.priority,
+        search_priority,
         auth_type: provider.auth_type,
         has_api_key,
         has_oauth_token,

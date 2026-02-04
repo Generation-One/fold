@@ -70,6 +70,7 @@ pub struct EmbeddingProvider {
     pub model: String,
     pub api_key: String,
     pub priority: u8,
+    pub search_priority: Option<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -343,6 +344,7 @@ impl Config {
                 model: env_or("GEMINI_EMBEDDING_MODEL", "text-embedding-004"),
                 api_key,
                 priority: 1,
+                search_priority: None,
             });
         }
 
@@ -354,6 +356,7 @@ impl Config {
                 model: env_or("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
                 api_key,
                 priority: 2,
+                search_priority: None,
             });
         }
 
@@ -368,6 +371,7 @@ impl Config {
                 model: env_or("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text"),
                 api_key: String::new(), // No authentication needed
                 priority,
+                search_priority: Some(0), // Prefer local for search
             });
         }
 

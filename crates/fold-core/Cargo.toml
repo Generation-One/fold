@@ -62,6 +62,7 @@ regex = "1.10"
 
 # Git operations (native)
 git2 = "0.18"
+fold-git = { path = "../fold-git" }
 
 # URL parsing and encoding
 url = "2.5"

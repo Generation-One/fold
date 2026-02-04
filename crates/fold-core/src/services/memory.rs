@@ -1083,8 +1083,8 @@ Return JSON:
         memory_type: Option<MemoryType>,
         limit: usize,
     ) -> Result<Vec<MemorySearchResult>> {
-        // Generate query embedding
-        let embedding = self.embeddings.embed_single(query).await?;
+        // Generate query embedding using search-priority providers
+        let embedding = self.embeddings.embed_single_for_search(query).await?;
 
         // Build filter
         let filter = memory_type.map(|mt| SearchFilter::new().with_type(mt.as_str()));
@@ -1182,8 +1182,8 @@ Return JSON:
         memory_type: Option<MemoryType>,
         limit: usize,
     ) -> Result<Vec<MemorySearchResult>> {
-        // Generate query embedding once
-        let embedding = self.embeddings.embed_single(query).await?;
+        // Generate query embedding using search-priority providers
+        let embedding = self.embeddings.embed_single_for_search(query).await?;
 
         // Build filter for memories
         let memory_filter = memory_type.map(|mt| SearchFilter::new().with_type(mt.as_str()));
@@ -1373,8 +1373,8 @@ Return JSON:
         query: &str,
         limit: usize,
     ) -> Result<Vec<AgenticSearchResult>> {
-        // Generate query embedding
-        let embedding = self.embeddings.embed_single(query).await?;
+        // Generate query embedding using search-priority providers
+        let embedding = self.embeddings.embed_single_for_search(query).await?;
 
         // Search Qdrant
         let qdrant_results = self

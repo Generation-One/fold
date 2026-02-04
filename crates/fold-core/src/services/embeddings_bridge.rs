@@ -56,6 +56,10 @@ fn row_to_runtime_provider(row: EmbeddingProviderRow) -> RuntimeEmbeddingProvide
             .and_then(|d| d.as_u64())
             .map(|d| d as usize),
         priority: row.priority,
+        search_priority: config
+            .get("search_priority")
+            .and_then(|p| p.as_i64())
+            .map(|p| p as i32),
     }
 }
 
@@ -148,6 +152,7 @@ impl EmbeddingService {
                     model: p.model.clone(),
                     api_key: p.api_key.clone(),
                     priority: p.priority,
+                    search_priority: p.search_priority,
                 })
                 .collect(),
             dimension: config.dimension,
@@ -209,6 +214,16 @@ impl EmbeddingService {
     pub async fn embed_single(&self, text: &str) -> Result<Vec<f32>> {
         self.inner
             .embed_single(text)
+            .await
+            .map_err(|e| Error::Internal(e.to_string()))
+    }
+
+    /// Generate embedding for a single text using search-priority ordering.
+    ///
+    /// Uses `search_priority` to prefer fast local providers for search queries.
+    pub async fn embed_single_for_search(&self, text: &str) -> Result<Vec<f32>> {
+        self.inner
+            .embed_single_for_search(text)
             .await
             .map_err(|e| Error::Internal(e.to_string()))
     }

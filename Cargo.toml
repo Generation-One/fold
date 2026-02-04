@@ -4,6 +4,7 @@ members = [
     "crates/fold-chunker",
     "crates/fold-core",
     "crates/fold-embeddings",
+    "crates/fold-git",
     "crates/fold-llm",
     "crates/fold-models",
     "crates/fold-qdrant",

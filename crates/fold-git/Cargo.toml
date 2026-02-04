@@ -1,0 +1,16 @@
+[package]
+name = "fold-git"
+version = "0.1.0"
+edition = "2021"
+description = "Git operations for Fold - cloning, pulling, and repository management"
+license = "MIT"
+
+[dependencies]
+git2 = "0.18"
+tokio = { version = "1", features = ["fs", "process", "rt-multi-thread"] }
+tracing = "0.1"
+thiserror = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tempfile = "3"
