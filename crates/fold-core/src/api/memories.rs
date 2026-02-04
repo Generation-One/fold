@@ -166,7 +166,7 @@ fn default_search_limit() -> u32 {
 }
 
 fn default_min_score() -> f32 {
-    0.5
+    0.65
 }
 
 /// Query parameters for context retrieval.
@@ -379,17 +379,21 @@ async fn list_memories(
     let limit = query.limit.min(100) as i64;
     let offset = query.offset as i64;
 
-    // Build filter
+    // Parse tags filter (comma-separated, AND logic)
+    let required_tags: Vec<String> = query
+        .tags
+        .as_ref()
+        .map(|t| t.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+        .unwrap_or_default();
+
+    // Build filter (without tag - we'll filter in-memory for AND logic)
     let filter = db::MemoryFilter {
         project_id: Some(project.id.clone()),
         source: query.source,
         author: query.author.clone(),
-        tag: query
-            .tags
-            .as_ref()
-            .and_then(|t| t.split(',').next().map(|s| s.trim().to_string())),
+        tag: None, // Filter tags in-memory for AND logic
         search_query: query.q.clone(),
-        limit: Some(limit),
+        limit: Some(limit * 2), // Fetch more to account for tag filtering
         offset: Some(offset),
         ..Default::default()
     };
@@ -416,6 +420,19 @@ async fn list_memories(
             }
         }
     }
+
+    // Filter by tags (AND - must have ALL specified tags)
+    if !required_tags.is_empty() {
+        memories.retain(|m| {
+            let memory_tags = m.tags_vec();
+            required_tags.iter().all(|required_tag| {
+                memory_tags.iter().any(|t| t.eq_ignore_ascii_case(required_tag))
+            })
+        });
+    }
+
+    // Apply limit after filtering
+    memories.truncate(limit as usize);
 
     // Get total count for pagination
     let total = db::count_project_memories(&state.db, &project.id).await? as u32;
@@ -754,10 +771,13 @@ async fn get_context(
         Vec::new()
     };
 
-    // Filter out the memory itself from similar results
+    // Collect related memory IDs to exclude from similar
+    let related_ids: std::collections::HashSet<_> = related.iter().map(|r| r.id.as_str()).collect();
+
+    // Filter out the memory itself AND any already-related memories from similar results
     let similar: Vec<SimilarMemory> = similar_results
         .into_iter()
-        .filter(|r| r.memory.id != memory_id)
+        .filter(|r| r.memory.id != memory_id && !related_ids.contains(r.memory.id.as_str()))
         .map(|r| SimilarMemory {
             id: r.memory.id,
             title: r.memory.title,

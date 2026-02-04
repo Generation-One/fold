@@ -413,18 +413,19 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
         // },
         ToolDefinition {
             name: "memory_search".into(),
-            description: "Search memories using semantic similarity".into(),
+            description: "Search memories using semantic similarity. The query is embedded and compared against stored memory embeddings. Use natural language descriptions of what you're looking for - the more descriptive and context-rich, the better. For example: 'authentication flow for user login' or 'how the API handles error responses'. Avoid keyword-style queries.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "project": { "type": "string", "description": "Project ID or slug" },
-                    "query": { "type": "string", "description": "Search query" },
+                    "query": { "type": "string", "description": "Natural language search query. Will be embedded for semantic matching - use descriptive phrases, not keywords." },
                     "source": {
                         "type": "string",
                         "enum": ["agent", "file", "git"],
                         "description": "Filter by memory source"
                     },
-                    "limit": { "type": "integer", "default": 10, "description": "Max results" }
+                    "limit": { "type": "integer", "default": 10, "description": "Max results" },
+                    "min_score": { "type": "number", "default": 0.65, "description": "Minimum similarity score (0-1). Default 0.65 filters to relevant matches only." }
                 },
                 "required": ["project", "query"]
             }),
@@ -436,10 +437,10 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
                 "type": "object",
                 "properties": {
                     "project": { "type": "string", "description": "Project ID or slug" },
-                    "source": {
-                        "type": "string",
-                        "enum": ["agent", "file", "git"],
-                        "description": "Filter by memory source"
+                    "tags": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Filter by tags (AND - memory must have ALL specified tags)"
                     },
                     "author": { "type": "string", "description": "Filter by author" },
                     "limit": { "type": "integer", "default": 20 }
@@ -673,7 +674,7 @@ async fn execute_memory_search(state: &AppState, args: Value) -> Result<String> 
     }
 
     fn default_min_score() -> f32 {
-        0.5
+        0.65
     }
 
     let params: Params = serde_json::from_value(args)?;
@@ -737,7 +738,8 @@ async fn execute_memory_list(state: &AppState, args: Value) -> Result<String> {
     #[derive(Deserialize)]
     struct Params {
         project: String,
-        source: Option<String>,
+        #[serde(default)]
+        tags: Vec<String>,
         author: Option<String>,
         #[serde(default = "default_list_limit")]
         limit: i64,
@@ -752,9 +754,6 @@ async fn execute_memory_list(state: &AppState, args: Value) -> Result<String> {
     // Get project
     let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
 
-    // Parse source filter
-    let source = params.source.as_deref().and_then(MemorySource::from_str);
-
     // List memories via service (with content resolved from fold/)
     let memories = state
         .memory
@@ -763,26 +762,27 @@ async fn execute_memory_list(state: &AppState, args: Value) -> Result<String> {
             &project.slug,
             None, // No memory type filter
             params.author.as_deref(),
-            params.limit,
+            params.limit * 2, // Fetch more to account for filtering
             0,
         )
         .await?;
 
-    // Filter by source if specified
-    let filtered_memories: Vec<_> = if let Some(source_filter) = source {
-        memories
-            .into_iter()
-            .filter(|m| {
-                m.source
-                    .as_deref()
-                    .and_then(MemorySource::from_str)
-                    .map(|s| s == source_filter)
-                    .unwrap_or(false)
-            })
-            .collect()
-    } else {
-        memories
-    };
+    // Filter by tags (AND - must have ALL specified tags)
+    let filtered_memories: Vec<_> = memories
+        .into_iter()
+        .filter(|m| {
+            if !params.tags.is_empty() {
+                let memory_tags = m.tags_vec();
+                for required_tag in &params.tags {
+                    if !memory_tags.iter().any(|t| t.eq_ignore_ascii_case(required_tag)) {
+                        return false;
+                    }
+                }
+            }
+            true
+        })
+        .take(params.limit as usize)
+        .collect();
 
     let memories_json: Vec<_> = filtered_memories
         .iter()
@@ -793,6 +793,7 @@ async fn execute_memory_list(state: &AppState, args: Value) -> Result<String> {
                 "content": m.content,
                 "author": m.author,
                 "source": m.source,
+                "tags": m.tags_vec(),
                 "file_path": m.file_path,
                 "created_at": m.created_at.to_rfc3339()
             })
@@ -864,9 +865,13 @@ async fn execute_memory_context(state: &AppState, args: Value) -> Result<String>
         Vec::new()
     };
 
+    // Collect related memory IDs to exclude from similar
+    let related_ids: std::collections::HashSet<String> = links.iter().map(|l| l.target_id.clone()).collect();
+
+    // Filter out the memory itself AND any already-related memories from similar results
     let similar: Vec<_> = similar_results
         .into_iter()
-        .filter(|r| r.memory.id != params.memory_id)
+        .filter(|r| r.memory.id != params.memory_id && !related_ids.contains(&r.memory.id))
         .map(|r| {
             serde_json::json!({
                 "id": r.memory.id,

@@ -1032,7 +1032,7 @@ For each related candidate, suggest a link with:
 - "confidence": 0.0-1.0 how confident the relationship exists
 - "reason": Brief explanation of the relationship
 
-Respond with a JSON array of suggested links. Only include links with confidence > 0.5.
+Respond with a JSON array of suggested links. Only include links with confidence > 0.6.
 Example: [{{"target_id": "abc123", "link_type": "references", "confidence": 0.8, "reason": "Both discuss user authentication"}}]"#,
             source_id = memory.id,
             source_type = memory.memory_type,
@@ -1067,7 +1067,7 @@ Example: [{{"target_id": "abc123", "link_type": "references", "confidence": 0.8,
                                 reason: item["reason"].as_str().unwrap_or("").to_string(),
                             })
                         })
-                        .filter(|link| link.confidence > 0.5)
+                        .filter(|link| link.confidence > 0.6)
                         .collect()
                 })
             })
