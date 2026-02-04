@@ -461,6 +461,17 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
                 "required": ["project", "memory_id"]
             }),
         },
+        ToolDefinition {
+            name: "project_stats".into(),
+            description: "Get statistics for a project including memory counts, vector counts, and more".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string", "description": "Project ID or slug" }
+                },
+                "required": ["project"]
+            }),
+        },
     ];
 
     JsonRpcResponse::success(
@@ -486,6 +497,7 @@ async fn handle_tools_call(state: &AppState, id: Option<Value>, params: Value) -
     let result = match call_params.name.as_str() {
         "project_list" => execute_project_list(state).await,
         "github_project_create" => execute_github_project_create(state, call_params.arguments).await,
+        "project_stats" => execute_project_stats(state, call_params.arguments).await,
         // "memory_add" => execute_memory_add(state, call_params.arguments).await,
         "memory_search" => execute_memory_search(state, call_params.arguments).await,
         "memory_list" => execute_memory_list(state, call_params.arguments).await,
@@ -550,6 +562,70 @@ async fn execute_project_list(state: &AppState) -> Result<String> {
             "name": p.name,
             "description": p.description
         })).collect::<Vec<_>>()
+    }))?)
+}
+
+async fn execute_project_stats(state: &AppState, args: Value) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Params {
+        project: String,
+    }
+
+    let params: Params = serde_json::from_value(args)?;
+
+    // Get project by ID or slug
+    let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
+
+    // Get total memories
+    let total_memories = db::count_project_memories(&state.db, &project.id).await? as u64;
+
+    // Get memories by type
+    use db::MemoryType;
+    let by_type = serde_json::json!({
+        "codebase": db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Codebase).await.unwrap_or(0),
+        "session": db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Session).await.unwrap_or(0),
+        "decision": db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Decision).await.unwrap_or(0),
+        "spec": db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Spec).await.unwrap_or(0),
+        "commit": db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Commit).await.unwrap_or(0),
+        "pr": db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Pr).await.unwrap_or(0),
+        "task": db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Task).await.unwrap_or(0),
+        "general": db::count_project_memories_by_type(&state.db, &project.id, MemoryType::General).await.unwrap_or(0),
+    });
+
+    // Get memories by source
+    let by_source = serde_json::json!({
+        "file": db::count_project_memories_by_source(&state.db, &project.id, "file").await.unwrap_or(0),
+        "agent": db::count_project_memories_by_source(&state.db, &project.id, "agent").await.unwrap_or(0),
+        "git": db::count_project_memories_by_source(&state.db, &project.id, "git").await.unwrap_or(0),
+    });
+
+    // Get total chunks
+    let total_chunks = db::count_chunks_for_project(&state.db, &project.id).await.unwrap_or(0) as u64;
+
+    // Get total links
+    let total_links = db::count_project_links(&state.db, &project.id).await.unwrap_or(0) as u64;
+
+    // Get vector count from Qdrant
+    let total_vectors = state
+        .qdrant
+        .collection_info(&project.slug)
+        .await
+        .map(|info| info.points_count)
+        .unwrap_or(0);
+
+    // Get repository count
+    let repos = db::list_project_repositories(&state.db, &project.id).await?;
+
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "project_id": project.id,
+        "project_slug": project.slug,
+        "total_memories": total_memories,
+        "memories_by_type": by_type,
+        "memories_by_source": by_source,
+        "total_chunks": total_chunks,
+        "total_links": total_links,
+        "total_vectors": total_vectors,
+        "repositories": repos.len()
     }))?)
 }
 

@@ -29,6 +29,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
             "/:id",
             get(get_project).put(update_project).delete(delete_project),
         )
+        .route("/:id/stats", get(get_project_stats))
         .layer(axum::middleware::from_fn_with_state(
             state,
             crate::middleware::require_auth,
@@ -126,6 +127,48 @@ pub struct ListProjectsResponse {
     pub total: u32,
     pub offset: u32,
     pub limit: u32,
+}
+
+/// Project statistics response.
+#[derive(Debug, Serialize)]
+pub struct ProjectStatsResponse {
+    pub project_id: Uuid,
+    pub project_slug: String,
+    /// Total number of memories in the project.
+    pub total_memories: u64,
+    /// Memories by type (codebase, session, decision, etc.)
+    pub memories_by_type: MemoryTypeCounts,
+    /// Memories by source (file, agent, git)
+    pub memories_by_source: MemorySourceCounts,
+    /// Total number of chunks (code segments).
+    pub total_chunks: u64,
+    /// Total number of links between memories.
+    pub total_links: u64,
+    /// Total number of vectors in Qdrant.
+    pub total_vectors: u64,
+    /// Number of connected repositories.
+    pub repositories: u32,
+}
+
+/// Memory counts by type.
+#[derive(Debug, Serialize, Default)]
+pub struct MemoryTypeCounts {
+    pub codebase: u64,
+    pub session: u64,
+    pub decision: u64,
+    pub spec: u64,
+    pub commit: u64,
+    pub pr: u64,
+    pub task: u64,
+    pub general: u64,
+}
+
+/// Memory counts by source.
+#[derive(Debug, Serialize, Default)]
+pub struct MemorySourceCounts {
+    pub file: u64,
+    pub agent: u64,
+    pub git: u64,
 }
 
 // ============================================================================
@@ -417,6 +460,75 @@ async fn delete_project(
         "deleted": true,
         "id": existing.id
     })))
+}
+
+/// Get project statistics.
+///
+/// GET /projects/:id/stats
+///
+/// Returns detailed statistics for a project including memory counts,
+/// vector counts, and more.
+#[axum::debug_handler]
+async fn get_project_stats(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<ProjectStatsResponse>> {
+    let project = crate::db::get_project_by_id_or_slug(&state.db, &id).await?;
+
+    // Get total memories
+    let total_memories =
+        crate::db::count_project_memories(&state.db, &project.id).await? as u64;
+
+    // Get memories by type
+    use crate::db::MemoryType;
+    let memories_by_type = MemoryTypeCounts {
+        codebase: crate::db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Codebase).await.unwrap_or(0) as u64,
+        session: crate::db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Session).await.unwrap_or(0) as u64,
+        decision: crate::db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Decision).await.unwrap_or(0) as u64,
+        spec: crate::db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Spec).await.unwrap_or(0) as u64,
+        commit: crate::db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Commit).await.unwrap_or(0) as u64,
+        pr: crate::db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Pr).await.unwrap_or(0) as u64,
+        task: crate::db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Task).await.unwrap_or(0) as u64,
+        general: crate::db::count_project_memories_by_type(&state.db, &project.id, MemoryType::General).await.unwrap_or(0) as u64,
+    };
+
+    // Get memories by source
+    let memories_by_source = MemorySourceCounts {
+        file: crate::db::count_project_memories_by_source(&state.db, &project.id, "file").await.unwrap_or(0) as u64,
+        agent: crate::db::count_project_memories_by_source(&state.db, &project.id, "agent").await.unwrap_or(0) as u64,
+        git: crate::db::count_project_memories_by_source(&state.db, &project.id, "git").await.unwrap_or(0) as u64,
+    };
+
+    // Get total chunks
+    let total_chunks =
+        crate::db::count_chunks_for_project(&state.db, &project.id).await.unwrap_or(0) as u64;
+
+    // Get total links
+    let total_links =
+        crate::db::count_project_links(&state.db, &project.id).await.unwrap_or(0) as u64;
+
+    // Get vector count from Qdrant
+    let total_vectors = state
+        .qdrant
+        .collection_info(&project.slug)
+        .await
+        .map(|info| info.points_count)
+        .unwrap_or(0);
+
+    // Get repository count
+    let repos = crate::db::list_project_repositories(&state.db, &project.id).await?;
+
+    Ok(Json(ProjectStatsResponse {
+        project_id: project.id.parse().unwrap_or_default(),
+        project_slug: project.slug,
+        total_memories,
+        memories_by_type,
+        memories_by_source,
+        total_chunks,
+        total_links,
+        total_vectors,
+        repositories: repos.len() as u32,
+    }))
 }
 
 // ============================================================================
