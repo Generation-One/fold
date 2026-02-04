@@ -1,19 +1,5 @@
 # Fold
 
-**Holographic memory for development teams and AI agents.**
-
-Fold captures, organises, and retrieves project knowledge across your codebase. Any fragment reconstructs full context, like a hologram. Ask natural language questions and get code, decisions, and history back instantly.
-
-> **Official UI:** [fold-ui](https://github.com/Generation-One/fold-ui) — React web interface for Fold (separate repository)
-
----
-
-## The Problem
-
-Development knowledge is scattered: architecture decisions live in old PRs, the reasoning behind code sits in Slack threads, and half the system understanding leaves when team members do. AI agents work blind, reverse-engineering patterns instead of understanding them.
-
-## The Solution
-
 Fold makes knowledge searchable, connected, and persistent:
 
 ```
@@ -28,6 +14,16 @@ Fold returns:
 
 Result: Complete understanding in seconds
 ```
+
+**Holographic memory for development teams and AI agents.**
+
+> **Official UI:** [fold-ui](https://github.com/Generation-One/fold-ui) — React web interface for Fold (separate repository)
+
+---
+
+## The Problem
+
+Development knowledge is scattered: architecture decisions live in old PRs, the reasoning behind code sits in Slack threads, and half the system understanding leaves when team members do. AI agents work blind, reverse-engineering patterns instead of understanding them.
 
 ---
 

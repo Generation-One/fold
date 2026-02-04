@@ -5,7 +5,6 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::IntoResponse,
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -14,7 +13,7 @@ use uuid::Uuid;
 use crate::{
     db::{self, Group, GroupMember},
     error::{Error, Result},
-    middleware::{AuthUser, ProjectAccessContext},
+    middleware::AuthUser,
     AppState,
 };
 
@@ -102,7 +101,7 @@ pub fn routes(_state: AppState) -> Router<AppState> {
 /// List all groups.
 async fn list_groups(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthUser>,
+    Extension(_auth): Extension<AuthUser>,
 ) -> Result<Json<Vec<GroupResponse>>> {
     let groups = db::list_groups(&state.db).await?;
     Ok(Json(groups.into_iter().map(GroupResponse::from).collect()))
