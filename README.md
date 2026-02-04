@@ -149,6 +149,7 @@ Fold applies this principle: search for a file path and get the commits that mod
 ### Tech Stack
 
 - **[Rust](https://www.rust-lang.org/)** + **[Axum](https://github.com/tokio-rs/axum)** — Backend server
+- **[React UI](https://github.com/Generation-One/fold-ui)** — Web interface (separate repo)
 - **[Qdrant](https://qdrant.tech/)** — Vector database for semantic search
 - **[SQLite](https://www.sqlite.org/)** — Metadata and relationships
 - **[Gemini](https://ai.google.dev/)** / **[OpenAI](https://openai.com/)** — Embeddings and LLM
