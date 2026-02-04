@@ -3,10 +3,15 @@
 //! Provides authentication and authorization middleware:
 //! - `token_auth` - API token validation for programmatic access (MCP, CLI, webhooks)
 //! - `session_auth` - Session/cookie validation for web UI access
+//! - `project_auth` - Project-level access control based on user/group membership
 
+mod project_auth;
 mod session_auth;
 mod token_auth;
 
+pub use project_auth::{
+    require_project_read, require_project_write, require_admin, ProjectAccessContext,
+};
 pub use session_auth::{
     require_session, SessionUser, SESSION_COOKIE_NAME,
 };

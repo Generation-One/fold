@@ -44,10 +44,12 @@ pub mod markdown;
 mod memory;
 mod meta_storage;
 mod metadata_sync;
+mod permissions;
 mod project;
 mod qdrant;
 
 pub use auth::AuthService;
+pub use permissions::{PermissionService, ProjectAccess};
 pub use chunker::{ChunkerConfig, ChunkerService, ChunkStrategy, CodeChunk};
 pub use claudecode::{ClaudeCodeInfo, ClaudeCodeService};
 pub use content_resolver::ContentResolverService;

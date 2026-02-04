@@ -327,6 +327,66 @@ CREATE INDEX IF NOT EXISTS idx_api_tokens_prefix ON api_tokens(token_prefix);
 CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
 
 -- ============================================================================
+-- Groups
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS groups (
+    id TEXT PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    description TEXT,
+    is_system INTEGER NOT NULL DEFAULT 0,   -- 1 for protected system groups (admin)
+    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_groups_name ON groups(name);
+CREATE INDEX IF NOT EXISTS idx_groups_is_system ON groups(is_system);
+
+-- ============================================================================
+-- Group Members (many-to-many: users <-> groups)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS group_members (
+    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    added_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (group_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id);
+
+-- ============================================================================
+-- Project Members (direct user project access)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS project_members (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'viewer',    -- 'member' (read+write) or 'viewer' (read-only)
+    added_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, project_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_members_user ON project_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_project_members_project ON project_members(project_id);
+
+-- ============================================================================
+-- Project Group Members (group-based project access)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS project_group_members (
+    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'viewer',    -- 'member' (read+write) or 'viewer' (read-only)
+    added_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (group_id, project_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_group_members_project ON project_group_members(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_group_members_group ON project_group_members(group_id);
+
+-- ============================================================================
 -- Auth Providers (dynamic OIDC configuration)
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS auth_providers (

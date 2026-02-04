@@ -42,6 +42,8 @@ pub struct ServerConfig {
     pub host: String,
     pub port: u16,
     pub public_url: String,
+    pub tls_cert_path: Option<String>,
+    pub tls_key_path: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -154,6 +156,8 @@ impl Config {
                 host: env_or("HOST", "0.0.0.0"),
                 port: env_or("PORT", "8765").parse().expect("Invalid PORT"),
                 public_url: env_or("PUBLIC_URL", "http://localhost:8765"),
+                tls_cert_path: env::var("TLS_CERT_PATH").ok(),
+                tls_key_path: env::var("TLS_KEY_PATH").ok(),
             },
             database: DatabaseConfig {
                 path: env_or("DATABASE_PATH", "./data/fold.db"),
