@@ -586,7 +586,7 @@ impl IndexerService {
         if let Some(ref linker) = self.linker {
             info!(memory_id = %memory.id, "Starting auto-link for memory");
             match linker
-                .auto_link(&project.id, &project.slug, &memory.id, 0.3)
+                .auto_link(&project.id, &project.slug, &memory.id, 0.55)
                 .await
             {
                 Ok(result) => {
@@ -734,7 +734,7 @@ impl IndexerService {
         if let Some(ref linker) = self.linker {
             info!(memory_id = %memory.id, "Starting auto-link for memory");
             match linker
-                .auto_link(&project.id, &project.slug, &memory.id, 0.3)
+                .auto_link(&project.id, &project.slug, &memory.id, 0.55)
                 .await
             {
                 Ok(result) => {

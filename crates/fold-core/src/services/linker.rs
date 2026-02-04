@@ -141,12 +141,12 @@ impl LinkerService {
         let mut links_created = 0;
         debug!(
             suggestions_count = filtered_suggestions.len(),
-            threshold = 0.3,
+            threshold = 0.55,
             "Creating links for suggestions above threshold"
         );
 
         for suggestion in &filtered_suggestions {
-            if suggestion.confidence >= 0.3 {
+            if suggestion.confidence >= 0.55 {
                 debug!(
                     source = %suggestion.source_id,
                     target = %suggestion.target_id,
@@ -358,7 +358,7 @@ impl LinkerService {
                         source_id: memory.id.clone(),
                         target_id: sibling.id.clone(),
                         link_type: LinkType::Related.as_str().to_string(),
-                        confidence: 0.5,
+                        confidence: 0.6,
                         reason: format!("Same directory: {}", parent_dir),
                         source: "path".to_string(),
                     });
@@ -398,7 +398,7 @@ impl LinkerService {
                         source_id: memory.id.clone(),
                         target_id: source.id.clone(),
                         link_type: LinkType::References.as_str().to_string(),
-                        confidence: 0.8,
+                        confidence: 0.75,
                         reason: "Test file for source".to_string(),
                         source: "path".to_string(),
                     });

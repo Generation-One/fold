@@ -741,27 +741,28 @@ Return JSON:
 
         // Resolve content from fold/
         if let Ok(project) = crate::db::get_project(&self.db, project_id).await {
-            if let Some(root_path) = &project.root_path {
-                let project_root = std::path::PathBuf::from(root_path);
-                match self
-                    .fold_storage
-                    .read_memory(&project_root, memory_id)
-                    .await
-                {
-                    Ok((_, content)) => {
-                        memory.content = Some(content);
-                    }
-                    Err(e) => {
-                        debug!(
-                            memory_id = %memory_id,
-                            project_root = %project_root.display(),
-                            error = %e,
-                            "Failed to read memory content from fold/"
-                        );
-                    }
+            let project_root = project
+                .root_path
+                .as_ref()
+                .map(|p| std::path::PathBuf::from(p))
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+            match self
+                .fold_storage
+                .read_memory(&project_root, memory_id)
+                .await
+            {
+                Ok((_, content)) => {
+                    memory.content = Some(content);
                 }
-            } else {
-                debug!(memory_id = %memory_id, "Project has no root_path configured");
+                Err(e) => {
+                    debug!(
+                        memory_id = %memory_id,
+                        project_root = %project_root.display(),
+                        error = %e,
+                        "Failed to read memory content from fold/"
+                    );
+                }
             }
         }
 
