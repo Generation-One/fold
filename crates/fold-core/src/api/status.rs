@@ -66,17 +66,24 @@ pub fn inc_error_count() {
     ERROR_COUNT.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Build status routes.
-pub fn routes() -> Router<AppState> {
+/// Build public health check routes (no auth required).
+/// These are used by load balancers and monitoring systems.
+pub fn health_routes() -> Router<AppState> {
     Router::new()
         .route("/health", get(health_check))
         .route("/health/ready", get(readiness_check))
         .route("/health/live", get(liveness_check))
+        .route("/metrics", get(prometheus_metrics))
+}
+
+/// Build protected status routes (auth required).
+/// These expose detailed system information.
+pub fn protected_routes() -> Router<AppState> {
+    Router::new()
         .route("/status", get(system_status))
         .route("/status/jobs", get(list_jobs))
         .route("/status/jobs/:job_id", get(get_job))
         .route("/status/jobs/:job_id/logs", get(get_job_logs))
-        .route("/metrics", get(prometheus_metrics))
 }
 
 // ============================================================================

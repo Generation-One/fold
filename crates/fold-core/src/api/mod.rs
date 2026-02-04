@@ -29,11 +29,14 @@ use crate::AppState;
 /// - /providers/* - Provider management (session-protected, admin)
 /// - /mcp - MCP JSON-RPC endpoint (token-protected)
 /// - /webhooks/* - Git webhooks (signature-verified)
-/// - /health, /status, /metrics - Health checks (public)
+/// - /health, /metrics - Health checks (public)
+/// - /status/* - System status (token-protected)
 pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
-        // Health and status endpoints (public)
-        .merge(status::routes())
+        // Health check endpoints (public - for load balancers/monitoring)
+        .merge(status::health_routes())
+        // Status endpoints (token auth - detailed system info)
+        .merge(status_routes(state.clone()))
         // Authentication routes (mixed public/protected)
         .nest("/auth", auth::routes(state.clone()))
         // Webhook routes (signature-verified, no auth middleware)
@@ -101,4 +104,11 @@ fn groups_routes(state: AppState) -> Router<AppState> {
     Router::<AppState>::new()
         .merge(groups::routes(state.clone()))
         .layer(axum::middleware::from_fn_with_state(state, require_auth))
+}
+
+/// Status routes (token auth required).
+fn status_routes(state: AppState) -> Router<AppState> {
+    Router::<AppState>::new()
+        .merge(status::protected_routes())
+        .layer(axum::middleware::from_fn_with_state(state, require_token))
 }
