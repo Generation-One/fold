@@ -152,6 +152,16 @@ impl EmbeddingProviderRow {
         })
     }
 
+    /// Get search priority from config (if set).
+    /// Search priority determines provider ordering for search queries.
+    pub fn search_priority(&self) -> Option<i32> {
+        self.config_json().ok().and_then(|c| {
+            c.get("search_priority")
+                .and_then(|p| p.as_i64())
+                .map(|p| p as i32)
+        })
+    }
+
     pub fn is_oauth_token_expired(&self) -> bool {
         if let Some(ref expires) = self.oauth_token_expires_at {
             if let Ok(dt) = DateTime::parse_from_rfc3339(expires) {
@@ -168,6 +178,9 @@ pub struct CreateEmbeddingProvider {
     pub name: String,
     pub enabled: bool,
     pub priority: i32,
+    /// Priority for search queries (lower = higher priority).
+    /// If not set, uses the same priority as indexing.
+    pub search_priority: Option<i32>,
     pub auth_type: String,
     pub api_key: Option<String>,
     pub config: JsonValue,
@@ -178,6 +191,8 @@ pub struct CreateEmbeddingProvider {
 pub struct UpdateEmbeddingProvider {
     pub enabled: Option<bool>,
     pub priority: Option<i32>,
+    /// Priority for search queries (lower = higher priority).
+    pub search_priority: Option<i32>,
     pub api_key: Option<String>,
     pub oauth_access_token: Option<String>,
     pub oauth_refresh_token: Option<String>,
@@ -435,7 +450,14 @@ pub async fn create_embedding_provider(
     input: CreateEmbeddingProvider,
 ) -> Result<EmbeddingProviderRow> {
     let id = crate::models::new_id();
-    let config_json = serde_json::to_string(&input.config)?;
+    // Merge search_priority into config if set
+    let mut config = input.config.clone();
+    if let Some(sp) = input.search_priority {
+        if let Some(obj) = config.as_object_mut() {
+            obj.insert("search_priority".to_string(), serde_json::json!(sp));
+        }
+    }
+    let config_json = serde_json::to_string(&config)?;
 
     sqlx::query_as::<_, EmbeddingProviderRow>(
         r#"
@@ -546,7 +568,34 @@ pub async fn update_embedding_provider(
         updates.push("oauth_token_expires_at = ?");
         bindings.push(expires_at.to_rfc3339());
     }
-    if let Some(config) = input.config {
+
+    // Handle config and search_priority together
+    // If search_priority is set, we need to merge it into config
+    let final_config = match (input.config, input.search_priority) {
+        (Some(mut config), Some(sp)) => {
+            // Merge search_priority into provided config
+            if let Some(obj) = config.as_object_mut() {
+                obj.insert("search_priority".to_string(), serde_json::json!(sp));
+            }
+            Some(config)
+        }
+        (Some(config), None) => Some(config),
+        (None, Some(sp)) => {
+            // Need to fetch existing config and merge search_priority
+            if let Some(existing) = get_embedding_provider(pool, id).await? {
+                let mut config = existing.config_json().unwrap_or(serde_json::json!({}));
+                if let Some(obj) = config.as_object_mut() {
+                    obj.insert("search_priority".to_string(), serde_json::json!(sp));
+                }
+                Some(config)
+            } else {
+                Some(serde_json::json!({"search_priority": sp}))
+            }
+        }
+        (None, None) => None,
+    };
+
+    if let Some(config) = final_config {
         updates.push("config = ?");
         bindings.push(serde_json::to_string(&config)?);
     }
@@ -607,7 +656,14 @@ pub async fn upsert_embedding_provider(
     input: CreateEmbeddingProvider,
 ) -> Result<EmbeddingProviderRow> {
     let id = crate::models::new_id();
-    let config_json = serde_json::to_string(&input.config)?;
+    // Merge search_priority into config if set
+    let mut config = input.config.clone();
+    if let Some(sp) = input.search_priority {
+        if let Some(obj) = config.as_object_mut() {
+            obj.insert("search_priority".to_string(), serde_json::json!(sp));
+        }
+    }
+    let config_json = serde_json::to_string(&config)?;
 
     sqlx::query_as::<_, EmbeddingProviderRow>(
         r#"
@@ -768,6 +824,7 @@ pub async fn seed_embedding_providers_from_env(
                 name: provider.name.clone(),
                 enabled: true,
                 priority: provider.priority as i32,
+                search_priority: provider.search_priority.map(|p| p as i32),
                 auth_type: "api_key".to_string(),
                 api_key: Some(provider.api_key.clone()),
                 config,

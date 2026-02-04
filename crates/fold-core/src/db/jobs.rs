@@ -567,7 +567,7 @@ pub async fn retry_job(pool: &DbPool, job_id: &str, error: &str) -> Result<Optio
         r#"
         UPDATE jobs SET
             status = 'retry',
-            retry_count = retry_count + 1,
+            retry_count = COALESCE(retry_count, 0) + 1,
             last_error = ?,
             scheduled_at = datetime('now', '+' || ? || ' seconds'),
             locked_at = NULL,

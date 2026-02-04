@@ -478,3 +478,150 @@ CREATE TABLE IF NOT EXISTS algorithm_config (
 );
 
 CREATE INDEX IF NOT EXISTS idx_algorithm_config_project ON algorithm_config(project_id);
+
+-- ============================================================================
+-- Attachments (files attached to memories)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS attachments (
+    id TEXT PRIMARY KEY,
+    memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    filename TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    storage_path TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_attachments_memory ON attachments(memory_id);
+
+-- ============================================================================
+-- AI Sessions (agent working sessions)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS ai_sessions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    task TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    local_root TEXT,
+    repository_id TEXT REFERENCES repositories(id) ON DELETE SET NULL,
+    summary TEXT,
+    next_steps TEXT,                  -- JSON array
+    agent_type TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    ended_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_sessions_project ON ai_sessions(project_id);
+CREATE INDEX IF NOT EXISTS idx_ai_sessions_status ON ai_sessions(status);
+
+-- ============================================================================
+-- AI Session Notes (notes during a session)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS ai_session_notes (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES ai_sessions(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,               -- 'decision' | 'blocker' | 'question' | 'progress' | 'finding'
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_session_notes_session ON ai_session_notes(session_id);
+
+-- ============================================================================
+-- Workspaces (local workspace mappings)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS workspaces (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    token_id TEXT NOT NULL,
+    local_root TEXT NOT NULL,
+    repository_id TEXT REFERENCES repositories(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspaces_project ON workspaces(project_id);
+CREATE INDEX IF NOT EXISTS idx_workspaces_local_root ON workspaces(local_root);
+
+-- ============================================================================
+-- Team Status (real-time team member status)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS team_status (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    username TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'idle',
+    current_task TEXT,
+    current_files TEXT,               -- JSON array
+    last_seen TEXT NOT NULL DEFAULT (datetime('now')),
+    session_start TEXT,
+
+    UNIQUE(project_id, username)
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_status_project ON team_status(project_id);
+
+-- ============================================================================
+-- Git Commits (indexed commits)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS git_commits (
+    id TEXT PRIMARY KEY,
+    repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    sha TEXT NOT NULL,
+    message TEXT NOT NULL,
+    author_name TEXT,
+    author_email TEXT,
+    files_changed TEXT,               -- JSON array
+    insertions INTEGER,
+    deletions INTEGER,
+    committed_at TEXT NOT NULL,
+    indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    summary_memory_id TEXT REFERENCES memories(id) ON DELETE SET NULL,
+
+    UNIQUE(repository_id, sha)
+);
+
+CREATE INDEX IF NOT EXISTS idx_git_commits_repository ON git_commits(repository_id);
+CREATE INDEX IF NOT EXISTS idx_git_commits_sha ON git_commits(sha);
+
+-- ============================================================================
+-- Git Pull Requests (indexed PRs)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS git_pull_requests (
+    id TEXT PRIMARY KEY,
+    repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    number INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    state TEXT NOT NULL,
+    author TEXT,
+    source_branch TEXT,
+    target_branch TEXT,
+    created_at TEXT NOT NULL,
+    merged_at TEXT,
+    indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    memory_id TEXT REFERENCES memories(id) ON DELETE SET NULL,
+
+    UNIQUE(repository_id, number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_git_pull_requests_repository ON git_pull_requests(repository_id);
+CREATE INDEX IF NOT EXISTS idx_git_pull_requests_state ON git_pull_requests(state);
+
+-- ============================================================================
+-- Provider OAuth States (for provider OAuth flows)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS provider_oauth_states (
+    id TEXT PRIMARY KEY,
+    state TEXT UNIQUE NOT NULL,
+    provider_type TEXT NOT NULL,
+    provider_name TEXT NOT NULL,
+    pkce_verifier TEXT,
+    redirect_uri TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_oauth_states_state ON provider_oauth_states(state);
+CREATE INDEX IF NOT EXISTS idx_provider_oauth_states_expires ON provider_oauth_states(expires_at);

@@ -108,8 +108,12 @@ pub struct EmbeddingProviderConfig {
     pub model: String,
     /// API key for authentication.
     pub api_key: String,
-    /// Priority (lower = higher priority).
+    /// Priority for indexing (lower = higher priority).
     pub priority: u8,
+    /// Priority for search queries (lower = higher priority).
+    /// If not set, uses the same priority as indexing.
+    #[serde(default)]
+    pub search_priority: Option<u8>,
 }
 
 // ============================================================================
@@ -133,8 +137,11 @@ pub struct RuntimeEmbeddingProvider {
     pub oauth_access_token: Option<String>,
     /// Embedding dimension (if known).
     pub dimension: Option<usize>,
-    /// Priority (lower = higher priority).
+    /// Priority for indexing (lower = higher priority).
     pub priority: i32,
+    /// Priority for search queries (lower = higher priority).
+    /// If None, uses the same priority as indexing.
+    pub search_priority: Option<i32>,
 }
 
 impl RuntimeEmbeddingProvider {
@@ -166,6 +173,7 @@ impl From<&EmbeddingProviderConfig> for RuntimeEmbeddingProvider {
             oauth_access_token: None,
             dimension: Some(default_dimension(&config.model)),
             priority: config.priority as i32,
+            search_priority: config.search_priority.map(|p| p as i32),
         }
     }
 }
@@ -568,6 +576,65 @@ impl EmbeddingService {
                         provider = %provider.name,
                         error = %e,
                         "Embedding provider failed, trying next"
+                    );
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        // When providers are configured but ALL fail, return error
+        Err(last_error.unwrap_or(Error::AllProvidersFailed))
+    }
+
+    /// Generate embedding for a single text using search-priority ordering.
+    ///
+    /// This method uses `search_priority` to order providers, allowing fast local
+    /// providers (e.g., Ollama) to be preferred for search queries while slower
+    /// high-quality providers (e.g., OpenAI) are used for indexing.
+    ///
+    /// If no `search_priority` is set on providers, falls back to normal priority.
+    pub async fn embed_single_for_search(&self, text: &str) -> Result<Vec<f32>> {
+        self.ensure_initialized().await?;
+
+        let mut providers = {
+            let guard = self.inner.providers.read().await;
+            guard.clone()
+        };
+
+        if providers.is_empty() {
+            let dim = *self.inner.dimension.read().await;
+            return Ok(self.hash_embed(text, dim));
+        }
+
+        // Sort by search_priority (falling back to priority if not set)
+        providers.sort_by_key(|p| p.search_priority.unwrap_or(p.priority));
+
+        let mut last_error = None;
+
+        for provider in &providers {
+            if !provider.has_credentials() {
+                continue;
+            }
+
+            match self.try_provider_single(provider, text).await {
+                Ok(embedding) => {
+                    if !provider.id.is_empty() {
+                        if let Some(callbacks) = &self.inner.callbacks {
+                            callbacks.on_provider_used(&provider.id).await;
+                        }
+                    }
+                    debug!(
+                        provider = %provider.name,
+                        search_priority = ?provider.search_priority,
+                        "Search embedding generated"
+                    );
+                    return Ok(embedding);
+                }
+                Err(e) => {
+                    warn!(
+                        provider = %provider.name,
+                        error = %e,
+                        "Search embedding provider failed, trying next"
                     );
                     last_error = Some(e);
                 }
