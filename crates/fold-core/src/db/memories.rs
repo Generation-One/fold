@@ -686,6 +686,22 @@ pub async fn count_project_memories_by_source(
     Ok(count)
 }
 
+/// Get the most recently created memory for a project.
+pub async fn get_latest_project_memory(pool: &DbPool, project_id: &str) -> Result<Memory> {
+    sqlx::query_as::<_, Memory>(
+        r#"
+        SELECT * FROM memories
+        WHERE project_id = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(project_id)
+    .fetch_one(pool)
+    .await
+    .map_err(Error::Database)
+}
+
 /// Get memories that need metadata sync (changed since last sync).
 pub async fn list_memories_needing_sync(pool: &DbPool, project_id: &str) -> Result<Vec<Memory>> {
     sqlx::query_as::<_, Memory>(

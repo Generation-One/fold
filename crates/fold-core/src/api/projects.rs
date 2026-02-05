@@ -30,6 +30,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
             get(get_project).put(update_project).delete(delete_project),
         )
         .route("/:id/stats", get(get_project_stats))
+        .route("/:id/status", get(get_project_status))
         .route("/:id/reindex", post(reindex_project))
         .route("/:id/sync", post(sync_project))
         .layer(axum::middleware::from_fn_with_state(
@@ -194,6 +195,198 @@ pub struct MemorySourceCounts {
     pub file: u64,
     pub agent: u64,
     pub git: u64,
+}
+
+// ============================================================================
+// Project Status Types (comprehensive status endpoint)
+// ============================================================================
+
+/// Comprehensive project status response.
+/// Returns detailed status information about all aspects of a project.
+#[derive(Debug, Serialize)]
+pub struct ProjectStatusResponse {
+    /// Project identification
+    pub project: ProjectInfo,
+    /// Overall health status
+    pub health: HealthInfo,
+    /// SQLite database statistics
+    pub database: DatabaseStats,
+    /// Qdrant vector database statistics
+    pub vector_db: VectorDbStats,
+    /// Job queue statistics for this project
+    pub jobs: JobStats,
+    /// Recent job history
+    pub recent_jobs: Vec<RecentJob>,
+    /// File system status (if local project)
+    pub filesystem: Option<FilesystemStats>,
+    /// Indexing status
+    pub indexing: IndexingStatus,
+    /// Timestamps
+    pub timestamps: ProjectTimestamps,
+}
+
+/// Project identification info.
+#[derive(Debug, Serialize)]
+pub struct ProjectInfo {
+    pub id: String,
+    pub slug: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub provider: String,
+    pub root_path: Option<String>,
+    pub remote_owner: Option<String>,
+    pub remote_repo: Option<String>,
+    pub remote_branch: Option<String>,
+}
+
+/// Health status for the project.
+#[derive(Debug, Serialize)]
+pub struct HealthInfo {
+    /// Overall status: healthy, degraded, unhealthy
+    pub status: String,
+    /// Is the project accessible (root_path exists)?
+    pub accessible: bool,
+    /// Is the vector collection healthy?
+    pub vector_collection_exists: bool,
+    /// Are there any failed jobs in the last 24h?
+    pub has_recent_failures: bool,
+    /// Is indexing currently in progress?
+    pub indexing_in_progress: bool,
+    /// Issues detected
+    pub issues: Vec<String>,
+}
+
+/// SQLite database statistics for the project.
+#[derive(Debug, Serialize)]
+pub struct DatabaseStats {
+    /// Total memories in the project
+    pub total_memories: u64,
+    /// Memories by type
+    pub memories_by_type: MemoryTypeCounts,
+    /// Memories by source
+    pub memories_by_source: MemorySourceCounts,
+    /// Total chunks (code segments)
+    pub total_chunks: u64,
+    /// Total links between memories
+    pub total_links: u64,
+    /// Total attachments
+    pub total_attachments: u64,
+    /// Database size in bytes (estimated)
+    pub estimated_size_bytes: u64,
+}
+
+/// Qdrant vector database statistics.
+#[derive(Debug, Serialize)]
+pub struct VectorDbStats {
+    /// Collection name in Qdrant
+    pub collection_name: String,
+    /// Whether the collection exists
+    pub exists: bool,
+    /// Total vectors/points stored
+    pub total_vectors: u64,
+    /// Vector dimension
+    pub dimension: usize,
+    /// Sync status: vectors vs memories
+    pub sync_status: VectorSyncStatus,
+}
+
+/// Vector sync status.
+#[derive(Debug, Serialize)]
+pub struct VectorSyncStatus {
+    /// Number of memories in SQLite
+    pub memory_count: u64,
+    /// Number of vectors in Qdrant
+    pub vector_count: u64,
+    /// Whether counts match
+    pub in_sync: bool,
+    /// Difference (positive = missing vectors, negative = orphan vectors)
+    pub difference: i64,
+}
+
+/// Job queue statistics for the project.
+#[derive(Debug, Serialize)]
+pub struct JobStats {
+    /// Total jobs ever created for this project
+    pub total: u64,
+    /// Currently pending jobs
+    pub pending: u64,
+    /// Currently running jobs
+    pub running: u64,
+    /// Completed jobs
+    pub completed: u64,
+    /// Failed jobs
+    pub failed: u64,
+    /// Paused jobs (waiting for resources)
+    pub paused: u64,
+    /// Jobs completed in last 24h
+    pub completed_24h: u64,
+    /// Jobs failed in last 24h
+    pub failed_24h: u64,
+    /// Jobs by type
+    pub by_type: JobTypeCounts,
+}
+
+/// Job counts by type.
+#[derive(Debug, Serialize, Default)]
+pub struct JobTypeCounts {
+    pub index_repo: u64,
+    pub reindex_repo: u64,
+    pub index_history: u64,
+    pub sync_metadata: u64,
+    pub process_webhook: u64,
+    pub generate_summary: u64,
+    pub custom: u64,
+}
+
+/// Recent job info.
+#[derive(Debug, Serialize)]
+pub struct RecentJob {
+    pub id: String,
+    pub job_type: String,
+    pub status: String,
+    pub progress: Option<u32>,
+    pub created_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub error: Option<String>,
+}
+
+/// Filesystem statistics (for local projects).
+#[derive(Debug, Serialize)]
+pub struct FilesystemStats {
+    /// Whether the root path exists
+    pub root_exists: bool,
+    /// Whether the fold/ directory exists
+    pub fold_dir_exists: bool,
+    /// Number of files matching index patterns (estimate)
+    pub indexable_files_estimate: u64,
+    /// Total size of fold/ directory in bytes
+    pub fold_dir_size_bytes: u64,
+}
+
+/// Indexing status.
+#[derive(Debug, Serialize)]
+pub struct IndexingStatus {
+    /// Is indexing currently running?
+    pub in_progress: bool,
+    /// Current job ID if running
+    pub current_job_id: Option<String>,
+    /// Progress percentage if running
+    pub progress: Option<u32>,
+    /// Last successful index time
+    pub last_indexed_at: Option<DateTime<Utc>>,
+    /// Last index job duration in seconds
+    pub last_duration_secs: Option<u64>,
+}
+
+/// Project timestamps.
+#[derive(Debug, Serialize)]
+pub struct ProjectTimestamps {
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub last_indexed_at: Option<DateTime<Utc>>,
+    pub last_job_completed_at: Option<DateTime<Utc>>,
+    pub last_job_failed_at: Option<DateTime<Utc>>,
+    pub last_memory_created_at: Option<DateTime<Utc>>,
 }
 
 // ============================================================================
@@ -626,6 +819,378 @@ async fn get_project_stats(
         total_links,
         total_vectors,
     }))
+}
+
+/// Get comprehensive project status.
+///
+/// GET /projects/:id/status
+///
+/// Returns complete status information including:
+/// - Project info and health
+/// - SQLite database statistics (memories, chunks, links, attachments)
+/// - Qdrant vector database statistics
+/// - Job queue status and recent jobs
+/// - Filesystem status (for local projects)
+/// - Indexing status
+/// - All relevant timestamps
+#[axum::debug_handler]
+async fn get_project_status(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<ProjectStatusResponse>> {
+    let project = crate::db::get_project_by_id_or_slug(&state.db, &id).await?;
+
+    // ========================================================================
+    // Project Info
+    // ========================================================================
+    let project_info = ProjectInfo {
+        id: project.id.clone(),
+        slug: project.slug.clone(),
+        name: project.name.clone(),
+        description: project.description.clone(),
+        provider: project.provider.clone(),
+        root_path: Some(project.root_path.clone()),
+        remote_owner: project.remote_owner.clone(),
+        remote_repo: project.remote_repo.clone(),
+        remote_branch: project.remote_branch.clone(),
+    };
+
+    // ========================================================================
+    // Database Stats
+    // ========================================================================
+    let total_memories =
+        crate::db::count_project_memories(&state.db, &project.id).await? as u64;
+
+    use crate::db::MemoryType;
+    let memories_by_type = MemoryTypeCounts {
+        codebase: crate::db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Codebase).await.unwrap_or(0) as u64,
+        session: crate::db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Session).await.unwrap_or(0) as u64,
+        decision: crate::db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Decision).await.unwrap_or(0) as u64,
+        spec: crate::db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Spec).await.unwrap_or(0) as u64,
+        commit: crate::db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Commit).await.unwrap_or(0) as u64,
+        pr: crate::db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Pr).await.unwrap_or(0) as u64,
+        task: crate::db::count_project_memories_by_type(&state.db, &project.id, MemoryType::Task).await.unwrap_or(0) as u64,
+        general: crate::db::count_project_memories_by_type(&state.db, &project.id, MemoryType::General).await.unwrap_or(0) as u64,
+    };
+
+    let memories_by_source = MemorySourceCounts {
+        file: crate::db::count_project_memories_by_source(&state.db, &project.id, "file").await.unwrap_or(0) as u64,
+        agent: crate::db::count_project_memories_by_source(&state.db, &project.id, "agent").await.unwrap_or(0) as u64,
+        git: crate::db::count_project_memories_by_source(&state.db, &project.id, "git").await.unwrap_or(0) as u64,
+    };
+
+    let total_chunks =
+        crate::db::count_chunks_for_project(&state.db, &project.id).await.unwrap_or(0) as u64;
+    let total_links =
+        crate::db::count_project_links(&state.db, &project.id).await.unwrap_or(0) as u64;
+    let total_attachments =
+        crate::db::count_project_attachments(&state.db, &project.id).await.unwrap_or(0) as u64;
+
+    // Estimate database size (rough calculation based on row counts)
+    let estimated_db_size = (total_memories * 2048) + (total_chunks * 512) + (total_links * 128);
+
+    let database_stats = DatabaseStats {
+        total_memories,
+        memories_by_type,
+        memories_by_source,
+        total_chunks,
+        total_links,
+        total_attachments,
+        estimated_size_bytes: estimated_db_size,
+    };
+
+    // ========================================================================
+    // Vector DB Stats
+    // ========================================================================
+    let collection_info = state.qdrant.collection_info(&project.slug).await;
+    let (collection_exists, total_vectors, dimension) = match &collection_info {
+        Ok(info) => (info.exists, info.points_count, info.dimension),
+        Err(_) => (false, 0, 0),
+    };
+
+    let vector_sync_status = VectorSyncStatus {
+        memory_count: total_memories,
+        vector_count: total_vectors,
+        in_sync: total_memories == total_vectors,
+        difference: total_memories as i64 - total_vectors as i64,
+    };
+
+    let vector_db_stats = VectorDbStats {
+        collection_name: format!("fold_{}", project.slug),
+        exists: collection_exists,
+        total_vectors,
+        dimension,
+        sync_status: vector_sync_status,
+    };
+
+    // ========================================================================
+    // Job Stats
+    // ========================================================================
+    let job_stats_raw = crate::db::get_project_job_stats(&state.db, &project.id).await?;
+
+    use crate::db::JobType;
+    let jobs_by_type = JobTypeCounts {
+        index_repo: crate::db::count_project_jobs_by_type(&state.db, &project.id, JobType::IndexRepo).await.unwrap_or(0) as u64,
+        reindex_repo: crate::db::count_project_jobs_by_type(&state.db, &project.id, JobType::ReindexRepo).await.unwrap_or(0) as u64,
+        index_history: crate::db::count_project_jobs_by_type(&state.db, &project.id, JobType::IndexHistory).await.unwrap_or(0) as u64,
+        sync_metadata: crate::db::count_project_jobs_by_type(&state.db, &project.id, JobType::SyncMetadata).await.unwrap_or(0) as u64,
+        process_webhook: crate::db::count_project_jobs_by_type(&state.db, &project.id, JobType::ProcessWebhook).await.unwrap_or(0) as u64,
+        generate_summary: crate::db::count_project_jobs_by_type(&state.db, &project.id, JobType::GenerateSummary).await.unwrap_or(0) as u64,
+        custom: crate::db::count_project_jobs_by_type(&state.db, &project.id, JobType::Custom).await.unwrap_or(0) as u64,
+    };
+
+    let job_stats = JobStats {
+        total: job_stats_raw.total as u64,
+        pending: job_stats_raw.pending as u64,
+        running: job_stats_raw.running as u64,
+        completed: job_stats_raw.completed as u64,
+        failed: job_stats_raw.failed as u64,
+        paused: job_stats_raw.paused as u64,
+        completed_24h: job_stats_raw.completed_24h as u64,
+        failed_24h: job_stats_raw.failed_24h as u64,
+        by_type: jobs_by_type,
+    };
+
+    // Get recent jobs
+    let recent_jobs_raw = crate::db::list_project_jobs(&state.db, &project.id, 10, 0).await?;
+    let recent_jobs: Vec<RecentJob> = recent_jobs_raw
+        .into_iter()
+        .map(|j| {
+            let progress = j.total_items.map(|total| {
+                if total == 0 {
+                    100
+                } else {
+                    ((j.processed_items as f64 / total as f64) * 100.0) as u32
+                }
+            });
+            RecentJob {
+                id: j.id,
+                job_type: j.job_type,
+                status: j.status,
+                progress,
+                created_at: parse_datetime(&j.created_at),
+                completed_at: j.completed_at.map(|s| parse_datetime(&s)),
+                error: j.error,
+            }
+        })
+        .collect();
+
+    // ========================================================================
+    // Filesystem Stats (for local projects)
+    // ========================================================================
+    let filesystem = {
+        let root_path = &project.root_path;
+        let root = std::path::Path::new(root_path);
+        let root_exists = root.exists();
+        let fold_dir = root.join("fold");
+        let fold_dir_exists = fold_dir.exists();
+
+        // Estimate indexable files (quick count, not exhaustive)
+        let indexable_estimate = if root_exists {
+            // Count common source files in root (limited depth)
+            count_indexable_files(root_path, 3).unwrap_or(0)
+        } else {
+            0
+        };
+
+        // Get fold/ directory size
+        let fold_size = if fold_dir_exists {
+            dir_size(&fold_dir).unwrap_or(0)
+        } else {
+            0
+        };
+
+        Some(FilesystemStats {
+            root_exists,
+            fold_dir_exists,
+            indexable_files_estimate: indexable_estimate,
+            fold_dir_size_bytes: fold_size,
+        })
+    };
+
+    // ========================================================================
+    // Indexing Status
+    // ========================================================================
+    let running_index_job = crate::db::get_running_project_job(
+        &state.db,
+        &project.id,
+        JobType::ReindexRepo,
+    )
+    .await?;
+
+    let (indexing_in_progress, current_job_id, index_progress) = match &running_index_job {
+        Some(job) => {
+            let progress = job.total_items.map(|total| {
+                if total == 0 {
+                    0
+                } else {
+                    ((job.processed_items as f64 / total as f64) * 100.0) as u32
+                }
+            });
+            (true, Some(job.id.clone()), progress)
+        }
+        None => (false, None, None),
+    };
+
+    // Get last successful index job
+    let last_index_job = crate::db::list_project_jobs(&state.db, &project.id, 50, 0)
+        .await?
+        .into_iter()
+        .find(|j| (j.job_type == "reindex_repo" || j.job_type == "index_repo") && j.status == "completed");
+
+    let (last_indexed_at, last_duration_secs) = match last_index_job {
+        Some(job) => {
+            let completed = job.completed_at.map(|s| parse_datetime(&s));
+            let started = job.started_at.map(|s| parse_datetime(&s));
+            let duration = match (started, completed) {
+                (Some(s), Some(c)) => Some((c - s).num_seconds() as u64),
+                _ => None,
+            };
+            (completed, duration)
+        }
+        None => (None, None),
+    };
+
+    let indexing_status = IndexingStatus {
+        in_progress: indexing_in_progress,
+        current_job_id,
+        progress: index_progress,
+        last_indexed_at,
+        last_duration_secs,
+    };
+
+    // ========================================================================
+    // Health Assessment
+    // ========================================================================
+    let mut issues = Vec::new();
+    let accessible = std::path::Path::new(&project.root_path).exists();
+
+    if !accessible {
+        issues.push("Project root path does not exist".to_string());
+    }
+    if !collection_exists {
+        issues.push("Vector collection not found in Qdrant".to_string());
+    }
+    if !vector_db_stats.sync_status.in_sync {
+        issues.push(format!(
+            "Vector sync mismatch: {} memories, {} vectors",
+            total_memories, total_vectors
+        ));
+    }
+    if job_stats_raw.failed_24h > 0 {
+        issues.push(format!("{} failed jobs in last 24h", job_stats_raw.failed_24h));
+    }
+    if job_stats_raw.paused > 0 {
+        issues.push(format!("{} jobs paused (waiting for resources)", job_stats_raw.paused));
+    }
+
+    let health_status = if issues.is_empty() {
+        "healthy"
+    } else if issues.len() == 1 && job_stats_raw.paused > 0 {
+        "degraded"
+    } else if !accessible || !collection_exists {
+        "unhealthy"
+    } else {
+        "degraded"
+    };
+
+    let health = HealthInfo {
+        status: health_status.to_string(),
+        accessible,
+        vector_collection_exists: collection_exists,
+        has_recent_failures: job_stats_raw.failed_24h > 0,
+        indexing_in_progress,
+        issues,
+    };
+
+    // ========================================================================
+    // Timestamps
+    // ========================================================================
+    // Get last memory created timestamp
+    let last_memory = crate::db::get_latest_project_memory(&state.db, &project.id).await.ok();
+    let last_memory_created_at = last_memory.map(|m| parse_datetime(&m.created_at));
+
+    let timestamps = ProjectTimestamps {
+        created_at: parse_datetime(&project.created_at),
+        updated_at: parse_datetime(&project.updated_at),
+        last_indexed_at,
+        last_job_completed_at: job_stats_raw.last_completed_at.map(|s| parse_datetime(&s)),
+        last_job_failed_at: job_stats_raw.last_failed_at.map(|s| parse_datetime(&s)),
+        last_memory_created_at,
+    };
+
+    Ok(Json(ProjectStatusResponse {
+        project: project_info,
+        health,
+        database: database_stats,
+        vector_db: vector_db_stats,
+        jobs: job_stats,
+        recent_jobs,
+        filesystem,
+        indexing: indexing_status,
+        timestamps,
+    }))
+}
+
+/// Parse a datetime string to DateTime<Utc>.
+fn parse_datetime(s: &str) -> DateTime<Utc> {
+    use chrono::NaiveDateTime;
+    DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|ndt| ndt.and_utc()))
+        .unwrap_or_else(|_| Utc::now())
+}
+
+/// Count indexable files in a directory (limited depth).
+fn count_indexable_files(root: &str, max_depth: usize) -> Option<u64> {
+    let extensions = ["rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "cpp", "c", "h", "md"];
+    let mut count = 0u64;
+
+    fn visit_dir(path: &std::path::Path, extensions: &[&str], count: &mut u64, depth: usize, max_depth: usize) {
+        if depth > max_depth {
+            return;
+        }
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    // Skip common non-source directories
+                    if !["node_modules", ".git", "target", "dist", "build", "__pycache__", "vendor"].contains(&name) {
+                        visit_dir(&path, extensions, count, depth + 1, max_depth);
+                    }
+                } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    if extensions.contains(&ext) {
+                        *count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    visit_dir(std::path::Path::new(root), &extensions, &mut count, 0, max_depth);
+    Some(count)
+}
+
+/// Calculate directory size in bytes.
+fn dir_size(path: &std::path::Path) -> Option<u64> {
+    let mut size = 0u64;
+
+    fn visit(path: &std::path::Path, size: &mut u64) {
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    visit(&path, size);
+                } else if let Ok(meta) = path.metadata() {
+                    *size += meta.len();
+                }
+            }
+        }
+    }
+
+    visit(path, &mut size);
+    Some(size)
 }
 
 // ============================================================================

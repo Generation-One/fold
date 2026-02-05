@@ -1139,6 +1139,134 @@ pub async fn count_jobs_by_status(pool: &DbPool, status: JobStatus) -> Result<i6
     Ok(count)
 }
 
+/// Project-level job statistics.
+#[derive(Debug, Clone)]
+pub struct ProjectJobStats {
+    pub total: i64,
+    pub pending: i64,
+    pub running: i64,
+    pub completed: i64,
+    pub failed: i64,
+    pub paused: i64,
+    pub completed_24h: i64,
+    pub failed_24h: i64,
+    pub last_completed_at: Option<String>,
+    pub last_failed_at: Option<String>,
+}
+
+/// Get job statistics for a specific project.
+pub async fn get_project_job_stats(pool: &DbPool, project_id: &str) -> Result<ProjectJobStats> {
+    // Get counts by status
+    let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM jobs WHERE project_id = ?")
+        .bind(project_id)
+        .fetch_one(pool)
+        .await?;
+
+    let pending: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM jobs WHERE project_id = ? AND status = 'pending'")
+            .bind(project_id)
+            .fetch_one(pool)
+            .await?;
+
+    let running: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM jobs WHERE project_id = ? AND status = 'running'")
+            .bind(project_id)
+            .fetch_one(pool)
+            .await?;
+
+    let completed: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM jobs WHERE project_id = ? AND status = 'completed'")
+            .bind(project_id)
+            .fetch_one(pool)
+            .await?;
+
+    let failed: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM jobs WHERE project_id = ? AND status = 'failed'")
+            .bind(project_id)
+            .fetch_one(pool)
+            .await?;
+
+    let paused: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM jobs WHERE project_id = ? AND status = 'paused'")
+            .bind(project_id)
+            .fetch_one(pool)
+            .await?;
+
+    // Get 24h counts
+    let completed_24h: (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*) FROM jobs
+        WHERE project_id = ? AND status = 'completed'
+        AND datetime(completed_at) > datetime('now', '-24 hours')
+        "#,
+    )
+    .bind(project_id)
+    .fetch_one(pool)
+    .await?;
+
+    let failed_24h: (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*) FROM jobs
+        WHERE project_id = ? AND status = 'failed'
+        AND datetime(completed_at) > datetime('now', '-24 hours')
+        "#,
+    )
+    .bind(project_id)
+    .fetch_one(pool)
+    .await?;
+
+    // Get last completed/failed timestamps
+    let last_completed: Option<(String,)> = sqlx::query_as(
+        r#"
+        SELECT completed_at FROM jobs
+        WHERE project_id = ? AND status = 'completed'
+        ORDER BY completed_at DESC LIMIT 1
+        "#,
+    )
+    .bind(project_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let last_failed: Option<(String,)> = sqlx::query_as(
+        r#"
+        SELECT completed_at FROM jobs
+        WHERE project_id = ? AND status = 'failed'
+        ORDER BY completed_at DESC LIMIT 1
+        "#,
+    )
+    .bind(project_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(ProjectJobStats {
+        total: total.0,
+        pending: pending.0,
+        running: running.0,
+        completed: completed.0,
+        failed: failed.0,
+        paused: paused.0,
+        completed_24h: completed_24h.0,
+        failed_24h: failed_24h.0,
+        last_completed_at: last_completed.map(|r| r.0),
+        last_failed_at: last_failed.map(|r| r.0),
+    })
+}
+
+/// Count jobs by type for a project.
+pub async fn count_project_jobs_by_type(
+    pool: &DbPool,
+    project_id: &str,
+    job_type: JobType,
+) -> Result<i64> {
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM jobs WHERE project_id = ? AND type = ?")
+            .bind(project_id)
+            .bind(job_type.as_str())
+            .fetch_one(pool)
+            .await?;
+    Ok(count)
+}
+
 /// Delete old completed/failed jobs.
 pub async fn cleanup_old_jobs(pool: &DbPool, days: i64) -> Result<u64> {
     let result = sqlx::query(

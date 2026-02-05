@@ -252,6 +252,21 @@ pub async fn get_total_storage_used(pool: &DbPool) -> Result<i64> {
     Ok(size)
 }
 
+/// Count attachments for a project (via memories).
+pub async fn count_project_attachments(pool: &DbPool, project_id: &str) -> Result<i64> {
+    let (count,): (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*) FROM attachments a
+        JOIN memories m ON a.memory_id = m.id
+        WHERE m.project_id = ?
+        "#,
+    )
+    .bind(project_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
+}
+
 /// Find attachments by filename pattern.
 pub async fn find_attachments_by_filename(
     pool: &DbPool,
