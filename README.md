@@ -44,9 +44,58 @@ Development knowledge is scattered: architecture decisions live in old PRs, the 
 
 ## Quick Start
 
+### Option A: Docker Hub (Recommended)
+
+```bash
+# Pull the official image
+docker pull generationone/fold:latest
+
+# Or from GitHub Container Registry
+docker pull ghcr.io/generation-one/fold:latest
+```
+
+Create a `docker-compose.yml`:
+
+```yaml
+services:
+  fold:
+    image: generationone/fold:latest
+    ports:
+      - "8765:8765"
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - QDRANT_URL=http://qdrant:6334
+    volumes:
+      - fold-data:/data
+    depends_on:
+      - qdrant
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+
+volumes:
+  fold-data:
+  qdrant-data:
+```
+
+```bash
+# Create .env with your API key
+echo "GOOGLE_API_KEY=your-key" > .env
+
+# Start
+docker compose up -d
+```
+
+### Option B: Build from Source
+
 ```bash
 # Start Qdrant
-docker run -p 6333:6333 qdrant/qdrant
+docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
 
 # Clone and run
 git clone https://github.com/Generation-One/fold.git

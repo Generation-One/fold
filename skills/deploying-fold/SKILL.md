@@ -12,7 +12,7 @@ Fold is a semantic memory system for coding projects. This skill covers deployin
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │   Fold UI       │────▶│   Fold API      │────▶│    Qdrant       │
-│   (port 5174)   │     │   (port 8765)   │     │  (port 6334)    │
+│   (port 80)     │     │   (port 8765)   │     │  (port 6334)    │
 └─────────────────┘     └─────────────────┘     └─────────────────┘
         │                       │
         │              ┌────────┴────────┐
@@ -20,7 +20,7 @@ Fold is a semantic memory system for coding projects. This skill covers deployin
         │              │   (fold.db)     │
         │              └─────────────────┘
         │
-   VITE_API_URL (build-time)
+   VITE_API_URL (runtime env var)
 ```
 
 ## Known Build Issues
@@ -229,14 +229,24 @@ Save the returned API token - this is your admin access.
 git clone https://github.com/Generation-One/fold-ui.git
 cd fold-ui
 
-# Set API URL
-echo "VITE_API_URL=https://your-domain.com" > .env
-
-# Build and run
+# Build and run with runtime API URL
 docker compose up -d --build
 ```
 
-**Critical:** `VITE_API_URL` must be set before build - it's baked into the JS bundle.
+Set the API URL at runtime via environment variable:
+
+```yaml
+# docker-compose.yml
+services:
+  fold-ui:
+    build: .
+    ports:
+      - "80:80"
+    environment:
+      - VITE_API_URL=https://your-domain.com
+```
+
+The `VITE_API_URL` is now configured at container startup (not build time), so you can change it without rebuilding.
 
 ## Reverse Proxy Setup (Traefik)
 
@@ -372,8 +382,7 @@ claude mcp add -t http -s user fold https://fold.example.com/mcp \
 ### UI shows "mixed content" errors
 The UI is making HTTP requests from an HTTPS page. Ensure:
 1. `VITE_API_URL` uses `https://`
-2. UI was rebuilt after setting the env var
-3. Docker image was rebuilt with `--no-cache`
+2. Container was restarted after changing the env var
 
 ### MCP requests fail with 401
 Check that:
