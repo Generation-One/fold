@@ -30,7 +30,7 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::db;
 use crate::middleware::require_token;
-use crate::models::{MemoryCreate, MemorySource, MemoryType};
+use crate::models::{MemoryCreate, MemorySource, MemoryType, MemoryUpdate};
 use crate::{AppState, Error, Result};
 
 // ============================================================================
@@ -462,6 +462,25 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
             }),
         },
         ToolDefinition {
+            name: "memory_update".into(),
+            description: "Update an existing memory. Only memories with source 'agent' (stored in fold/) can be updated via MCP. The memory_id is required to identify which memory to update.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string", "description": "Project ID or slug" },
+                    "memory_id": { "type": "string", "description": "ID of the memory to update" },
+                    "content": { "type": "string", "description": "New content for the memory" },
+                    "title": { "type": "string", "description": "New title for the memory" },
+                    "tags": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "New tags for the memory (replaces existing tags)"
+                    }
+                },
+                "required": ["project", "memory_id"]
+            }),
+        },
+        ToolDefinition {
             name: "memory_delete".into(),
             description: "Delete an agent memory. Only memories with source 'agent' (stored in fold/) can be deleted via MCP. File and git memories are managed by the indexer.".into(),
             input_schema: serde_json::json!({
@@ -514,6 +533,7 @@ async fn handle_tools_call(state: &AppState, id: Option<Value>, params: Value) -
         "memory_search" => execute_memory_search(state, call_params.arguments).await,
         "memory_list" => execute_memory_list(state, call_params.arguments).await,
         "memory_context" => execute_memory_context(state, call_params.arguments).await,
+        "memory_update" => execute_memory_update(state, call_params.arguments).await,
         "memory_delete" => execute_memory_delete(state, call_params.arguments).await,
         _ => {
             return JsonRpcResponse::error(
@@ -1017,6 +1037,67 @@ async fn execute_memory_context(state: &AppState, args: Value) -> Result<String>
         },
         "related": related,
         "similar": similar
+    }))?)
+}
+
+async fn execute_memory_update(state: &AppState, args: Value) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Params {
+        project: String,
+        memory_id: String,
+        content: Option<String>,
+        title: Option<String>,
+        #[serde(default)]
+        tags: Option<Vec<String>>,
+    }
+
+    let params: Params = serde_json::from_value(args)?;
+
+    // Get project
+    let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
+
+    // Get the memory to check its source
+    let memory = state
+        .memory
+        .get(&project.id, &params.memory_id)
+        .await?
+        .ok_or_else(|| Error::NotFound("Memory not found".into()))?;
+
+    // Only allow updating agent memories via MCP
+    let source = memory.source.as_deref().unwrap_or("agent");
+    if source != "agent" {
+        return Err(Error::Validation(format!(
+            "Cannot update {} memory via MCP. Only agent memories can be updated. File and git memories are managed by the indexer.",
+            source
+        )));
+    }
+
+    // Build update struct
+    let update = MemoryUpdate {
+        content: params.content,
+        title: params.title,
+        tags: params.tags,
+        keywords: None,
+        context: None,
+        status: None,
+        assignee: None,
+        metadata: None,
+    };
+
+    // Update memory via service (handles SQLite + fold/ + Qdrant)
+    let updated = state
+        .memory
+        .update(&project.id, &project.slug, &params.memory_id, update)
+        .await?;
+
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "id": updated.id,
+        "title": updated.title,
+        "content": updated.content.as_deref().unwrap_or("").chars().take(200).collect::<String>(),
+        "author": updated.author,
+        "source": updated.source,
+        "tags": updated.tags_vec(),
+        "updated_at": updated.updated_at.to_rfc3339()
     }))?)
 }
 
