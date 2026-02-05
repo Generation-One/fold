@@ -723,7 +723,7 @@ pub async fn fail_job(pool: &DbPool, id: &str, error: &str) -> Result<Job> {
     .ok_or_else(|| Error::NotFound(format!("Job not found: {}", id)))
 }
 
-/// Cancel a job.
+/// Cancel a job (pending/retry only).
 pub async fn cancel_job(pool: &DbPool, id: &str) -> Result<Job> {
     sqlx::query_as::<_, Job>(
         r#"
@@ -741,6 +741,50 @@ pub async fn cancel_job(pool: &DbPool, id: &str) -> Result<Job> {
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| Error::NotFound(format!("Job not found or not cancellable: {}", id)))
+}
+
+/// Cancel all active jobs for a project (pending, running, retry, paused).
+/// Returns the number of jobs cancelled.
+pub async fn cancel_project_jobs(pool: &DbPool, project_id: &str) -> Result<u64> {
+    let result = sqlx::query(
+        r#"
+        UPDATE jobs SET
+            status = 'cancelled',
+            completed_at = datetime('now'),
+            locked_at = NULL,
+            locked_by = NULL,
+            last_error = 'Cancelled: superseded by new job'
+        WHERE project_id = ?
+        AND status IN ('pending', 'running', 'retry', 'paused')
+        "#,
+    )
+    .bind(project_id)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
+}
+
+/// Cancel all active jobs for a repository (pending, running, retry, paused).
+/// Returns the number of jobs cancelled.
+pub async fn cancel_repository_jobs(pool: &DbPool, repository_id: &str) -> Result<u64> {
+    let result = sqlx::query(
+        r#"
+        UPDATE jobs SET
+            status = 'cancelled',
+            completed_at = datetime('now'),
+            locked_at = NULL,
+            locked_by = NULL,
+            last_error = 'Cancelled: superseded by new job'
+        WHERE repository_id = ?
+        AND status IN ('pending', 'running', 'retry', 'paused')
+        "#,
+    )
+    .bind(repository_id)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
 }
 
 /// Pause a job (waiting for external resources like LLM/embedding providers).

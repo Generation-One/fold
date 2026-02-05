@@ -449,7 +449,7 @@ impl JobWorker {
                 ).await;
             }
 
-            // Handle result
+            // Handle result - fail immediately on any error, no retries
             match result {
                 Ok(()) => {
                     info!(job_id = %job_id, duration_ms, "Job completed successfully");
@@ -459,9 +459,10 @@ impl JobWorker {
                     info!(job_id = %job_id, duration_ms, "Job paused waiting for providers");
                 }
                 Err(e) => {
-                    error!(job_id = %job_id, error = %e, "Job processing failed, scheduling retry");
-                    // Attempt retry (this handles max retries automatically)
-                    let _ = db::retry_job(&worker.inner.db, &job_id, &e.to_string()).await;
+                    // Fail immediately on any error - no retries
+                    // This prevents jobs from getting stuck in retry loops
+                    error!(job_id = %job_id, error = %e, "Job failed - stopping immediately (no retry)");
+                    let _ = db::fail_job(&worker.inner.db, &job_id, &e.to_string()).await;
                 }
             }
 

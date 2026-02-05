@@ -891,6 +891,7 @@ async fn disconnect_repository(
 /// POST /projects/:project_id/repositories/:repo_id/reindex
 ///
 /// Starts a background job to re-index all files in the repository.
+/// Cancels any existing running/pending jobs for this repository first.
 #[axum::debug_handler]
 async fn reindex_repository(
     State(state): State<AppState>,
@@ -901,6 +902,16 @@ async fn reindex_repository(
     // Verify repository exists
     let repo = db::get_repository(&state.db, &repo_id).await?;
     let full_name = repo.full_name();
+
+    // Cancel any existing running/pending jobs for this repository
+    let cancelled = db::cancel_repository_jobs(&state.db, &repo_id).await?;
+    if cancelled > 0 {
+        info!(
+            repo = %full_name,
+            cancelled = cancelled,
+            "Cancelled existing jobs before starting new reindex"
+        );
+    }
 
     // Create background job for reindexing
     let job_id = crate::models::new_id();

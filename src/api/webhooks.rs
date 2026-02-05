@@ -403,6 +403,16 @@ async fn process_github_push(
         return Ok(None);
     }
 
+    // Cancel any existing running/pending jobs for this repository
+    let cancelled = db::cancel_repository_jobs(&state.db, &repo_id_str).await?;
+    if cancelled > 0 {
+        tracing::info!(
+            repo = %repo.full_name(),
+            cancelled = cancelled,
+            "Cancelled existing jobs before starting new index job"
+        );
+    }
+
     // Collect changed files
     let mut changed_files: Vec<String> = Vec::new();
     if let Some(commits) = &payload.commits {
@@ -665,6 +675,16 @@ async fn process_gitlab_push(
             "Ignoring push to non-tracked branch"
         );
         return Ok(None);
+    }
+
+    // Cancel any existing running/pending jobs for this repository
+    let cancelled = db::cancel_repository_jobs(&state.db, &repo_id_str).await?;
+    if cancelled > 0 {
+        tracing::info!(
+            repo = %repo.full_name(),
+            cancelled = cancelled,
+            "Cancelled existing jobs before starting new index job"
+        );
     }
 
     // Collect changed files
