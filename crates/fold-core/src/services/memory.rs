@@ -34,6 +34,19 @@ use super::EmbeddingService;
 use fold_qdrant::{QdrantService, SearchFilter};
 use super::LlmService;
 
+/// Safe floor char boundary (stable alternative to str::floor_char_boundary)
+fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        s.len()
+    } else {
+        let mut i = index;
+        while i > 0 && !s.is_char_boundary(i) {
+            i -= 1;
+        }
+        i
+    }
+}
+
 /// Result of LLM content analysis.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentAnalysis {
@@ -171,7 +184,7 @@ Return JSON:
     "context": "Detailed multi-sentence context paragraph...",
     "tags": ["category1", "category2", ...]
 }}"#,
-            &content[..content.floor_char_boundary(content.len().min(4000))]
+            &content[..floor_char_boundary(&content, content.len().min(4000))]
         );
 
         match self.llm.complete(&prompt, 800).await {
@@ -225,7 +238,7 @@ Return JSON:
             return Err(Error::Internal("LLM not available".to_string()));
         }
 
-        let truncated = &content[..content.floor_char_boundary(content.len().min(2000))];
+        let truncated = &content[..floor_char_boundary(&content, content.len().min(2000))];
         let prompt = format!(
             r#"Generate a short, descriptive title for this content.
 
@@ -361,7 +374,7 @@ Return JSON:
     "new_tags_neighbourhood": [["tag1", "tag2"], ...]
 }}"#,
             memory.title.as_deref().unwrap_or(""),
-            &content[..content.floor_char_boundary(content.len().min(1000))],
+            &content[..floor_char_boundary(&content, content.len().min(1000))],
             memory.context.as_deref().unwrap_or(""),
             memory.keywords_vec(),
             memory.tags_vec(),
@@ -425,7 +438,7 @@ Return JSON:
                     .read_memory(project_root, &result.id)
                     .await
                 {
-                    nc[..nc.floor_char_boundary(nc.len().min(200))].to_string()
+                    nc[..floor_char_boundary(&nc, nc.len().min(200))].to_string()
                 } else {
                     String::new()
                 };
@@ -1369,7 +1382,7 @@ Return JSON:
 
                 if let Some(chunk) = chunk {
                     let snippet = if chunk.content.len() > 100 {
-                        let boundary = chunk.content.floor_char_boundary(100);
+                        let boundary = floor_char_boundary(&chunk.content, 100);
                         Some(format!("{}...", &chunk.content[..boundary]))
                     } else {
                         Some(chunk.content.clone())
