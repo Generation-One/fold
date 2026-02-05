@@ -9,6 +9,10 @@ Query and store project knowledge through Fold's MCP tools and REST API.
 
 **Latest Documentation**: Always check [github.com/Generation-One/fold/wiki](https://github.com/Generation-One/fold/wiki) for current API and tool references.
 
+# API Note
+
+**Fold has NO `/api` prefix** — routes are directly on root (`/projects`, `/health`, `/search`, etc.).
+
 # Core Operations
 
 ## 1. Searching Memories
@@ -16,14 +20,11 @@ Query and store project knowledge through Fold's MCP tools and REST API.
 Find relevant project knowledge using semantic search:
 
 ```bash
-# Via MCP tool
-mcp__fold__memory_search --query "authentication flow" --project "my-project"
-
 # Via REST API
-curl -X POST http://localhost:8765/api/memories/search \
+curl -X POST http://localhost:8765/projects/{project_id}/search \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"query": "authentication flow", "project_slug": "my-project", "limit": 10}'
+  -d '{"query": "authentication flow", "limit": 10}'
 ```
 
 ## 2. Getting Context
@@ -31,58 +32,80 @@ curl -X POST http://localhost:8765/api/memories/search \
 Retrieve AI-ready context for a specific task:
 
 ```bash
-# Via MCP tool
-mcp__fold__context_get --query "how does the payment service work" --project "my-project"
+# Via REST API
+curl -X POST http://localhost:8765/projects/{project_id}/context \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"task": "how does the payment service work", "max_tokens": 4000}'
 ```
 
 This returns semantically relevant memories, code snippets and decisions formatted for AI consumption.
 
-## 3. Storing Memories
+## 3. Triggering Reindex
 
-Add new knowledge to Fold:
-
-```bash
-# Via MCP tool
-mcp__fold__memory_add \
-  --project "my-project" \
-  --type "decision" \
-  --title "Chose Redis for session storage" \
-  --content "We selected Redis over Memcached because..."
-
-# Memory types: code, decision, session, spec, note
-```
-
-## 4. Searching Code
-
-Find code patterns across indexed repositories:
+Update the index after changes:
 
 ```bash
-# Via MCP tool
-mcp__fold__codebase_search --query "error handling patterns" --project "my-project"
+curl -X POST http://localhost:8765/projects/{project_id}/reindex \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
-# MCP Tools Reference
+## 4. Listing Projects
 
-| Tool | Purpose |
-|------|---------|
-| `memory_search` | Semantic search across all memories |
-| `context_get` | AI-ready context retrieval |
-| `memory_add` | Store new memories |
-| `memory_get` | Retrieve specific memory by ID |
-| `memory_update` | Update existing memory |
-| `codebase_search` | Search indexed source code |
-| `project_list` | List available projects |
-| `graph_traverse` | Navigate knowledge graph links |
+```bash
+curl http://localhost:8765/projects \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+# REST API Reference
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/health` | GET | Health check (no auth) |
+| `/projects` | GET | List all projects |
+| `/projects` | POST | Create project |
+| `/projects/{id}` | GET | Get project details |
+| `/projects/{id}` | PUT | Update project |
+| `/projects/{id}` | DELETE | Delete project |
+| `/projects/{id}/search` | POST | Semantic search |
+| `/projects/{id}/context` | POST | AI-ready context |
+| `/projects/{id}/reindex` | POST | Trigger reindex |
+| `/jobs/{id}` | GET | Check job status |
+
+# Project Types
+
+## GitHub Provider
+For repositories hosted on GitHub:
+```json
+{
+  "slug": "my-project",
+  "name": "My Project",
+  "provider": "github",
+  "remote_owner": "org-name",
+  "remote_repo": "repo-name"
+}
+```
+
+## Local Provider
+For local filesystem directories:
+```json
+{
+  "slug": "my-project",
+  "name": "My Project", 
+  "provider": "local",
+  "root_path": "/path/to/project"
+}
+```
+
+**Note**: Local paths must be mounted into the Fold container.
 
 # Best Practices
 
 **Search effectively**: Use natural language queries describing what you need, not keywords. Fold uses semantic search.
 
-**Store context**: After significant work, store a session memory summarising decisions made and rationale.
+**Check project scope**: Always verify the correct project ID before searching.
 
-**Link memories**: When creating memories, link them to related memories using the knowledge graph.
-
-**Check project scope**: Always verify the correct project slug before searching or storing.
+**Reindex after changes**: If you've updated files in a local project, trigger a reindex to update the vectors.
 
 # Example Workflow
 
@@ -90,28 +113,24 @@ mcp__fold__codebase_search --query "error handling patterns" --project "my-proje
 
 1. Search for relevant context:
    ```bash
-   mcp__fold__context_get --query "authentication implementation" --project "my-project"
+   curl -X POST http://localhost:8765/projects/{id}/context \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"task": "explain the authentication implementation"}'
    ```
 
 2. Review returned memories (code, decisions, sessions)
 
-3. Synthesise response from multiple memory types
-
-4. If implementing changes, store a session memory afterwards:
-   ```bash
-   mcp__fold__memory_add \
-     --project "my-project" \
-     --type "session" \
-     --title "Updated auth flow to use JWT" \
-     --content "Changed from session-based to JWT authentication..."
-   ```
+3. Synthesise response from the context
 
 # Troubleshooting
 
-**No results returned**: Check the project slug is correct and memories exist for that project.
+**No results returned**: Check the project ID is correct and the project has been indexed.
 
 **Irrelevant results**: Refine your query to be more specific about the domain or feature.
 
-**Authentication errors**: Verify your API token is valid and has access to the project.
+**Authentication errors**: Verify your API token is valid (format: `fold_{prefix}_{secret}`).
 
-See [Troubleshooting & FAQ](https://github.com/Generation-One/fold/wiki/Troubleshooting-FAQ) for detailed solutions.
+**Reindex fails**: Check container logs — common issues are missing local path mounts or UTF-8 truncation panics.
+
+See the managing-fold skill for deployment and configuration issues.

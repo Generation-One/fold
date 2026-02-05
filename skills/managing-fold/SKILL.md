@@ -11,82 +11,164 @@ Deploy, configure and operate Fold instances for teams and AI agents.
 
 # Quick Deployment
 
-## Docker Compose (Recommended)
+## Using Pre-built Images (Recommended)
+
+Always use the official GHCR images rather than building locally:
 
 ```bash
-# Clone and start
-git clone https://github.com/Generation-One/fold.git
+# Create stack directory
+mkdir -p fold/data/{fold,qdrant}
 cd fold
-docker-compose up -d
+
+# Create docker-compose.yml (see Unified Stack below)
+# Create .env with API keys
+
+# Pull and start
+docker compose pull
+docker compose up -d
 
 # Check health
 curl http://localhost:8765/health
 ```
 
-## Known Build Issues
+**Do not build Docker images locally** — use the versioned releases from `ghcr.io/generation-one/fold` and `ghcr.io/generation-one/fold-ui`.
 
-### 1. floor_char_boundary Unstable API (Rust 1.85+)
+## Unified Stack
 
-If you get `floor_char_boundary is unstable` errors, add this helper function to `crates/fold-core/src/services/memory.rs` after the imports:
+All services should be in a single `docker-compose.yml` for unified stack management:
 
-```rust
-/// Helper function to find the largest valid UTF-8 boundary at or before `index`.
-/// Replacement for unstable str::floor_char_boundary.
-fn floor_char_boundary(s: &str, index: usize) -> usize {
-    if index >= s.len() {
-        s.len()
-    } else {
-        let mut i = index;
-        while i > 0 && !s.is_char_boundary(i) {
-            i -= 1;
-        }
-        i
-    }
-}
+```yaml
+services:
+  fold:
+    image: ghcr.io/generation-one/fold:latest
+    environment:
+      - DATABASE_PATH=/data/fold.db
+      - QDRANT_URL=http://qdrant:6334
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+    volumes:
+      - ./data/fold:/data
+      # Mount local paths if using local provider (read-only)
+      # - /path/to/project:/path/to/project:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fold.rule=Host(`fold.example.com`)"
+      - "traefik.http.routers.fold.priority=1"
+      - "traefik.http.services.fold.loadbalancer.server.port=8765"
+    depends_on:
+      - qdrant
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  fold-ui:
+    image: ghcr.io/generation-one/fold-ui:latest
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fold-ui.rule=Host(`fold.example.com`) && (Path(`/`) || Path(`/index.html`) || Path(`/fold.svg`) || PathPrefix(`/assets`))"
+      - "traefik.http.routers.fold-ui.priority=100"
+      - "traefik.http.routers.fold-ui.middlewares=authelia@docker"
+      - "traefik.http.services.fold-ui.loadbalancer.server.port=80"
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    volumes:
+      - ./data/qdrant:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 ```
 
-Then replace any `s.floor_char_boundary(n)` calls with `floor_char_boundary(s, n)`.
-
-### 2. Dockerfile Workspace Structure
-
-The Dockerfile must handle the `crates/` workspace layout. Ensure the builder stage copies the entire crates directory:
-
-```dockerfile
-FROM rust:1.85-bookworm AS builder
-WORKDIR /app
-COPY Cargo.toml Cargo.lock ./
-COPY crates ./crates
-RUN cargo build --release -p fold-core
-
-FROM debian:bookworm-slim
-# ... runtime stage
-COPY --from=builder /app/target/release/fold /app/fold
+**Directory structure:**
 ```
+fold/
+├── docker-compose.yml
+├── .env
+└── data/
+    ├── fold/      # SQLite DB, attachments, summaries
+    └── qdrant/    # Vector storage
+```
+
+Data in `./data/` uses bind mounts — survives restarts and is easy to backup.
+
+## Traefik Routing
+
+**Important**: Fold API has NO `/api` prefix. Routes are directly on root (`/projects`, `/health`, `/jobs`, etc.).
+
+The routing strategy:
+- **UI router (high priority)**: Captures only static files — `/`, `/index.html`, `/fold.svg`, `/assets/*`
+- **Backend router (low priority)**: Catches everything else — all API routes
+
+```yaml
+# UI - captures only static files, with SSO
+fold-ui:
+  rule: "Host(`fold.example.com`) && (Path(`/`) || Path(`/index.html`) || Path(`/fold.svg`) || PathPrefix(`/assets`))"
+  priority: 100
+  middlewares:
+    - authelia@docker  # SSO for UI only
+
+# Backend - catches everything else, token auth only (no SSO)
+fold:
+  rule: "Host(`fold.example.com`)"
+  priority: 1
+  # No auth middleware - uses Bearer token auth
+```
+
+The UI uses HashRouter (`/#/path`) so all client-side routes work through `/`.
 
 ## Environment Configuration
 
-Create `.env` file with required variables:
+Create `.env` file:
 
 ```bash
 # Required
-DATABASE_URL=sqlite:///data/fold.db
-QDRANT_URL=http://qdrant:6334
-
-# LLM Provider API Keys
 GOOGLE_API_KEY=your-key         # For Gemini embeddings
-OPENROUTER_API_KEY=your-key     # For LLM (Claude, etc.)
-OPENAI_API_KEY=your-key         # Alternative LLM
+OPENROUTER_API_KEY=your-key     # For LLM
 
-# Authentication (optional - defaults to token auth)
-JWT_SECRET=generate-secure-secret
-AUTH_PROVIDER=google            # google, github, or oidc
+# Optional
+SESSION_SECRET=generate-secure-secret
 ```
 
-**Note**: API keys are stored in the database, not just env vars. See Provider Configuration below.
+**Note**: Provider configuration is stored in the database, not just env vars.
+
+# Local Filesystem Projects
+
+For indexing local directories (not GitHub repos), use the `local` provider:
+
+```bash
+# Create project with local provider
+curl -X POST http://localhost:8765/projects \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "slug": "my-project",
+    "name": "My Project",
+    "provider": "local",
+    "root_path": "/path/to/project"
+  }'
+```
+
+**Important**: The `root_path` must be mounted into the container:
+
+```yaml
+volumes:
+  - /path/to/project:/path/to/project:ro
+```
+
+Use `:ro` (read-only) to prevent accidental modifications.
 
 # Provider Configuration
 
-Providers are configured in SQLite tables `embedding_providers` and `llm_providers`. The `.env` file provides initial keys, but you can manage providers via the database.
+Providers are configured in SQLite tables `embedding_providers` and `llm_providers`.
 
 ## Embedding Providers
 
@@ -104,29 +186,18 @@ VALUES (
   1,
   100,  -- index_priority: prefer for indexing
   'none',
-  '{"endpoint":"http://host.docker.internal:11434","model":"nomic-embed-text","search_priority":1}'
+  '{"endpoint":"http://172.19.0.1:11434","model":"nomic-embed-text","search_priority":1}'
 );
-
--- Update Gemini to lower index priority
-UPDATE embedding_providers SET priority = 1 WHERE name = 'gemini';
 ```
 
-**Docker networking for Ollama**: Use your Docker network gateway IP instead of `host.docker.internal`:
+**Docker networking for Ollama**: Use your Docker network gateway IP:
 ```bash
-# Find gateway IP
 docker network inspect fold_default | jq '.[0].IPAM.Config[0].Gateway'
-# Returns something like "172.19.0.1"
-
-# Use in Ollama endpoint
-"endpoint":"http://172.19.0.1:11434"
 ```
 
 ## LLM Providers
 
 ```sql
--- View current providers
-SELECT name, enabled, priority, config FROM llm_providers;
-
 -- Update to use Claude via OpenRouter
 UPDATE llm_providers 
 SET config = '{"endpoint":"https://openrouter.ai/api/v1","model":"anthropic/claude-3-5-haiku-latest"}'
@@ -135,197 +206,85 @@ WHERE name = 'openrouter';
 
 After modifying providers, restart Fold to reload configuration.
 
-# UI Deployment
+# Known Issues
 
-The Fold UI is a separate React app that needs the API URL baked in at build time.
+## 1. floor_char_boundary Panics (UTF-8 truncation)
 
-```dockerfile
-# UI Dockerfile
-FROM node:20-alpine AS builder
-WORKDIR /app
-ARG VITE_API_URL=https://fold.example.com
-ENV VITE_API_URL=${VITE_API_URL}
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
+If indexing panics with "byte index N is not a char boundary", the `floor_char_boundary` helper is missing. This affects both `memory.rs` and `llm.rs`. 
 
-FROM nginx:alpine
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=builder /app/dist /usr/share/nginx/html
-EXPOSE 80
+The fix adds a helper function to safely truncate strings containing multi-byte UTF-8 characters (like emojis):
+
+```rust
+fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        s.len()
+    } else {
+        let mut i = index;
+        while i > 0 && !s.is_char_boundary(i) {
+            i -= 1;
+        }
+        i
+    }
+}
 ```
 
-Build with the correct API URL:
-```bash
-docker build --build-arg VITE_API_URL=https://fold.example.com -t fold-ui .
-```
+Then use `&content[..floor_char_boundary(&content, content.len().min(4000))]` instead of `&content[..content.len().min(4000)]`.
 
-# Traefik Routing with SSO
+## 2. Qdrant Healthcheck
 
-For production with Authelia SSO, configure Traefik to bypass auth for API/health/MCP endpoints:
-
+Qdrant image doesn't have curl. Use bash TCP check:
 ```yaml
-# traefik dynamic config
-http:
-  routers:
-    fold-api:
-      rule: "Host(`fold.example.com`) && (PathPrefix(`/api`) || PathPrefix(`/health`) || PathPrefix(`/mcp`))"
-      service: fold
-      entryPoints:
-        - websecure
-      tls:
-        certResolver: myresolver
-      # No auth middleware - uses Bearer token auth
-
-    fold-ui:
-      rule: "Host(`fold.example.com`)"
-      service: fold-ui
-      entryPoints:
-        - websecure
-      tls:
-        certResolver: myresolver
-      middlewares:
-        - authelia@docker  # SSO for UI only
-
-  services:
-    fold:
-      loadBalancer:
-        servers:
-          - url: "http://fold:8765"
-    fold-ui:
-      loadBalancer:
-        servers:
-          - url: "http://fold-ui:80"
+healthcheck:
+  test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/6333' || exit 1"]
 ```
 
-# Core Operations
+## 3. Embedding Dimension Mismatch
 
-## 1. Project Management
+All embedding providers must use the same dimension (768 for Gemini/nomic-embed-text). If switching providers, you may need to recreate the Qdrant collection.
 
-```bash
-# Create project
-curl -X POST http://localhost:8765/api/projects \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "My Project", "slug": "my-project"}'
+# API Quick Reference
 
-# List projects
-curl http://localhost:8765/api/projects \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-## 2. Repository Integration
-
-Connect GitHub repositories for automatic indexing:
+**No `/api` prefix** — routes are directly on root:
 
 ```bash
-# Add repository to project
-curl -X POST http://localhost:8765/api/projects/my-project/repositories \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url": "https://github.com/org/repo",
-    "branch": "main",
-    "access_token": "ghp_xxx"  # GitHub PAT with repo scope
-  }'
-
-# Trigger reindex
-curl -X POST http://localhost:8765/api/projects/my-project/repositories/{repo_id}/reindex \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-## 3. API Token Management
-
-```bash
-# Create API token
-curl -X POST http://localhost:8765/api/tokens \
-  -H "Authorization: Bearer $SESSION_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "mai-api", "scopes": ["read", "write"]}'
-```
-
-Token format: `fold_{prefix}_{secret}` - only the SHA256 hash of the full token is stored.
-
-## 4. Health Monitoring
-
-```bash
-# Check service health
+# Health
 curl http://localhost:8765/health
 
-# Get full system status
-curl http://localhost:8765/status
+# List projects
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8765/projects
+
+# Get project
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8765/projects/{id}
+
+# Trigger reindex
+curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8765/projects/{id}/reindex
+
+# Search
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "search term", "limit": 10}' \
+  http://localhost:8765/projects/{id}/search
 ```
 
-## 5. Index Management
+# Backup
 
 ```bash
-# Trigger full reindex for a repository
-curl -X POST http://localhost:8765/api/projects/my-project/repositories/{repo_id}/reindex \
-  -H "Authorization: Bearer $TOKEN"
-
-# Check job status
-curl http://localhost:8765/api/jobs/{job_id} \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-## 6. Backup and Restore
-
-SQLite database at `/data/fold.db` contains all metadata. Qdrant stores vectors at `qdrant_data` volume.
-
-```bash
-# Backup database
+# SQLite database
 docker exec fold-fold-1 sqlite3 /data/fold.db ".backup /data/backup.db"
-
-# Copy backup out
 docker cp fold-fold-1:/data/backup.db ./fold-backup-$(date +%Y%m%d).db
 
-# Backup Qdrant
+# Qdrant snapshots
 curl -X POST http://localhost:6333/collections/fold_memories/snapshots
 ```
 
-# Troubleshooting
-
-## Container fails to start
-
-```bash
-# Check logs
-docker logs fold-fold-1
-
-# Common issues:
-# - Missing env vars
-# - Qdrant not accessible
-# - Database permissions
-```
-
-## Reindex fails with "Project root path does not exist"
-
-This is a known bug where the cloned repo path isn't passed to the indexer. Fix is in PR #1. Workaround: manually set `root_path` in the projects table to the cloned path.
-
-## Embedding dimension mismatch
-
-All embedding providers must use the same dimension. Gemini and nomic-embed-text both use 768 dimensions. If mixing providers, ensure they match or recreate the Qdrant collection.
-
-## Ollama connection refused
-
-When running Fold in Docker, use the Docker network gateway IP (not localhost):
-```bash
-docker network inspect fold_default | jq '.[0].IPAM.Config[0].Gateway'
-```
-
-## GitHub authentication "too many redirects"
-
-For private repos, use a GitHub PAT (Personal Access Token) with `repo` scope, not an OAuth token.
-
 # Operational Checklist
 
-- [ ] Environment variables configured (.env)
-- [ ] Docker network accessible for Ollama (if using local embeddings)
-- [ ] Qdrant running and healthy
-- [ ] Embedding providers configured (check dimension consistency)
+- [ ] Using GHCR images (not local builds)
+- [ ] All services in unified docker-compose.yml
+- [ ] Data volumes in ./data/ (bind mounts)
+- [ ] Environment variables in .env
+- [ ] Embedding providers configured (check dimension = 768)
 - [ ] LLM provider configured with valid API key
+- [ ] Traefik: UI captures static paths only, backend catches rest
+- [ ] Local paths mounted if using local provider
 - [ ] API token created for CLI/MCP access
-- [ ] UI built with correct VITE_API_URL
-- [ ] Traefik routing configured (SSO for UI, token auth for API)
-- [ ] Repositories connected with valid access tokens
-- [ ] Backups scheduled
