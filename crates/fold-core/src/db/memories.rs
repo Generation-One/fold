@@ -93,6 +93,8 @@ impl SyncSource {
 pub struct Memory {
     pub id: String,
     pub project_id: String,
+    /// Human-readable slug for agent memories
+    pub slug: Option<String>,
 
     #[sqlx(rename = "type")]
     pub memory_type: String,

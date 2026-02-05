@@ -35,7 +35,7 @@ mod error;
 pub mod slug;
 
 pub use error::{Error, Result};
-pub use slug::{generate_memory_id, slug_to_id, slug_to_memory_id, slugify, slugify_unique};
+pub use slug::{generate_memory_id, slug_to_hash, slug_to_id, slug_to_memory_id, slugify, slugify_unique};
 
 /// Trait for memory data that can be converted to/from frontmatter.
 ///
@@ -43,6 +43,8 @@ pub use slug::{generate_memory_id, slug_to_id, slug_to_memory_id, slugify, slugi
 /// this trait, without depending on fold-core's Memory model.
 pub trait MemoryData {
     fn id(&self) -> &str;
+    /// The slug used to generate the memory ID and file path.
+    fn slug(&self) -> Option<&str>;
     fn title(&self) -> Option<&str>;
     fn author(&self) -> Option<&str>;
     fn tags(&self) -> Vec<String>;
@@ -62,6 +64,8 @@ pub trait MemoryData {
 pub struct StorageMemory {
     pub id: String,
     pub project_id: String,
+    /// The slug used to generate the memory ID and file path.
+    pub slug: Option<String>,
     pub memory_type: String,
     pub source: Option<String>,
     pub content: Option<String>,
@@ -90,6 +94,10 @@ impl StorageMemory {
 impl MemoryData for StorageMemory {
     fn id(&self) -> &str {
         &self.id
+    }
+
+    fn slug(&self) -> Option<&str> {
+        self.slug.as_deref()
     }
 
     fn title(&self) -> Option<&str> {
@@ -133,6 +141,9 @@ impl MemoryData for StorageMemory {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryFrontmatter {
     pub id: String,
+    /// The slug used to generate the memory ID and file path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -167,6 +178,7 @@ impl MemoryFrontmatter {
 
         Self {
             id: memory.id().to_string(),
+            slug: memory.slug().map(String::from),
             title: memory.title().map(String::from),
             author: memory.author().map(String::from),
             tags: memory.tags(),
@@ -186,6 +198,7 @@ impl MemoryFrontmatter {
         StorageMemory {
             id: self.id.clone(),
             project_id: String::new(), // Set by caller
+            slug: self.slug.clone(),
             memory_type: self.memory_type.clone(),
             source: Some("file".to_string()), // Default to file source for fold/ imports
             content: None,                    // Content is stored in the body, not frontmatter
@@ -324,6 +337,8 @@ impl FoldStorageService {
     ///
     /// Related memory IDs are included both in the frontmatter and as
     /// navigable [[wiki-style]] links in the body.
+    ///
+    /// File path is determined by the memory ID: `fold/{id[0]}/{id[1]}/{id}.md`
     pub async fn write_memory_with_links<M: MemoryData>(
         &self,
         project_root: &Path,
@@ -336,6 +351,7 @@ impl FoldStorageService {
         // Log this write operation
         info!(
             memory_id = %memory.id(),
+            slug = ?memory.slug(),
             file_path = %file_path.display(),
             related_count = related_ids.len(),
             related_ids = ?related_ids,

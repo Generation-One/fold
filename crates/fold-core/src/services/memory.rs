@@ -675,27 +675,17 @@ Return JSON:
             None
         };
 
-        // Generate ID:
-        // - For agent memories: slug-based ID (from provided slug or generated from title)
-        // - For file/git memories: use provided ID or generate UUID
-        // Note: memory_id = SHA256(slug)[0:16], so we can always find the file from memory_id
-        let memory_id = if let Some(ref provided_id) = data.id {
-            provided_id.clone()
-        } else if is_agent_memory {
-            // Use provided slug or generate from title
-            let slug = data.slug.clone().unwrap_or_else(|| {
-                let title_for_slug = title.as_deref().unwrap_or("memory");
-                super::fold_storage::slugify_unique(title_for_slug)
-            });
-            super::fold_storage::slug_to_id(&slug)
-        } else {
-            // UUID for file/git memories
-            crate::models::new_id()
-        };
+        // Generate ID: always use UUID
+        // The optional slug is stored separately for reference (e.g., to identify manually created memories)
+        let memory_id = data.id.clone().unwrap_or_else(crate::models::new_id);
+
+        // Store the slug if provided (for agent memories that want to be overwritten later)
+        let memory_slug = data.slug.clone();
 
         let memory = Memory {
             id: memory_id,
             project_id: project_id.to_string(),
+            slug: memory_slug,
             memory_type: data.memory_type.as_str().to_string(),
             source: data.source.map(|s| s.as_str().to_string()),
             // For agent memories: content stored in fold/, SQLite content is NULL
@@ -1858,14 +1848,15 @@ Return JSON:
         sqlx::query(
             r#"
             INSERT INTO memories (
-                id, project_id, type, source, content, content_hash, content_storage,
+                id, project_id, slug, type, source, content, content_hash, content_storage,
                 title, author, keywords, tags, context, file_path, language,
                 line_start, line_end, status, assignee, metadata,
                 created_at, updated_at, retrieval_count, last_accessed
             ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(id) DO UPDATE SET
+                slug = excluded.slug,
                 content = excluded.content,
                 content_hash = excluded.content_hash,
                 title = excluded.title,
@@ -1879,6 +1870,7 @@ Return JSON:
         )
         .bind(&memory.id)
         .bind(&memory.project_id)
+        .bind(&memory.slug)
         .bind(&memory.memory_type)
         .bind(&memory.source)
         .bind(&memory.content)
