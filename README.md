@@ -44,13 +44,11 @@ Development knowledge is scattered: architecture decisions live in old PRs, the 
 
 ## Quick Start
 
-### Option A: Docker Hub (Recommended)
+### Option A: Pre-built Image (Recommended)
+
+Pre-built images are available from GitHub Container Registry. This is the fastest way to get started — no Rust compilation required.
 
 ```bash
-# Pull the official image
-docker pull generationone/fold:latest
-
-# Or from GitHub Container Registry
 docker pull ghcr.io/generation-one/fold:latest
 ```
 
@@ -59,7 +57,7 @@ Create a `docker-compose.yml`:
 ```yaml
 services:
   fold:
-    image: generationone/fold:latest
+    image: ghcr.io/generation-one/fold:latest
     ports:
       - "8765:8765"
     environment:
@@ -92,6 +90,8 @@ docker compose up -d
 ```
 
 ### Option B: Build from Source
+
+> **Note:** Building from source requires compiling Rust, which can take 30+ minutes depending on your machine. Use the pre-built image above for faster setup.
 
 ```bash
 # Start Qdrant

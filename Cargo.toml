@@ -28,6 +28,16 @@ strip = true
 
 [profile.dev]
 opt-level = 1
+incremental = true
+# Line tables only - faster builds, still debuggable
+debug = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+[profile.dev.build-override]
+opt-level = 3
+
+[profile.test]
+incremental = true
+debug = 1

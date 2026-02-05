@@ -39,13 +39,11 @@ The Dockerfile has been simplified to handle the workspace correctly (PR #3). If
 
 ## Quick Start
 
-### Option A: Pull from Docker Hub (Recommended)
+### Option A: Pre-built Image (Recommended)
+
+Pre-built images are available from GitHub Container Registry. This is the fastest way to deploy — no Rust compilation required.
 
 ```bash
-# Pull the official image
-docker pull generationone/fold:latest
-
-# Or from GitHub Container Registry
 docker pull ghcr.io/generation-one/fold:latest
 ```
 
@@ -108,6 +106,8 @@ docker compose up -d
 
 ### Option B: Build from Source
 
+> **Note:** Building from source requires compiling Rust, which can take 30+ minutes depending on your machine. Use the pre-built image above for faster deployment.
+
 ```bash
 git clone https://github.com/Generation-One/fold.git
 cd fold
@@ -122,13 +122,26 @@ docker compose up -d --build
 
 ## Available Docker Tags
 
+Images are published to GitHub Container Registry (`ghcr.io`).
+
+### Fold Backend
+```bash
+docker pull ghcr.io/generation-one/fold:latest
+docker pull ghcr.io/generation-one/fold:0.1.0
+```
+
+### Fold UI
+```bash
+docker pull ghcr.io/generation-one/fold-ui:latest
+docker pull ghcr.io/generation-one/fold-ui:0.1.0
+```
+
 | Tag | Description |
 |-----|-------------|
-| `latest` | Latest stable release from main branch |
-| `0.0.1` | Specific version |
-| `0.0` | Latest patch for minor version |
+| `latest` | Latest stable release |
+| `0.1.0` | Specific version |
+| `0.1` | Latest patch for minor version |
 | `0` | Latest minor for major version |
-| `<sha>` | Specific commit |
 
 ## Environment Variables Reference
 
@@ -225,28 +238,41 @@ Save the returned API token - this is your admin access.
 
 ### 4. Deploy UI (Optional)
 
-```bash
-git clone https://github.com/Generation-One/fold-ui.git
-cd fold-ui
+Pre-built UI images are available from GitHub Container Registry:
 
-# Build and run with runtime API URL
-docker compose up -d --build
+```bash
+docker pull ghcr.io/generation-one/fold-ui:latest
 ```
 
-Set the API URL at runtime via environment variable:
+Run with your Fold API URL:
+
+```bash
+docker run -d -p 80:80 -e VITE_API_URL=https://your-domain.com ghcr.io/generation-one/fold-ui:latest
+```
+
+Or add to your docker-compose.yml:
 
 ```yaml
-# docker-compose.yml
 services:
   fold-ui:
-    build: .
+    image: ghcr.io/generation-one/fold-ui:latest
     ports:
       - "80:80"
     environment:
       - VITE_API_URL=https://your-domain.com
 ```
 
-The `VITE_API_URL` is now configured at container startup (not build time), so you can change it without rebuilding.
+The `VITE_API_URL` is configured at container startup (runtime), so you can change it without rebuilding the image.
+
+#### Building UI from Source
+
+If you prefer to build from source:
+
+```bash
+git clone https://github.com/Generation-One/fold-ui.git
+cd fold-ui
+docker compose up -d --build
+```
 
 ## Reverse Proxy Setup (Traefik)
 
