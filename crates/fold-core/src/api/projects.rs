@@ -282,20 +282,24 @@ pub struct VectorDbStats {
     pub collection_name: String,
     /// Whether the collection exists
     pub exists: bool,
-    /// Total vectors/points stored
+    /// Total vectors/points stored (memories + chunks)
     pub total_vectors: u64,
+    /// Memory-level vectors (one per memory)
+    pub memory_vectors: u64,
+    /// Chunk-level vectors (one per code chunk)
+    pub chunk_vectors: u64,
     /// Vector dimension
     pub dimension: usize,
-    /// Sync status: vectors vs memories
+    /// Sync status: vectors vs expected (memories + chunks)
     pub sync_status: VectorSyncStatus,
 }
 
 /// Vector sync status.
 #[derive(Debug, Serialize)]
 pub struct VectorSyncStatus {
-    /// Number of memories in SQLite
-    pub memory_count: u64,
-    /// Number of vectors in Qdrant
+    /// Expected vectors (memories + chunks)
+    pub expected_count: u64,
+    /// Actual vectors in Qdrant
     pub vector_count: u64,
     /// Whether counts match
     pub in_sync: bool,
@@ -630,6 +634,11 @@ async fn get_project(
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();
 
+    // Get actual memory count
+    let memory_count = crate::db::count_project_memories(&state.db, &project.id)
+        .await
+        .unwrap_or(0) as u32;
+
     Ok(Json(ProjectResponse {
         id: project.id.parse().unwrap_or_default(),
         slug: project.slug,
@@ -640,7 +649,7 @@ async fn get_project(
         remote_owner: project.remote_owner,
         remote_repo: project.remote_repo,
         remote_branch: project.remote_branch,
-        memory_count: 0,
+        memory_count,
         ignored_commit_authors: ignored_authors,
         created_at: project.created_at.parse().unwrap_or_else(|_| Utc::now()),
         updated_at: project.updated_at.parse().unwrap_or_else(|_| Utc::now()),
@@ -682,6 +691,11 @@ async fn update_project(
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();
 
+    // Get actual memory count
+    let memory_count = crate::db::count_project_memories(&state.db, &project.id)
+        .await
+        .unwrap_or(0) as u32;
+
     Ok(Json(ProjectResponse {
         id: project.id.parse().unwrap_or_default(),
         slug: project.slug,
@@ -692,7 +706,7 @@ async fn update_project(
         remote_owner: project.remote_owner,
         remote_repo: project.remote_repo,
         remote_branch: project.remote_branch,
-        memory_count: 0,
+        memory_count,
         ignored_commit_authors: ignored_authors,
         created_at: project.created_at.parse().unwrap_or_else(|_| Utc::now()),
         updated_at: project.updated_at.parse().unwrap_or_else(|_| Utc::now()),
@@ -908,17 +922,22 @@ async fn get_project_status(
         Err(_) => (false, 0, 0),
     };
 
+    // Vectors = memory embeddings + chunk embeddings
+    // So expected_vectors = memories + chunks
+    let expected_vectors = total_memories + total_chunks;
     let vector_sync_status = VectorSyncStatus {
-        memory_count: total_memories,
+        expected_count: expected_vectors,
         vector_count: total_vectors,
-        in_sync: total_memories == total_vectors,
-        difference: total_memories as i64 - total_vectors as i64,
+        in_sync: expected_vectors == total_vectors,
+        difference: expected_vectors as i64 - total_vectors as i64,
     };
 
     let vector_db_stats = VectorDbStats {
         collection_name: format!("fold_{}", project.slug),
         exists: collection_exists,
         total_vectors,
+        memory_vectors: total_memories,
+        chunk_vectors: total_chunks,
         dimension,
         sync_status: vector_sync_status,
     };
@@ -1237,7 +1256,10 @@ pub fn members_routes() -> Router<AppState> {
         .route("/:project_id/members", get(list_members).post(add_member))
         .route(
             "/:project_id/members/:user_id",
-            get(get_member).put(update_member).delete(remove_member),
+            get(get_member)
+                .put(update_member)
+                .patch(update_member)
+                .delete(remove_member),
         )
 }
 
@@ -1406,7 +1428,7 @@ async fn get_member(
 
 /// Update a member's role.
 ///
-/// PUT /projects/:project_id/members/:user_id
+/// PUT/PATCH /projects/:project_id/members/:user_id
 #[axum::debug_handler]
 async fn update_member(
     State(state): State<AppState>,
