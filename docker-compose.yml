@@ -46,10 +46,12 @@ services:
     environment:
       - QDRANT__SERVICE__GRPC_PORT=6334
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
-      interval: 5s
-      timeout: 3s
+      # Use bash TCP check since curl isn't available in Qdrant image
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
       retries: 5
+      start_period: 15s
     restart: unless-stopped
 
 volumes:
