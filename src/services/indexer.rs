@@ -365,6 +365,14 @@ impl IndexerService {
             "Indexing completed"
         );
 
+        // Fail immediately if any errors occurred - don't continue with partial results
+        if stats.errors > 0 {
+            return Err(Error::Internal(format!(
+                "Indexing failed: {} errors out of {} files (indexed: {}, skipped: {})",
+                stats.errors, stats.total_files, stats.indexed_files, stats.skipped_files
+            )));
+        }
+
         // Auto-commit fold/ changes if git service is available and files were indexed
         if stats.indexed_files > 0 {
             if let Some(ref git_service) = self.git_service {
