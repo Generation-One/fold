@@ -673,7 +673,6 @@ mod tests {
                 CreateMemory {
                     id: format!("mem-{}", i),
                     project_id: "proj-1".to_string(),
-                    repository_id: None,
                     memory_type: MemoryType::General,
                     source: None,
                     title: Some(format!("Memory {}", i)),

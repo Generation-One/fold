@@ -5,19 +5,21 @@ WORKDIR /app
 
 # Copy manifests first for better caching
 COPY Cargo.toml Cargo.lock ./
+COPY crates/fold-core/Cargo.toml ./crates/fold-core/
+COPY crates/fold-embeddings/Cargo.toml ./crates/fold-embeddings/
 
-# Create dummy src to build dependencies
-RUN mkdir -p src && \
-    echo "fn main() {}" > src/main.rs && \
+# Create dummy sources to build dependencies
+RUN mkdir -p crates/fold-core/src crates/fold-embeddings/src && \
+    echo "fn main() {}" > crates/fold-core/src/main.rs && \
+    echo "pub fn dummy() {}" > crates/fold-embeddings/src/lib.rs && \
     cargo build --release && \
-    rm -rf src
+    rm -rf crates/*/src
 
-# Copy actual source and schema
-COPY src ./src
-COPY schema.sql ./schema.sql
+# Copy actual source (schema is embedded via include_str!)
+COPY crates ./crates
 
 # Build release binary (touch main.rs to force rebuild)
-RUN touch src/main.rs && cargo build --release
+RUN touch crates/fold-core/src/main.rs && cargo build --release
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -30,9 +32,8 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy binary and schema
-COPY --from=builder /app/target/release/fold /app/fold
-COPY --from=builder /app/schema.sql /app/schema.sql
+# Copy binary
+COPY --from=builder /app/target/release/fold-core /app/fold
 
 # Create data directory
 RUN mkdir -p /data

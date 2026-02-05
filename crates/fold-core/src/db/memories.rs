@@ -93,7 +93,6 @@ impl SyncSource {
 pub struct Memory {
     pub id: String,
     pub project_id: String,
-    pub repository_id: Option<String>,
 
     #[sqlx(rename = "type")]
     pub memory_type: String,
@@ -177,7 +176,6 @@ impl Memory {
 pub struct CreateMemory {
     pub id: String,
     pub project_id: String,
-    pub repository_id: Option<String>,
     pub memory_type: MemoryType,
     /// Source of the memory: agent, file, git
     pub source: Option<crate::models::MemorySource>,
@@ -216,7 +214,6 @@ pub struct MemoryFilter {
     pub project_id: Option<String>,
     /// Filter by multiple project IDs (for cross-project queries)
     pub project_ids: Option<Vec<String>>,
-    pub repository_id: Option<String>,
     pub memory_type: Option<MemoryType>,
     pub memory_types: Option<Vec<MemoryType>>,
     /// Filter by source (agent, file, git)
@@ -255,16 +252,15 @@ pub async fn create_memory(pool: &DbPool, input: CreateMemory) -> Result<Memory>
     sqlx::query_as::<_, Memory>(
         r#"
         INSERT INTO memories (
-            id, project_id, repository_id, type, source, title, content, content_hash, content_storage,
+            id, project_id, type, source, title, content, content_hash, content_storage,
             file_path, language, git_branch, git_commit_sha, author, keywords, tags
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING *
         "#,
     )
     .bind(&input.id)
     .bind(&input.project_id)
-    .bind(&input.repository_id)
     .bind(input.memory_type.as_str())
     .bind(&source_str)
     .bind(&input.title)
@@ -330,16 +326,16 @@ pub async fn get_memory_by_hash(
 /// Uses idx_memories_file index.
 pub async fn get_memory_by_file_path(
     pool: &DbPool,
-    repository_id: &str,
+    project_id: &str,
     file_path: &str,
 ) -> Result<Option<Memory>> {
     sqlx::query_as::<_, Memory>(
         r#"
         SELECT * FROM memories
-        WHERE repository_id = ? AND file_path = ?
+        WHERE project_id = ? AND file_path = ?
         "#,
     )
-    .bind(repository_id)
+    .bind(project_id)
     .bind(file_path)
     .fetch_optional(pool)
     .await
@@ -473,32 +469,13 @@ pub async fn delete_memory(pool: &DbPool, id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Delete memories by repository.
-pub async fn delete_memories_by_repository(pool: &DbPool, repository_id: &str) -> Result<u64> {
-    let result = sqlx::query("DELETE FROM memories WHERE repository_id = ?")
-        .bind(repository_id)
+/// Delete memories by project.
+pub async fn delete_memories_by_project(pool: &DbPool, project_id: &str) -> Result<u64> {
+    let result = sqlx::query("DELETE FROM memories WHERE project_id = ?")
+        .bind(project_id)
         .execute(pool)
         .await?;
     Ok(result.rows_affected())
-}
-
-/// List all memories for a repository.
-/// Uses idx_memories_repository index.
-pub async fn list_memories_by_repository(
-    pool: &DbPool,
-    repository_id: &str,
-) -> Result<Vec<Memory>> {
-    sqlx::query_as::<_, Memory>(
-        r#"
-        SELECT * FROM memories
-        WHERE repository_id = ?
-        ORDER BY updated_at DESC
-        "#,
-    )
-    .bind(repository_id)
-    .fetch_all(pool)
-    .await
-    .map_err(Error::Database)
 }
 
 /// List memories with filters.
@@ -521,11 +498,6 @@ pub async fn list_memories(pool: &DbPool, filter: MemoryFilter) -> Result<Vec<Me
                 bindings.push(id.clone());
             }
         }
-    }
-
-    if let Some(repository_id) = &filter.repository_id {
-        conditions.push("repository_id = ?".to_string());
-        bindings.push(repository_id.clone());
     }
 
     if let Some(memory_type) = &filter.memory_type {
@@ -649,23 +621,23 @@ pub async fn list_project_memories_by_type(
     .map_err(Error::Database)
 }
 
-/// List codebase memories for a repository.
-/// Uses idx_memories_file index (repository_id, file_path).
-pub async fn list_repository_files(
+/// List codebase memories for a project.
+/// Uses idx_memories_file index (project_id, file_path).
+pub async fn list_project_files(
     pool: &DbPool,
-    repository_id: &str,
+    project_id: &str,
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Memory>> {
     sqlx::query_as::<_, Memory>(
         r#"
         SELECT * FROM memories
-        WHERE repository_id = ? AND type = 'codebase'
+        WHERE project_id = ? AND type = 'codebase'
         ORDER BY file_path ASC
         LIMIT ? OFFSET ?
         "#,
     )
-    .bind(repository_id)
+    .bind(project_id)
     .bind(limit)
     .bind(offset)
     .fetch_all(pool)
@@ -744,10 +716,10 @@ pub async fn upsert_memory(pool: &DbPool, input: CreateMemory) -> Result<Memory>
     sqlx::query_as::<_, Memory>(
         r#"
         INSERT INTO memories (
-            id, project_id, repository_id, type, title, content, content_hash, content_storage,
+            id, project_id, type, title, content, content_hash, content_storage,
             file_path, language, git_branch, git_commit_sha, author, keywords, tags
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             content = excluded.content,
             content_hash = excluded.content_hash,
@@ -762,7 +734,6 @@ pub async fn upsert_memory(pool: &DbPool, input: CreateMemory) -> Result<Memory>
     )
     .bind(&input.id)
     .bind(&input.project_id)
-    .bind(&input.repository_id)
     .bind(input.memory_type.as_str())
     .bind(&input.title)
     .bind(&input.content)
@@ -834,7 +805,6 @@ mod tests {
             CreateMemory {
                 id: "mem-1".to_string(),
                 project_id: "proj-1".to_string(),
-                repository_id: None,
                 memory_type: MemoryType::General,
                 source: None,
                 title: Some("Test Memory".to_string()),
@@ -876,7 +846,6 @@ mod tests {
                 CreateMemory {
                     id: format!("mem-{}", i),
                     project_id: "proj-1".to_string(),
-                    repository_id: None,
                     memory_type: *mem_type,
                     source: None,
                     title: Some(format!("Memory {}", i)),
@@ -914,7 +883,6 @@ mod tests {
         let input = CreateMemory {
             id: "mem-1".to_string(),
             project_id: "proj-1".to_string(),
-            repository_id: None,
             memory_type: MemoryType::Codebase,
             source: Some(crate::models::MemorySource::File),
             title: Some("File".to_string()),

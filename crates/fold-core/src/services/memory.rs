@@ -215,6 +215,52 @@ Return JSON:
         }
     }
 
+    /// Generate a short title for content using LLM.
+    ///
+    /// Returns a concise, descriptive title (max 60 chars) suitable for
+    /// use in slugs and file names.
+    pub async fn generate_title(&self, content: &str) -> Result<String> {
+        if !self.llm.is_available().await {
+            debug!("LLM not available for title generation");
+            return Err(Error::Internal("LLM not available".to_string()));
+        }
+
+        let truncated = &content[..content.floor_char_boundary(content.len().min(2000))];
+        let prompt = format!(
+            r#"Generate a short, descriptive title for this content.
+
+Requirements:
+- Maximum 60 characters
+- Use sentence case (capitalise first word only, except proper nouns)
+- Be specific and descriptive
+- No quotes or special punctuation
+- Should work as a file name
+
+Content:
+{}
+
+Return only the title, nothing else."#,
+            truncated
+        );
+
+        match self.llm.complete(&prompt, 80).await {
+            Ok(response) => {
+                let title = response.trim().trim_matches('"').trim();
+                // Ensure it's not too long
+                let title = if title.len() > 60 {
+                    title.chars().take(60).collect::<String>().trim_end().to_string()
+                } else {
+                    title.to_string()
+                };
+                Ok(title)
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to generate title");
+                Err(Error::Internal(format!("Title generation failed: {}", e)))
+            }
+        }
+    }
+
     /// Extract JSON from LLM response text.
     fn extract_json(&self, text: &str) -> Option<Value> {
         // Try to find JSON in code blocks
@@ -567,11 +613,7 @@ Return JSON:
     ) -> Result<Memory> {
         // Get project to find root path
         let project = crate::db::get_project(&self.db, project_id).await?;
-        let project_root = project
-            .root_path
-            .as_ref()
-            .map(|p| std::path::PathBuf::from(p))
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let project_root = std::path::PathBuf::from(&project.root_path);
 
         // Auto-analyse if metadata not provided
         let (keywords, context, tags) =
@@ -603,8 +645,6 @@ Return JSON:
             };
 
         // Create memory object
-        // Use provided ID if available (e.g. path-based hash for codebase files),
-        // otherwise generate a new UUID
         let now = Utc::now();
 
         // Compute content hash for deduplication and change detection
@@ -620,10 +660,39 @@ Return JSON:
             Some(MemorySource::Agent) | None => true,
         };
 
+        // Generate title if not provided (for agent memories, use LLM)
+        let title = if data.title.is_some() {
+            data.title.clone()
+        } else if is_agent_memory && auto_metadata {
+            // Generate a title using LLM
+            let generated = self.generate_title(&data.content).await.ok();
+            generated.or_else(|| {
+                // Fallback: use first line or truncated content
+                let first_line = data.content.lines().next().unwrap_or("Untitled");
+                Some(first_line.chars().take(50).collect())
+            })
+        } else {
+            None
+        };
+
+        // Generate ID:
+        // - For agent memories: slug-based ID from title
+        // - For file/git memories: use provided ID or generate UUID
+        let memory_id = if let Some(ref provided_id) = data.id {
+            provided_id.clone()
+        } else if is_agent_memory {
+            // Generate slug-based ID for agent memories
+            let title_for_slug = title.as_deref().unwrap_or("memory");
+            let (_slug, id) = super::fold_storage::generate_memory_id(title_for_slug);
+            id
+        } else {
+            // UUID for file/git memories
+            crate::models::new_id()
+        };
+
         let memory = Memory {
-            id: data.id.clone().unwrap_or_else(crate::models::new_id),
+            id: memory_id,
             project_id: project_id.to_string(),
-            repository_id: None,
             memory_type: data.memory_type.as_str().to_string(),
             source: data.source.map(|s| s.as_str().to_string()),
             // For agent memories: content stored in fold/, SQLite content is NULL
@@ -640,7 +709,7 @@ Return JSON:
             } else {
                 None
             },
-            title: data.title.clone(),
+            title,
             author: data.author.clone(),
             keywords: if keywords.is_empty() {
                 None
@@ -672,6 +741,19 @@ Return JSON:
 
         // Only write to fold/ directory for agent memories
         if is_agent_memory {
+            // Ensure fold directory is initialised
+            if !self.fold_storage.is_initialised(&project_root).await {
+                info!(
+                    project_id = %project_id,
+                    project_slug = %project_slug,
+                    "Initialising fold directory for project"
+                );
+                self.fold_storage
+                    .init_fold_directory(&project_root, project_id, project_slug, &project.name)
+                    .await
+                    .map_err(|e| Error::Internal(format!("Failed to init fold directory: {}", e)))?;
+            }
+
             self.fold_storage
                 .write_memory(&project_root, &memory, &data.content)
                 .await?;
@@ -785,11 +867,7 @@ Return JSON:
 
         if needs_fold_content {
             if let Ok(project) = crate::db::get_project(&self.db, project_id).await {
-                let project_root = project
-                    .root_path
-                    .as_ref()
-                    .map(|p| std::path::PathBuf::from(p))
-                    .unwrap_or_else(|| std::path::PathBuf::from("."));
+                let project_root = std::path::PathBuf::from(&project.root_path);
 
                 match self
                     .fold_storage
@@ -896,11 +974,7 @@ Return JSON:
 
         // Resolve content for memories that need it (agent memories without content)
         if let Ok(project) = crate::db::get_project(&self.db, project_id).await {
-            let project_root = project
-                .root_path
-                .as_ref()
-                .map(|p| std::path::PathBuf::from(p))
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            let project_root = std::path::PathBuf::from(&project.root_path);
 
             for memory in &mut memories {
                 // Only read from fold/ if content is missing
@@ -940,11 +1014,7 @@ Return JSON:
             .ok_or_else(|| Error::NotFound(format!("Memory {}", memory_id)))?;
 
         let project = crate::db::get_project(&self.db, project_id).await?;
-        let project_root = project
-            .root_path
-            .as_ref()
-            .map(|p| std::path::PathBuf::from(p))
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let project_root = std::path::PathBuf::from(&project.root_path);
 
         // Determine if this is an agent memory (stored in fold/)
         let source = existing.source.as_deref().unwrap_or("agent");
@@ -1082,11 +1152,7 @@ Return JSON:
         memory_id: &str,
     ) -> Result<()> {
         let project = crate::db::get_project(&self.db, project_id).await?;
-        let project_root = project
-            .root_path
-            .as_ref()
-            .map(|p| std::path::PathBuf::from(p))
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let project_root = std::path::PathBuf::from(&project.root_path);
 
         // Delete from SQLite
         let result = sqlx::query(
@@ -1177,11 +1243,7 @@ Return JSON:
             .await?;
 
         let project = crate::db::get_project(&self.db, project_id).await?;
-        let project_root = project
-            .root_path
-            .as_ref()
-            .map(|p| std::path::PathBuf::from(p))
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let project_root = std::path::PathBuf::from(&project.root_path);
 
         // Get decay config from project settings (or use defaults)
         let half_life = project
@@ -1287,11 +1349,7 @@ Return JSON:
             .await?;
 
         let project = crate::db::get_project(&self.db, project_id).await?;
-        let project_root = project
-            .root_path
-            .as_ref()
-            .map(|p| std::path::PathBuf::from(p))
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let project_root = std::path::PathBuf::from(&project.root_path);
 
         // Get decay config
         let half_life = project
@@ -1472,11 +1530,7 @@ Return JSON:
             .await?;
 
         let project = crate::db::get_project(&self.db, project_id).await?;
-        let project_root = project
-            .root_path
-            .as_ref()
-            .map(|p| std::path::PathBuf::from(p))
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let project_root = std::path::PathBuf::from(&project.root_path);
 
         let mut results = Vec::new();
         let mut seen_ids = HashSet::new();
@@ -1601,11 +1655,7 @@ Return JSON:
         let content = memory.content.clone().unwrap_or_default();
 
         let project = crate::db::get_project(&self.db, project_id).await?;
-        let project_root = project
-            .root_path
-            .as_ref()
-            .map(|p| std::path::PathBuf::from(p))
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let project_root = std::path::PathBuf::from(&project.root_path);
 
         let mut related = Vec::new();
         let mut visited = HashSet::new();
@@ -1805,7 +1855,7 @@ Return JSON:
         sqlx::query(
             r#"
             INSERT INTO memories (
-                id, project_id, repository_id, type, content, content_hash, content_storage,
+                id, project_id, type, source, content, content_hash, content_storage,
                 title, author, keywords, tags, context, file_path, language,
                 line_start, line_end, status, assignee, metadata,
                 created_at, updated_at, retrieval_count, last_accessed
@@ -1826,8 +1876,8 @@ Return JSON:
         )
         .bind(&memory.id)
         .bind(&memory.project_id)
-        .bind(&memory.repository_id)
         .bind(&memory.memory_type)
+        .bind(&memory.source)
         .bind(&memory.content)
         .bind(&memory.content_hash)
         .bind(&memory.content_storage)
@@ -1863,19 +1913,17 @@ Return JSON:
         // Get project to find root path
         if let Some(first) = memories.first() {
             if let Ok(project) = crate::db::get_project(&self.db, &first.project_id).await {
-                if let Some(root_path) = &project.root_path {
-                    let project_root = std::path::PathBuf::from(root_path);
-                    for memory in &mut memories {
-                        if memory.content.is_none()
-                            || memory.content.as_ref().is_some_and(|c| c.is_empty())
+                let project_root = std::path::PathBuf::from(&project.root_path);
+                for memory in &mut memories {
+                    if memory.content.is_none()
+                        || memory.content.as_ref().is_some_and(|c| c.is_empty())
+                    {
+                        if let Ok((_, content)) = self
+                            .fold_storage
+                            .read_memory(&project_root, &memory.id)
+                            .await
                         {
-                            if let Ok((_, content)) = self
-                                .fold_storage
-                                .read_memory(&project_root, &memory.id)
-                                .await
-                            {
-                                memory.content = Some(content);
-                            }
+                            memory.content = Some(content);
                         }
                     }
                 }

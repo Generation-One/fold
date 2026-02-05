@@ -3,7 +3,7 @@
 -- Holographic memory system with hash-based storage
 
 -- ============================================================================
--- Projects
+-- Projects (merged with repository - a project IS a repository)
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY,
@@ -11,12 +11,27 @@ CREATE TABLE IF NOT EXISTS projects (
     name TEXT NOT NULL,
     description TEXT,
 
-    -- Root path for project files (where fold/ directory lives)
-    root_path TEXT,
+    -- Repository info (required)
+    provider TEXT NOT NULL DEFAULT 'local',  -- 'github' | 'gitlab' | 'local'
+    root_path TEXT NOT NULL,                 -- local path where fold/ lives
+
+    -- Remote repo info (for github/gitlab providers)
+    remote_owner TEXT,
+    remote_repo TEXT,
+    remote_branch TEXT DEFAULT 'main',
+    access_token TEXT,
+    webhook_id TEXT,
+    webhook_secret TEXT,
 
     -- Indexing patterns
     index_patterns TEXT,              -- JSON array of glob patterns
     ignore_patterns TEXT,             -- JSON array of glob patterns
+
+    -- Sync state
+    last_sync TEXT,
+    last_commit_sha TEXT,
+    last_indexed_at TEXT,
+    sync_cursor TEXT,
 
     -- Team
     team_members TEXT,                -- JSON array of usernames
@@ -24,9 +39,8 @@ CREATE TABLE IF NOT EXISTS projects (
 
     -- Metadata
     metadata TEXT,                    -- JSON object
-    repo_url TEXT,
 
-    -- Metadata repo sync config
+    -- Metadata repo sync config (for git-based memory storage)
     metadata_repo_enabled INTEGER NOT NULL DEFAULT 0,
     metadata_repo_mode TEXT,
     metadata_repo_provider TEXT,
@@ -46,46 +60,7 @@ CREATE TABLE IF NOT EXISTS projects (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- ============================================================================
--- Repositories
--- ============================================================================
-CREATE TABLE IF NOT EXISTS repositories (
-    id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    provider TEXT NOT NULL,           -- 'github' | 'gitlab' | 'local'
-
-    -- Git info
-    owner TEXT,
-    repo TEXT,
-    branch TEXT NOT NULL DEFAULT 'main',
-
-    -- Source config
-    source_type TEXT,
-    source_config TEXT,               -- JSON config
-    notification_type TEXT,
-
-    -- Webhook info
-    webhook_id TEXT,
-    webhook_secret TEXT,
-
-    -- Auth
-    access_token TEXT,
-
-    -- Local path (for local provider)
-    local_path TEXT,
-
-    -- Sync state
-    last_sync TEXT,
-    last_commit_sha TEXT,
-    last_indexed_at TEXT,
-    sync_cursor TEXT,
-
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-
-    UNIQUE(project_id, provider, owner, repo, branch)
-);
-
-CREATE INDEX IF NOT EXISTS idx_repositories_project ON repositories(project_id);
+CREATE INDEX IF NOT EXISTS idx_projects_provider ON projects(provider);
 
 -- ============================================================================
 -- Memories (simplified - content stored in fold/)
@@ -93,11 +68,10 @@ CREATE INDEX IF NOT EXISTS idx_repositories_project ON repositories(project_id);
 CREATE TABLE IF NOT EXISTS memories (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    repository_id TEXT REFERENCES repositories(id) ON DELETE SET NULL,
 
     -- Type and source tracking
     type TEXT,                        -- 'codebase' | 'session' | 'spec' | etc.
-    source TEXT,                      -- 'file' | 'manual' | 'generated' | 'agent' | 'git'
+    source TEXT,                      -- 'file' | 'agent' | 'git'
 
     -- Content (stored externally in fold/)
     content TEXT,
@@ -144,7 +118,7 @@ CREATE TABLE IF NOT EXISTS memories (
 
 CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project_id);
 CREATE INDEX IF NOT EXISTS idx_memories_hash ON memories(content_hash);
-CREATE INDEX IF NOT EXISTS idx_memories_file ON memories(repository_id, file_path);
+CREATE INDEX IF NOT EXISTS idx_memories_file ON memories(project_id, file_path);
 
 -- ============================================================================
 -- Chunks (semantic code/text chunks for fine-grained search)
@@ -208,10 +182,9 @@ CREATE INDEX IF NOT EXISTS idx_links_project_type ON memory_links(project_id, li
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
-    type TEXT NOT NULL,               -- 'index_repo' | 'sync_repo' | 'reindex'
+    type TEXT NOT NULL,               -- 'index_project' | 'sync_project' | 'reindex'
     status TEXT NOT NULL DEFAULT 'pending',
     project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
-    repository_id TEXT REFERENCES repositories(id) ON DELETE SET NULL,
 
     -- Progress
     total_items INTEGER,
@@ -502,8 +475,6 @@ CREATE TABLE IF NOT EXISTS ai_sessions (
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     task TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
-    local_root TEXT,
-    repository_id TEXT REFERENCES repositories(id) ON DELETE SET NULL,
     summary TEXT,
     next_steps TEXT,                  -- JSON array
     agent_type TEXT,
@@ -536,7 +507,6 @@ CREATE TABLE IF NOT EXISTS workspaces (
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     token_id TEXT NOT NULL,
     local_root TEXT NOT NULL,
-    repository_id TEXT REFERENCES repositories(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     expires_at TEXT
 );
@@ -567,7 +537,7 @@ CREATE INDEX IF NOT EXISTS idx_team_status_project ON team_status(project_id);
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS git_commits (
     id TEXT PRIMARY KEY,
-    repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     sha TEXT NOT NULL,
     message TEXT NOT NULL,
     author_name TEXT,
@@ -579,10 +549,10 @@ CREATE TABLE IF NOT EXISTS git_commits (
     indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
     summary_memory_id TEXT REFERENCES memories(id) ON DELETE SET NULL,
 
-    UNIQUE(repository_id, sha)
+    UNIQUE(project_id, sha)
 );
 
-CREATE INDEX IF NOT EXISTS idx_git_commits_repository ON git_commits(repository_id);
+CREATE INDEX IF NOT EXISTS idx_git_commits_project ON git_commits(project_id);
 CREATE INDEX IF NOT EXISTS idx_git_commits_sha ON git_commits(sha);
 
 -- ============================================================================
@@ -590,7 +560,7 @@ CREATE INDEX IF NOT EXISTS idx_git_commits_sha ON git_commits(sha);
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS git_pull_requests (
     id TEXT PRIMARY KEY,
-    repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     number INTEGER NOT NULL,
     title TEXT NOT NULL,
     description TEXT,
@@ -603,10 +573,10 @@ CREATE TABLE IF NOT EXISTS git_pull_requests (
     indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
     memory_id TEXT REFERENCES memories(id) ON DELETE SET NULL,
 
-    UNIQUE(repository_id, number)
+    UNIQUE(project_id, number)
 );
 
-CREATE INDEX IF NOT EXISTS idx_git_pull_requests_repository ON git_pull_requests(repository_id);
+CREATE INDEX IF NOT EXISTS idx_git_pull_requests_project ON git_pull_requests(project_id);
 CREATE INDEX IF NOT EXISTS idx_git_pull_requests_state ON git_pull_requests(state);
 
 -- ============================================================================

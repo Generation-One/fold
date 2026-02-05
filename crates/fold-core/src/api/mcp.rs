@@ -626,19 +626,17 @@ async fn execute_project_stats(state: &AppState, args: Value) -> Result<String> 
         .map(|info| info.points_count)
         .unwrap_or(0);
 
-    // Get repository count
-    let repos = db::list_project_repositories(&state.db, &project.id).await?;
-
     Ok(serde_json::to_string_pretty(&serde_json::json!({
         "project_id": project.id,
         "project_slug": project.slug,
+        "provider": project.provider,
+        "root_path": project.root_path,
         "total_memories": total_memories,
         "memories_by_type": by_type,
         "memories_by_source": by_source,
         "total_chunks": total_chunks,
         "total_links": total_links,
-        "total_vectors": total_vectors,
-        "repositories": repos.len()
+        "total_vectors": total_vectors
     }))?)
 }
 
@@ -648,6 +646,8 @@ async fn execute_github_project_create(state: &AppState, args: Value) -> Result<
         repo_url: String,
         name: String,
         description: Option<String>,
+        local_path: Option<String>,
+        access_token: Option<String>,
     }
 
     let params: Params = serde_json::from_value(args)?;
@@ -672,10 +672,16 @@ async fn execute_github_project_create(state: &AppState, args: Value) -> Result<
     let nonce = uuid::Uuid::new_v4().to_string()[..8].to_string();
     let slug = format!("{}-{}", base_slug, nonce);
 
-    // Generate IDs
+    // Generate project ID
     let project_id = crate::models::new_id();
-    let repo_id = crate::models::new_id();
 
+    // For GitHub projects, we need a local path where the repo will be cloned
+    let root_path = params.local_path.unwrap_or_else(|| {
+        // Default to a temp directory based on slug
+        format!("./repos/{}", slug)
+    });
+
+    // Create project with repository info merged in
     let project = db::create_project(
         &state.db,
         db::CreateProject {
@@ -683,6 +689,12 @@ async fn execute_github_project_create(state: &AppState, args: Value) -> Result<
             slug,
             name: params.name,
             description: params.description,
+            provider: "github".to_string(),
+            root_path: root_path.clone(),
+            remote_owner: Some(owner.clone()),
+            remote_repo: Some(repo_name.clone()),
+            remote_branch: Some("main".to_string()),
+            access_token: params.access_token,
         },
     )
     .await?;
@@ -693,29 +705,12 @@ async fn execute_github_project_create(state: &AppState, args: Value) -> Result<
         .create_collection(&project.slug, state.embeddings.dimension().await)
         .await?;
 
-    // Create repository record
-    let repo = db::create_repository(
-        &state.db,
-        db::CreateRepository {
-            id: repo_id.clone(),
-            project_id: project.id.clone(),
-            provider: db::GitProvider::GitHub,
-            owner: owner.clone(),
-            repo: repo_name.clone(),
-            branch: "main".to_string(),
-            access_token: String::new(),
-            local_path: None,
-        },
-    )
-    .await?;
-
     // Queue an index job immediately
     let job_id = crate::models::new_id();
     let job = db::create_job(
         &state.db,
         db::CreateJob::new(job_id, db::JobType::IndexRepo)
-            .with_project(project.id.clone())
-            .with_repository(repo_id),
+            .with_project(project.id.clone()),
     )
     .await?;
 
@@ -724,13 +719,12 @@ async fn execute_github_project_create(state: &AppState, args: Value) -> Result<
         "slug": project.slug,
         "name": project.name,
         "description": project.description,
+        "provider": "github",
+        "root_path": root_path,
+        "remote_owner": owner,
+        "remote_repo": repo_name,
+        "remote_branch": "main",
         "repo_url": params.repo_url,
-        "repository": {
-            "id": repo.id,
-            "owner": owner,
-            "repo": repo_name,
-            "branch": "main"
-        },
         "index_job": {
             "id": job.id,
             "status": job.status

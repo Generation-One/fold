@@ -89,29 +89,7 @@ impl ContentResolverService {
             }
         };
 
-        // Try repository local_path first
-        if let Some(repo_id) = &memory.repository_id {
-            if let Ok(Some(repo)) = db::get_repository_optional(&self.db, repo_id).await {
-                if let Some(local_path) = &repo.local_path {
-                    let full_path = Path::new(local_path).join(file_path);
-                    if full_path.exists() {
-                        match fs::read_to_string(&full_path).await {
-                            Ok(content) => return Ok(Some(content)),
-                            Err(e) => {
-                                warn!(
-                                    memory_id = %memory.id,
-                                    path = %full_path.display(),
-                                    error = %e,
-                                    "Failed to read source file from repository local_path"
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Fall back to project root_path
+        // Use project root_path (which is now the canonical location)
         if let Some(root_path) = project_root_path {
             let full_path = Path::new(root_path).join(file_path);
             if full_path.exists() {

@@ -32,8 +32,10 @@ use tokio::fs;
 use tracing::info;
 
 mod error;
+pub mod slug;
 
 pub use error::{Error, Result};
+pub use slug::{generate_memory_id, slug_to_id, slug_to_memory_id, slugify, slugify_unique};
 
 /// Trait for memory data that can be converted to/from frontmatter.
 ///
