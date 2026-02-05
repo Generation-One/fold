@@ -73,19 +73,25 @@ pub struct ListMemoriesQuery {
     pub tags: Option<String>,
     /// Search in content (basic text match)
     pub q: Option<String>,
+    /// Filter by created_at >= this date (ISO 8601 format)
+    pub created_after: Option<String>,
+    /// Filter by created_at <= this date (ISO 8601 format)
+    pub created_before: Option<String>,
+    /// Filter by updated_at >= this date (ISO 8601 format)
+    pub updated_after: Option<String>,
+    /// Filter by updated_at <= this date (ISO 8601 format)
+    pub updated_before: Option<String>,
     /// Pagination offset
     #[serde(default)]
     pub offset: u32,
     /// Pagination limit
     #[serde(default = "default_limit")]
     pub limit: u32,
-    /// Sort field
+    /// Sort field (created_at, updated_at, title)
     #[serde(default)]
-    #[allow(dead_code)]
     pub sort_by: MemorySortField,
-    /// Sort direction
+    /// Sort direction (asc, desc)
     #[serde(default)]
-    #[allow(dead_code)]
     pub sort_dir: SortDirection,
 }
 
@@ -93,21 +99,40 @@ fn default_limit() -> u32 {
     20
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum MemorySortField {
-    #[default]
     CreatedAt,
+    #[default]
     UpdatedAt,
     Title,
 }
 
-#[derive(Debug, Deserialize, Default)]
+impl MemorySortField {
+    fn to_db(&self) -> db::MemorySortField {
+        match self {
+            Self::CreatedAt => db::MemorySortField::CreatedAt,
+            Self::UpdatedAt => db::MemorySortField::UpdatedAt,
+            Self::Title => db::MemorySortField::Title,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Default, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum SortDirection {
     Asc,
     #[default]
     Desc,
+}
+
+impl SortDirection {
+    fn to_db(&self) -> db::SortDirection {
+        match self {
+            Self::Asc => db::SortDirection::Asc,
+            Self::Desc => db::SortDirection::Desc,
+        }
+    }
 }
 
 /// Request to create a memory.
@@ -156,6 +181,14 @@ pub struct SearchMemoriesRequest {
     pub tags: Vec<String>,
     /// Filter by author
     pub author: Option<String>,
+    /// Filter by created_at >= this date (ISO 8601 format)
+    pub created_after: Option<String>,
+    /// Filter by created_at <= this date (ISO 8601 format)
+    pub created_before: Option<String>,
+    /// Filter by updated_at >= this date (ISO 8601 format)
+    pub updated_after: Option<String>,
+    /// Filter by updated_at <= this date (ISO 8601 format)
+    pub updated_before: Option<String>,
     /// Maximum results to return
     #[serde(default = "default_search_limit")]
     pub limit: u32,
@@ -396,6 +429,12 @@ async fn list_memories(
         author: query.author.clone(),
         tag: None, // Filter tags in-memory for AND logic
         search_query: query.q.clone(),
+        created_after: query.created_after.clone(),
+        created_before: query.created_before.clone(),
+        updated_after: query.updated_after.clone(),
+        updated_before: query.updated_before.clone(),
+        sort_by: Some(query.sort_by.to_db()),
+        sort_dir: Some(query.sort_dir.to_db()),
         limit: Some(limit * 2), // Fetch more to account for tag filtering
         offset: Some(offset),
         ..Default::default()
@@ -613,17 +652,24 @@ async fn search_memories(
     }
 
     // Use MemoryService for search (pure similarity, no decay)
+    // Fetch more to account for post-filtering
     let search_results = state
         .memory
         .search(
             &project.id,
             &project.slug,
             &request.query,
-            request.limit as usize,
+            (request.limit * 3) as usize,
         )
         .await?;
 
-    // Filter by source and min_score
+    // Parse date filters
+    let created_after = request.created_after.as_ref();
+    let created_before = request.created_before.as_ref();
+    let updated_after = request.updated_after.as_ref();
+    let updated_before = request.updated_before.as_ref();
+
+    // Filter by source, min_score, and date ranges
     let filtered_results: Vec<_> = search_results
         .into_iter()
         .filter(|r| {
@@ -640,8 +686,35 @@ async fn search_memories(
                 }
             }
             // Check min_score
-            r.score >= request.min_score
+            if r.score < request.min_score {
+                return false;
+            }
+            // Check date filters
+            let created_at = r.memory.created_at.to_rfc3339();
+            let updated_at = r.memory.updated_at.to_rfc3339();
+            if let Some(after) = created_after {
+                if created_at.as_str() < after.as_str() {
+                    return false;
+                }
+            }
+            if let Some(before) = created_before {
+                if created_at.as_str() > before.as_str() {
+                    return false;
+                }
+            }
+            if let Some(after) = updated_after {
+                if updated_at.as_str() < after.as_str() {
+                    return false;
+                }
+            }
+            if let Some(before) = updated_before {
+                if updated_at.as_str() > before.as_str() {
+                    return false;
+                }
+            }
+            true
         })
+        .take(request.limit as usize)
         .collect();
 
     // Convert to API response format
@@ -761,6 +834,20 @@ pub struct ListAllMemoriesQuery {
     pub tags: Option<String>,
     /// Search in content (basic text match)
     pub q: Option<String>,
+    /// Filter by created_at >= this date (ISO 8601 format)
+    pub created_after: Option<String>,
+    /// Filter by created_at <= this date (ISO 8601 format)
+    pub created_before: Option<String>,
+    /// Filter by updated_at >= this date (ISO 8601 format)
+    pub updated_after: Option<String>,
+    /// Filter by updated_at <= this date (ISO 8601 format)
+    pub updated_before: Option<String>,
+    /// Sort field (created_at, updated_at, title)
+    #[serde(default)]
+    pub sort_by: MemorySortField,
+    /// Sort direction (asc, desc)
+    #[serde(default)]
+    pub sort_dir: SortDirection,
     /// Pagination offset
     #[serde(default)]
     pub offset: u32,
@@ -833,6 +920,12 @@ async fn list_all_memories(
             .as_ref()
             .and_then(|t| t.split(',').next().map(|s| s.trim().to_string())),
         search_query: query.q.clone(),
+        created_after: query.created_after.clone(),
+        created_before: query.created_before.clone(),
+        updated_after: query.updated_after.clone(),
+        updated_before: query.updated_before.clone(),
+        sort_by: Some(query.sort_by.to_db()),
+        sort_dir: Some(query.sort_dir.to_db()),
         limit: Some(limit),
         offset: Some(offset),
         ..Default::default()

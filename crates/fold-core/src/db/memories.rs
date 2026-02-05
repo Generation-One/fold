@@ -210,6 +210,59 @@ pub struct UpdateMemory {
     pub tags: Option<Vec<String>>,
 }
 
+/// Sort field for memory queries.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum MemorySortField {
+    #[default]
+    UpdatedAt,
+    CreatedAt,
+    Title,
+}
+
+impl MemorySortField {
+    pub fn as_column(&self) -> &'static str {
+        match self {
+            Self::UpdatedAt => "updated_at",
+            Self::CreatedAt => "created_at",
+            Self::Title => "title",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "updated_at" => Some(Self::UpdatedAt),
+            "created_at" => Some(Self::CreatedAt),
+            "title" => Some(Self::Title),
+            _ => None,
+        }
+    }
+}
+
+/// Sort direction for memory queries.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SortDirection {
+    Asc,
+    #[default]
+    Desc,
+}
+
+impl SortDirection {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Asc => "ASC",
+            Self::Desc => "DESC",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "asc" => Some(Self::Asc),
+            "desc" => Some(Self::Desc),
+            _ => None,
+        }
+    }
+}
+
 /// Filter options for listing memories.
 #[derive(Debug, Clone, Default)]
 pub struct MemoryFilter {
@@ -224,6 +277,18 @@ pub struct MemoryFilter {
     pub file_path_prefix: Option<String>,
     pub tag: Option<String>,
     pub search_query: Option<String>,
+    /// Filter by created_at >= this date (ISO 8601 format)
+    pub created_after: Option<String>,
+    /// Filter by created_at <= this date (ISO 8601 format)
+    pub created_before: Option<String>,
+    /// Filter by updated_at >= this date (ISO 8601 format)
+    pub updated_after: Option<String>,
+    /// Filter by updated_at <= this date (ISO 8601 format)
+    pub updated_before: Option<String>,
+    /// Sort field (default: updated_at)
+    pub sort_by: Option<MemorySortField>,
+    /// Sort direction (default: desc)
+    pub sort_dir: Option<SortDirection>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -545,11 +610,33 @@ pub async fn list_memories(pool: &DbPool, filter: MemoryFilter) -> Result<Vec<Me
         bindings.push(pattern);
     }
 
+    // Date filters
+    if let Some(created_after) = &filter.created_after {
+        conditions.push("created_at >= ?".to_string());
+        bindings.push(created_after.clone());
+    }
+    if let Some(created_before) = &filter.created_before {
+        conditions.push("created_at <= ?".to_string());
+        bindings.push(created_before.clone());
+    }
+    if let Some(updated_after) = &filter.updated_after {
+        conditions.push("updated_at >= ?".to_string());
+        bindings.push(updated_after.clone());
+    }
+    if let Some(updated_before) = &filter.updated_before {
+        conditions.push("updated_at <= ?".to_string());
+        bindings.push(updated_before.clone());
+    }
+
     let where_clause = if conditions.is_empty() {
         String::new()
     } else {
         format!("WHERE {}", conditions.join(" AND "))
     };
+
+    // Sorting
+    let sort_field = filter.sort_by.unwrap_or_default().as_column();
+    let sort_dir = filter.sort_dir.unwrap_or_default().as_str();
 
     let limit = filter.limit.unwrap_or(100);
     let offset = filter.offset.unwrap_or(0);
@@ -558,10 +645,10 @@ pub async fn list_memories(pool: &DbPool, filter: MemoryFilter) -> Result<Vec<Me
         r#"
         SELECT * FROM memories
         {}
-        ORDER BY updated_at DESC
+        ORDER BY {} {}
         LIMIT ? OFFSET ?
         "#,
-        where_clause
+        where_clause, sort_field, sort_dir
     );
 
     let mut q = sqlx::query_as::<_, Memory>(&query);
