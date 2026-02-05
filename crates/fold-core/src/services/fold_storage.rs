@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 
 // Re-export from the fold-storage crate
 pub use fold_storage::{
-    generate_memory_id, slug_to_id, slug_to_memory_id, slugify, slugify_unique, EmbeddingConfig,
-    Error as StorageError, FoldStorageService, IndexingConfig, MemoryData, MemoryFrontmatter,
-    ProjectConfig, ProjectInfo, Result as StorageResult, StorageMemory,
+    generate_memory_id, slug_to_hash, slug_to_id, slug_to_memory_id, slugify, slugify_unique,
+    EmbeddingConfig, Error as StorageError, FoldStorageService, IndexingConfig, MemoryData,
+    MemoryFrontmatter, ProjectConfig, ProjectInfo, Result as StorageResult, StorageMemory,
 };
 
 use crate::error::{Error, Result};
@@ -61,6 +61,7 @@ pub fn storage_memory_to_memory(sm: StorageMemory) -> Memory {
     Memory {
         id: sm.id,
         project_id: sm.project_id,
+        slug: sm.slug,
         memory_type: sm.memory_type,
         source: sm.source,
         content: sm.content,
@@ -90,6 +91,7 @@ pub fn memory_to_storage_memory(m: &Memory) -> StorageMemory {
     StorageMemory {
         id: m.id.clone(),
         project_id: m.project_id.clone(),
+        slug: m.slug.clone(),
         memory_type: m.memory_type.clone(),
         source: m.source.clone(),
         content: m.content.clone(),

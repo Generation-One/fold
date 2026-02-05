@@ -88,49 +88,80 @@ fn generate_nonce() -> String {
     hex::encode(&hash[..4])
 }
 
-/// Hash a slug to create a memory ID.
+/// Hash a slug to create a file path component.
 ///
-/// The ID is a 16-character hex string derived from SHA-256 hash of the slug.
-/// This provides a consistent, filesystem-safe identifier.
+/// Returns a 16-character hex string for the fold/ directory structure.
+/// The file is stored at `fold/{hash[0]}/{hash[1]}/{hash}.md`.
+///
+/// # Example
+/// ```
+/// use fold_storage::slug::slug_to_hash;
+/// let hash = slug_to_hash("hello-world-1a2b3c4d");
+/// assert_eq!(hash.len(), 16);
+/// ```
+pub fn slug_to_hash(slug: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(slug.as_bytes());
+    let hash = hasher.finalize();
+
+    // Take first 8 bytes (16 hex chars) for file path
+    hex::encode(&hash[..8])
+}
+
+/// Hash a slug to create a memory ID (UUID format).
+///
+/// The ID is a UUID derived from SHA-256 hash of the slug.
+/// This provides a consistent, Qdrant-compatible identifier.
 ///
 /// # Example
 /// ```
 /// use fold_storage::slug::slug_to_id;
 /// let id = slug_to_id("hello-world-1a2b3c4d");
-/// assert_eq!(id.len(), 16);
+/// assert_eq!(id.len(), 36); // UUID format: 8-4-4-4-12
 /// ```
 pub fn slug_to_id(slug: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(slug.as_bytes());
     let hash = hasher.finalize();
 
-    // Take first 8 bytes (16 hex chars) for a compact but unique ID
-    hex::encode(&hash[..8])
+    // Take first 16 bytes and format as UUID
+    // Format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    format!(
+        "{}-{}-{}-{}-{}",
+        hex::encode(&hash[0..4]),
+        hex::encode(&hash[4..6]),
+        hex::encode(&hash[6..8]),
+        hex::encode(&hash[8..10]),
+        hex::encode(&hash[10..16])
+    )
 }
 
 /// Generate a memory ID from a title.
 ///
 /// Convenience function that combines slugify_unique and slug_to_id.
-/// Returns both the unique slug and the derived ID.
+/// Returns the unique slug, file hash (16 chars), and UUID.
 ///
 /// # Example
 /// ```
 /// use fold_storage::slug::generate_memory_id;
-/// let (slug, id) = generate_memory_id("API Design Decisions");
+/// let (slug, hash, id) = generate_memory_id("API Design Decisions");
 /// // slug: "api-design-decisions-1a2b3c4d"
-/// // id: "a1b2c3d4e5f6g7h8" (16 hex chars)
+/// // hash: "705db0603fd54314" (16 hex chars for file path)
+/// // id: "705db060-3fd5-4314-..." (UUID format for database)
 /// ```
-pub fn generate_memory_id(title: &str) -> (String, String) {
+pub fn generate_memory_id(title: &str) -> (String, String, String) {
     let slug = slugify_unique(title);
+    let hash = slug_to_hash(&slug);
     let id = slug_to_id(&slug);
-    (slug, id)
+    (slug, hash, id)
 }
 
 /// Generate a memory ID from a pre-made slug (without adding nonce).
 ///
 /// Use this when the caller has already created a unique slug.
-pub fn slug_to_memory_id(slug: &str) -> String {
-    slug_to_id(slug)
+/// Returns (hash, id).
+pub fn slug_to_memory_id(slug: &str) -> (String, String) {
+    (slug_to_hash(slug), slug_to_id(slug))
 }
 
 #[cfg(test)]
@@ -162,9 +193,25 @@ mod tests {
     }
 
     #[test]
+    fn test_slug_to_hash() {
+        let hash = slug_to_hash("hello-world-1a2b3c4d");
+        assert_eq!(hash.len(), 16);
+
+        // Same input should produce same output
+        let hash2 = slug_to_hash("hello-world-1a2b3c4d");
+        assert_eq!(hash, hash2);
+
+        // Different input should produce different output
+        let hash3 = slug_to_hash("different-slug");
+        assert_ne!(hash, hash3);
+    }
+
+    #[test]
     fn test_slug_to_id() {
         let id = slug_to_id("hello-world-1a2b3c4d");
-        assert_eq!(id.len(), 16);
+        // UUID format: 8-4-4-4-12 = 36 chars
+        assert_eq!(id.len(), 36);
+        assert!(id.contains('-'));
 
         // Same input should produce same output
         let id2 = slug_to_id("hello-world-1a2b3c4d");
@@ -177,9 +224,10 @@ mod tests {
 
     #[test]
     fn test_generate_memory_id() {
-        let (slug, id) = generate_memory_id("Test Memory");
+        let (slug, hash, id) = generate_memory_id("Test Memory");
 
         assert!(slug.starts_with("test-memory-"));
-        assert_eq!(id.len(), 16);
+        assert_eq!(hash.len(), 16);
+        assert_eq!(id.len(), 36); // UUID format
     }
 }

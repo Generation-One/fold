@@ -68,6 +68,7 @@ CREATE INDEX IF NOT EXISTS idx_projects_provider ON projects(provider);
 CREATE TABLE IF NOT EXISTS memories (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    slug TEXT,                        -- Human-readable slug for agent memories
 
     -- Type and source tracking
     type TEXT,                        -- 'codebase' | 'session' | 'spec' | etc.
