@@ -676,15 +676,18 @@ Return JSON:
         };
 
         // Generate ID:
-        // - For agent memories: slug-based ID from title
+        // - For agent memories: slug-based ID (from provided slug or generated from title)
         // - For file/git memories: use provided ID or generate UUID
+        // Note: memory_id = SHA256(slug)[0:16], so we can always find the file from memory_id
         let memory_id = if let Some(ref provided_id) = data.id {
             provided_id.clone()
         } else if is_agent_memory {
-            // Generate slug-based ID for agent memories
-            let title_for_slug = title.as_deref().unwrap_or("memory");
-            let (_slug, id) = super::fold_storage::generate_memory_id(title_for_slug);
-            id
+            // Use provided slug or generate from title
+            let slug = data.slug.clone().unwrap_or_else(|| {
+                let title_for_slug = title.as_deref().unwrap_or("memory");
+                super::fold_storage::slugify_unique(title_for_slug)
+            });
+            super::fold_storage::slug_to_id(&slug)
         } else {
             // UUID for file/git memories
             crate::models::new_id()

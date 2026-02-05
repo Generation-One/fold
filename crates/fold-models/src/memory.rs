@@ -217,10 +217,13 @@ impl std::fmt::Display for LegacyLinkType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct MemoryCreate {
-    /// Optional custom ID. If not provided, a UUID will be generated.
+    /// Optional custom ID. If not provided, generated from slug or title.
     /// For codebase files, this should be a hash of project_slug + file_path
     /// to ensure updates replace existing memories rather than creating duplicates.
     pub id: Option<String>,
+    /// Optional custom slug. If not provided, generated from title.
+    /// The slug is hashed to create the memory ID and used for the file path.
+    pub slug: Option<String>,
     #[serde(default)]
     pub memory_type: MemoryType,
     pub content: String,

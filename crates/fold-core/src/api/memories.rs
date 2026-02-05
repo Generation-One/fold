@@ -11,8 +11,6 @@
 //! - POST /projects/:project_id/memories/search - Semantic search
 //! - GET /projects/:project_id/context/:id - Get context for a memory
 
-use std::collections::HashMap;
-
 use axum::{
     extract::{Path, Query, State},
     middleware,
@@ -27,7 +25,7 @@ use uuid::Uuid;
 
 use crate::db;
 use crate::middleware::{require_project_read, require_project_write, AuthContext};
-use crate::models::MemorySource;
+use crate::models::{MemoryCreate, MemorySource, MemoryType, MemoryUpdate};
 use crate::{AppState, Error, Result};
 
 /// Build memory routes (project-scoped).
@@ -123,6 +121,8 @@ pub struct CreateMemoryRequest {
     pub tags: Vec<String>,
     /// File path (for file-source memories)
     pub file_path: Option<String>,
+    /// Custom slug (optional - auto-generated from title if not provided)
+    pub slug: Option<String>,
     /// Additional metadata
     #[serde(default)]
     #[allow(dead_code)]
@@ -462,53 +462,26 @@ async fn create_memory(
         return Err(Error::Validation("Content cannot be empty".into()));
     }
 
-    // Use provided file_path or generate synthetic one from title for agent memories
-    let file_path = request.file_path.unwrap_or_else(|| {
-        let title = request.title.as_deref().unwrap_or("memory");
-        format!("{}.txt", title.to_lowercase().replace(" ", "_"))
-    });
-
-    // Convert db::Project to models::Project for the indexer
-    let project = crate::models::Project {
-        id: db_project.id.clone(),
-        slug: db_project.slug.clone(),
-        name: db_project.name.clone(),
-        description: db_project.description.clone(),
-        root_path: Some(db_project.root_path.clone()),
-        index_patterns: None,
-        ignore_patterns: None,
-        team_members: None,
-        owner: None,
-        metadata: None,
-        metadata_repo_enabled: db_project.is_metadata_sync_enabled(),
-        metadata_repo_mode: db_project.metadata_repo_mode.clone(),
-        metadata_repo_provider: db_project.metadata_repo_provider.clone(),
-        metadata_repo_owner: db_project.metadata_repo_owner.clone(),
-        metadata_repo_name: db_project.metadata_repo_name.clone(),
-        metadata_repo_branch: db_project.metadata_repo_branch.clone(),
-        metadata_repo_token: db_project.metadata_repo_token.clone(),
-        metadata_repo_source_id: db_project.metadata_repo_source_id.clone(),
-        metadata_repo_path_prefix: db_project.metadata_repo_path_prefix.clone(),
-        ignored_commit_authors: db_project.ignored_commit_authors.clone(),
-        decay_strength_weight: db_project.decay_strength_weight,
-        decay_half_life_days: db_project.decay_half_life_days,
-        auto_commit_enabled: Some(true),
-        created_at: chrono::DateTime::parse_from_rfc3339(&db_project.created_at)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
-        updated_at: chrono::DateTime::parse_from_rfc3339(&db_project.updated_at)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
-    };
-
-    // Trigger full indexing pipeline: LLM summarization, semantic chunking, auto-linking
+    // Create memory via service (handles DB + Qdrant + fold/ storage)
+    // This mirrors the MCP memory_add behaviour - source is "agent" and content
+    // is written to the fold/ directory as a markdown file
     let memory = state
-        .indexer
-        .index_single_file(
-            &project,
-            &file_path,
-            &request.content,
-            request.author.as_deref(),
+        .memory
+        .add(
+            &db_project.id,
+            &db_project.slug,
+            MemoryCreate {
+                memory_type: MemoryType::General,
+                content: request.content,
+                author: request.author,
+                title: request.title,
+                tags: request.tags,
+                file_path: request.file_path,
+                slug: request.slug,
+                source: Some(MemorySource::Agent),
+                ..Default::default()
+            },
+            true, // auto-generate metadata via LLM
         )
         .await?;
 
@@ -554,6 +527,9 @@ async fn get_memory(
 /// Update a memory.
 ///
 /// PUT /projects/:project_id/memories/:memory_id
+///
+/// For agent memories, this updates both SQLite metadata and the fold/ file.
+/// For file/git memories, this updates SQLite only.
 #[axum::debug_handler]
 async fn update_memory(
     State(state): State<AppState>,
@@ -563,56 +539,25 @@ async fn update_memory(
     // Resolve project (to validate it exists and user has access)
     let project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
 
-    // If content changed, regenerate embedding
-    if let Some(ref content) = request.content {
-        let embedding = state
-            .embeddings
-            .embed_single(content)
-            .await
-            .map_err(|e| Error::Embedding(e.to_string()))?;
-
-        // Build metadata payload for Qdrant update
-        let mut payload = HashMap::new();
-        payload.insert("memory_id".to_string(), json!(path.memory_id.to_string()));
-        payload.insert("project_id".to_string(), json!(project.id));
-        if let Some(ref author) = request.author {
-            payload.insert("author".to_string(), json!(author));
-        }
-        if let Some(ref file_path) = request.file_path {
-            payload.insert("file_path".to_string(), json!(file_path));
-        }
-
-        // Update embedding in Qdrant (non-blocking)
-        if let Err(e) = state
-            .qdrant
-            .upsert(
-                &project.slug,
-                &path.memory_id.to_string(),
-                embedding,
-                payload,
-            )
-            .await
-        {
-            warn!(error = %e, memory_id = %path.memory_id, "Failed to update embedding in Qdrant");
-        }
-    }
-
-    // Build update input
-    let update = db::UpdateMemory {
+    // Build update struct
+    let update = MemoryUpdate {
         title: request.title,
         content: request.content,
-        content_hash: None,
-        git_branch: None,
-        git_commit_sha: None,
-        author: request.author,
         keywords: None,
         tags: request.tags,
+        context: None,
+        status: None,
+        assignee: None,
+        metadata: None,
     };
 
-    // Save to database
-    let memory = db::update_memory(&state.db, &path.memory_id.to_string(), update).await?;
+    // Use memory service which handles both SQLite and fold/ storage
+    let memory = state
+        .memory
+        .update(&project.id, &project.slug, &path.memory_id.to_string(), update)
+        .await?;
 
-    Ok(Json(memory_to_response(memory)))
+    Ok(Json(memory_to_response_from_model(memory)))
 }
 
 /// Delete a memory.
