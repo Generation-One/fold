@@ -29,6 +29,19 @@ use crate::models::{CodeSummary, CommitInfo, Memory, SuggestedLink};
 /// Maximum retries per provider before fallback
 const MAX_RETRIES: u32 = 2;
 
+/// Safe floor char boundary (stable alternative to str::floor_char_boundary)
+fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        s.len()
+    } else {
+        let mut i = index;
+        while i > 0 && !s.is_char_boundary(i) {
+            i -= 1;
+        }
+        i
+    }
+}
+
 /// Delay between retries (doubles each time)
 const RETRY_DELAY_MS: u64 = 500;
 
@@ -787,7 +800,7 @@ Return JSON:
 ONLY valid JSON."#,
             path = path,
             language = if language.is_empty() { "unknown" } else { language },
-            content = &content[..content.len().min(4000)]
+            content = &content[..floor_char_boundary(&content, content.len().min(4000))]
         );
 
         let response = self.complete(&prompt, 400).await?;
@@ -1063,7 +1076,7 @@ Generate a JSON object with:
 
 Respond with ONLY a valid JSON object, no markdown or explanation."#,
             memory_type = memory_type,
-            content = &content[..content.len().min(2000)]
+            content = &content[..floor_char_boundary(&content, content.len().min(2000))]
         );
 
         let response = self.complete(&prompt, 500).await?;
