@@ -992,6 +992,7 @@ impl JobWorker {
                 &project.slug,
                 crate::models::MemoryCreate {
                     id: Some(memory_id),
+                    slug: None,
                     memory_type: crate::models::MemoryType::Codebase,
                     content,
                     author: Some("system".to_string()),

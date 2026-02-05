@@ -256,6 +256,7 @@ impl Default for MemoryCreate {
     fn default() -> Self {
         Self {
             id: None,
+            slug: None,
             memory_type: MemoryType::General,
             content: String::new(),
             author: None,
