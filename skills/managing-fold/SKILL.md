@@ -200,45 +200,13 @@ docker network inspect fold_default | jq '.[0].IPAM.Config[0].Gateway'
 ```sql
 -- Update to use Claude via OpenRouter
 UPDATE llm_providers 
-SET config = '{"endpoint":"https://openrouter.ai/api/v1","model":"anthropic/claude-3-5-haiku-latest"}'
+SET config = '{"endpoint":"https://openrouter.ai/api/v1","model":"anthropic/claude-4-5-haiku-latest"}'
 WHERE name = 'openrouter';
 ```
 
 After modifying providers, restart Fold to reload configuration.
 
-# Known Issues
-
-## 1. floor_char_boundary Panics (UTF-8 truncation)
-
-If indexing panics with "byte index N is not a char boundary", the `floor_char_boundary` helper is missing. This affects both `memory.rs` and `llm.rs`. 
-
-The fix adds a helper function to safely truncate strings containing multi-byte UTF-8 characters (like emojis):
-
-```rust
-fn floor_char_boundary(s: &str, index: usize) -> usize {
-    if index >= s.len() {
-        s.len()
-    } else {
-        let mut i = index;
-        while i > 0 && !s.is_char_boundary(i) {
-            i -= 1;
-        }
-        i
-    }
-}
-```
-
-Then use `&content[..floor_char_boundary(&content, content.len().min(4000))]` instead of `&content[..content.len().min(4000)]`.
-
-## 2. Qdrant Healthcheck
-
-Qdrant image doesn't have curl. Use bash TCP check:
-```yaml
-healthcheck:
-  test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/6333' || exit 1"]
-```
-
-## 3. Embedding Dimension Mismatch
+## 1. Embedding Dimension Mismatch
 
 All embedding providers must use the same dimension (768 for Gemini/nomic-embed-text). If switching providers, you may need to recreate the Qdrant collection.
 
