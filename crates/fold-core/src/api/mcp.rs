@@ -394,7 +394,7 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
         },
         ToolDefinition {
             name: "memory_add".into(),
-            description: "Add a memory to a project. Agent memories are stored in the fold/ directory and indexed for semantic search. Use this to persist knowledge, decisions, context, or any information that should be recalled later.".into(),
+            description: "Add a memory to a project. Agent memories are stored in the fold/ directory and indexed for semantic search. Use this to persist knowledge, decisions, context, or any information that should be recalled later. If a slug is provided, the memory ID is derived from it - using the same slug again will update the existing memory instead of creating a new one.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -402,6 +402,7 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
                     "content": { "type": "string", "description": "Memory content - the full text to remember" },
                     "title": { "type": "string", "description": "Short descriptive title for the memory" },
                     "author": { "type": "string", "description": "Who created this memory (e.g. 'claude', 'user')" },
+                    "slug": { "type": "string", "description": "Optional unique slug. If provided, the memory ID is derived from the slug deterministically, enabling upsert behaviour - same slug always refers to the same memory." },
                     "tags": {
                         "type": "array",
                         "items": { "type": "string" },
@@ -760,6 +761,9 @@ async fn execute_memory_add(state: &AppState, args: Value) -> Result<String> {
         content: String,
         title: Option<String>,
         author: Option<String>,
+        /// Optional slug - if provided, the memory ID is derived from it deterministically.
+        /// This enables upsert behaviour: same slug = same memory ID = update instead of create.
+        slug: Option<String>,
         #[serde(default)]
         tags: Vec<String>,
     }
@@ -781,6 +785,7 @@ async fn execute_memory_add(state: &AppState, args: Value) -> Result<String> {
                 author: params.author,
                 title: params.title,
                 tags: params.tags,
+                slug: params.slug,
                 source: Some(MemorySource::Agent),
                 ..Default::default()
             },
