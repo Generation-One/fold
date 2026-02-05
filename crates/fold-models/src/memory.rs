@@ -750,10 +750,6 @@ pub struct CodeSummary {
     pub keywords: Vec<String>,
     pub tags: Vec<String>,
     pub language: Option<String>,
-    /// Key functions/classes/exports
-    pub exports: Vec<String>,
-    /// Dependencies/imports
-    pub dependencies: Vec<String>,
     /// Extracted creation date (earliest date found in file)
     pub created_date: Option<String>,
 }
@@ -766,8 +762,6 @@ impl Default for CodeSummary {
             keywords: Vec::new(),
             tags: Vec::new(),
             language: None,
-            exports: Vec::new(),
-            dependencies: Vec::new(),
             created_date: None,
         }
     }

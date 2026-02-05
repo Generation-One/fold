@@ -768,35 +768,29 @@ impl LlmService {
         language: &str,
     ) -> Result<CodeSummary> {
         let prompt = format!(
-            r#"Analyse this file. Be brief but precise - pack maximum information into minimum words. No fluff.
+            r#"Summarise this file. Be brief, specific. Only describe what's present, never what's missing.
 
 File: {path}
 Type: {language}
-Lines: {lines}
 
 ```
 {content}
 ```
 
 Return JSON:
-- "title": What this file does (max 80 chars, be specific)
-- "summary": 1-2 dense sentences. Include specific details that matter (names, values, patterns). Omit obvious/generic statements. Adapt to file type - code: what it does and how; docs: key points; config: what it controls; data: structure and contents.
-- "keywords": Important identifiers from the file (max 12). Function/class names, key terms, settings, fields.
-- "tags": Category tags (max 5). File type + role + domain.
-- "exports": What this defines (functions, sections, settings, columns)
-- "dependencies": What this requires (imports, external refs)
-- "architecture_notes": One line on structure/patterns if notable, else empty
-- "key_functions": Main elements (max 5)
+- "title": What this file contains or does (max 80 chars)
+- "summary": 1-2 sentences describing the content. State what it says/does.
+- "keywords": Key terms or identifiers from the file (max 10)
+- "tags": Categories (max 5)
 - "created_date": Earliest date found (YYYY-MM-DD) or null
 
-ONLY valid JSON, no markdown."#,
+ONLY valid JSON."#,
             path = path,
             language = if language.is_empty() { "unknown" } else { language },
-            lines = content.lines().count(),
             content = &content[..content.len().min(4000)]
         );
 
-        let response = self.complete(&prompt, 800).await?;
+        let response = self.complete(&prompt, 400).await?;
 
         let json = self.extract_json(&response).unwrap_or_else(|| json!({}));
 
@@ -824,22 +818,6 @@ ONLY valid JSON, no markdown."#,
             } else {
                 Some(language.to_string())
             },
-            exports: json["exports"]
-                .as_array()
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            dependencies: json["dependencies"]
-                .as_array()
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default(),
             created_date: json["created_date"]
                 .as_str()
                 .filter(|s| !s.is_empty())
