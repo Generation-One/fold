@@ -3,23 +3,12 @@ FROM rust:1.85-bookworm AS builder
 
 WORKDIR /app
 
-# Copy manifests first for better caching
+# Copy manifests and all crates
 COPY Cargo.toml Cargo.lock ./
-COPY crates/fold-core/Cargo.toml ./crates/fold-core/
-COPY crates/fold-embeddings/Cargo.toml ./crates/fold-embeddings/
-
-# Create dummy sources to build dependencies
-RUN mkdir -p crates/fold-core/src crates/fold-embeddings/src && \
-    echo "fn main() {}" > crates/fold-core/src/main.rs && \
-    echo "pub fn dummy() {}" > crates/fold-embeddings/src/lib.rs && \
-    cargo build --release && \
-    rm -rf crates/*/src
-
-# Copy actual source (schema is embedded via include_str!)
 COPY crates ./crates
 
-# Build release binary (touch main.rs to force rebuild)
-RUN touch crates/fold-core/src/main.rs && cargo build --release
+# Build release binary
+RUN cargo build --release -p fold-core
 
 # Runtime stage
 FROM debian:bookworm-slim
