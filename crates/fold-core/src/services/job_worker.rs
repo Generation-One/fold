@@ -827,41 +827,40 @@ impl JobWorker {
             "Indexing project files from push event"
         );
 
-        // Use project root_path (should already be set for git projects)
-        let local_path = PathBuf::from(&project.root_path);
-
-        // For remote projects, ensure we have a local clone
-        if project.is_remote() && !local_path.exists() {
+        // Determine the local path for indexing
+        let local_path = if project.is_remote() {
+            // For remote projects, use the git_local service to get/create the clone path
             let owner = project.remote_owner.as_deref().unwrap_or("");
             let repo = project.remote_repo.as_deref().unwrap_or("");
             let branch = project.remote_branch.as_deref().unwrap_or("main");
             let access_token = project.access_token.as_deref().unwrap_or("");
 
-            info!(job_id, project = %project.full_name(), "Cloning project repository locally");
+            // Get the path where the repo will be cloned
+            let clone_path = self.inner.git_local.get_repo_path(&project.slug, owner, repo);
 
-            self.inner
-                .git_local
-                .clone_repo(
-                    &project.slug,
-                    owner,
-                    repo,
-                    branch,
-                    access_token,
-                    &project.provider,
-                )
-                .await?;
-        }
+            // Clone if it doesn't exist
+            if !clone_path.exists() {
+                info!(job_id, project = %project.full_name(), "Cloning project repository locally");
 
-        // Pull latest changes for remote projects
-        if project.is_remote() {
-            let branch = project.remote_branch.as_deref().unwrap_or("main");
-            let access_token = project.access_token.as_deref().unwrap_or("");
+                self.inner
+                    .git_local
+                    .clone_repo(
+                        &project.slug,
+                        owner,
+                        repo,
+                        branch,
+                        access_token,
+                        &project.provider,
+                    )
+                    .await?;
+            }
 
+            // Pull latest changes
             if let Err(e) = self
                 .inner
                 .git_local
                 .pull_repo(
-                    &local_path,
+                    &clone_path,
                     branch,
                     access_token,
                     &project.provider,
@@ -870,7 +869,12 @@ impl JobWorker {
             {
                 warn!(job_id, error = %e, "Failed to pull latest changes, using existing files");
             }
-        }
+
+            clone_path
+        } else {
+            // For local projects, use the configured root_path
+            PathBuf::from(&project.root_path)
+        };
 
         // Extract files from job payload (set by webhook handler)
         let payload: serde_json::Value = job
@@ -1038,30 +1042,39 @@ impl JobWorker {
         // Clear in-memory file hash cache to force re-indexing all files
         self.inner.indexer.clear_cache(&project.slug).await;
 
-        // Use project root_path
-        let local_path = project.root_path.clone();
-
-        // For remote projects without local clone, clone first
-        if project.is_remote() && !std::path::Path::new(&local_path).exists() {
+        // Determine the local path for indexing
+        let local_path = if project.is_remote() {
+            // For remote projects, use the git_local service to get/create the clone path
             let owner = project.remote_owner.as_deref().unwrap_or("");
             let repo = project.remote_repo.as_deref().unwrap_or("");
             let branch = project.remote_branch.as_deref().unwrap_or("main");
             let access_token = project.access_token.as_deref().unwrap_or("");
 
-            info!(job_id, project = %project.full_name(), "Cloning project repository locally");
+            // Get the path where the repo will be cloned
+            let clone_path = self.inner.git_local.get_repo_path(&project.slug, owner, repo);
 
-            self.inner
-                .git_local
-                .clone_repo(
-                    &project.slug,
-                    owner,
-                    repo,
-                    branch,
-                    access_token,
-                    &project.provider,
-                )
-                .await?;
-        }
+            // Clone if it doesn't exist
+            if !clone_path.exists() {
+                info!(job_id, project = %project.full_name(), "Cloning project repository locally");
+
+                self.inner
+                    .git_local
+                    .clone_repo(
+                        &project.slug,
+                        owner,
+                        repo,
+                        branch,
+                        access_token,
+                        &project.provider,
+                    )
+                    .await?;
+            }
+
+            clone_path.to_string_lossy().to_string()
+        } else {
+            // For local projects, use the configured root_path
+            project.root_path.clone()
+        };
 
         self.reindex_from_local(job_id, &project, &local_path)
             .await
