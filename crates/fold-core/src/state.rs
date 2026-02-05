@@ -6,10 +6,10 @@ use std::sync::Arc;
 
 use crate::db::DbPool;
 use crate::services::{
-    AuthService, ContentResolverService, EmbeddingService, FoldStorageService, GitHubService,
-    GitLabService, GitLocalService, GitService, GitSyncService, GraphService, IndexerService,
-    LinkerService, LlmService, MemoryService, MetaStorageService, ProjectService, ProviderRegistry,
-    QdrantService,
+    AuthService, ContentResolverService, EmbeddingService, EventBroadcaster, FoldStorageService,
+    GitHubService, GitLabService, GitLocalService, GitService, GitSyncService, GraphService,
+    IndexerService, LinkerService, LlmService, MemoryService, MetaStorageService, ProjectService,
+    ProviderRegistry, QdrantService,
 };
 use crate::{config, Result};
 use std::path::PathBuf;
@@ -53,11 +53,126 @@ pub struct AppState {
     pub content_resolver: Arc<ContentResolverService>,
     /// Fold storage service for hash-based memory storage.
     pub fold_storage: Arc<FoldStorageService>,
+    /// Event broadcaster for SSE notifications.
+    pub events: Arc<EventBroadcaster>,
 }
 
 impl AppState {
     /// Create a new application state, initializing all services.
     pub async fn new() -> Result<Self> {
+        let config = config::config();
+
+        // Initialize database
+        let db = crate::db::init_pool(&config.database.path).await?;
+
+        // Initialize database schema
+        crate::db::initialize_schema(&db).await?;
+
+        // Initialize core services
+        let qdrant_config = fold_qdrant::QdrantConfig::new(
+            &config.qdrant.url,
+            &config.qdrant.collection_prefix,
+        );
+        let qdrant = Arc::new(QdrantService::new(&qdrant_config).await?);
+        let embeddings = Arc::new(EmbeddingService::new(db.clone(), &config.embedding).await?);
+        let llm = Arc::new(LlmService::new(db.clone(), &config.llm).await?);
+        let github = Arc::new(GitHubService::new());
+        let gitlab = Arc::new(GitLabService::new());
+        let git_local = Arc::new(GitLocalService::new());
+        let providers = Arc::new(ProviderRegistry::with_defaults());
+
+        // Initialize filesystem storage services
+        let meta_storage = Arc::new(MetaStorageService::new(PathBuf::from(
+            &config.storage.fold_path,
+        )));
+        let content_resolver = Arc::new(ContentResolverService::new(
+            db.clone(),
+            meta_storage.clone(),
+        ));
+        let fold_storage = Arc::new(FoldStorageService::new());
+
+        // Initialize high-level services with agentic memory
+        let memory = MemoryService::new(
+            db.clone(),
+            qdrant.clone(),
+            embeddings.clone(),
+            llm.clone(),
+            fold_storage.clone(),
+        );
+
+        let project = ProjectService::new(db.clone(), qdrant.clone(), embeddings.clone());
+
+        // Initialize git service for auto-commit and sync
+        let git_service = Arc::new(GitService::new(
+            db.clone(),
+            memory.clone(),
+            fold_storage.clone(),
+            qdrant.clone(),
+            embeddings.clone(),
+        ));
+
+        // Initialize indexer with git service for auto-commit
+        let indexer =
+            IndexerService::with_git_service(memory.clone(), llm.clone(), git_service.clone());
+
+        let git_sync = GitSyncService::new(
+            db.clone(),
+            github.clone(),
+            gitlab.clone(),
+            memory.clone(),
+            llm.clone(),
+            indexer.clone(),
+        );
+
+        let graph = GraphService::new(db.clone());
+
+        let linker = Arc::new(LinkerService::new(
+            db.clone(),
+            memory.clone(),
+            llm.clone(),
+            qdrant.clone(),
+            embeddings.clone(),
+        ));
+
+        // Wire up linker to indexer for holographic auto-linking
+        let mut indexer = indexer;
+        indexer.set_linker(linker.clone());
+        indexer.set_concurrency_limit(config.indexing.concurrency_limit);
+
+        // Wire up chunk services for semantic code chunking
+        indexer.set_chunk_services(embeddings.clone(), qdrant.clone(), db.clone());
+
+        let auth = AuthService::new(db.clone(), config.auth.clone());
+
+        // Initialize event broadcaster for SSE
+        let events = Arc::new(EventBroadcaster::new());
+
+        Ok(Self {
+            db,
+            qdrant,
+            embeddings,
+            llm,
+            github,
+            gitlab,
+            git_local,
+            git_service,
+            providers,
+            memory,
+            project,
+            indexer,
+            git_sync,
+            graph,
+            linker,
+            auth,
+            content_resolver,
+            fold_storage,
+            events,
+        })
+    }
+
+    /// Create a new application state with a pre-existing event broadcaster.
+    /// This allows the broadcaster to be created early for tracing integration.
+    pub async fn new_with_events(events: Arc<EventBroadcaster>) -> Result<Self> {
         let config = config::config();
 
         // Initialize database
@@ -161,6 +276,7 @@ impl AppState {
             auth,
             content_resolver,
             fold_storage,
+            events,
         })
     }
 }

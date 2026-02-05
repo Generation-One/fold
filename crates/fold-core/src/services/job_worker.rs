@@ -18,8 +18,8 @@ use tracing::{debug, error, info, warn};
 use crate::db::{self, DbPool, JobType, LogLevel};
 use crate::error::{Error, Result};
 use crate::services::{
-    EmbeddingService, GitHubService, GitLocalService, GitSyncService, IndexerService, LlmService,
-    MemoryService, MetadataSyncService,
+    EmbeddingService, EventBroadcaster, GitHubService, GitLocalService, GitSyncService,
+    IndexerService, LlmService, MemoryService, MetadataSyncService,
 };
 
 /// Poll interval for checking new jobs (seconds)
@@ -55,6 +55,7 @@ struct JobWorkerInner {
     indexer: IndexerService,
     llm: Arc<LlmService>,
     embeddings: Arc<EmbeddingService>,
+    events: Arc<EventBroadcaster>,
     running: RwLock<bool>,
     active_jobs: RwLock<usize>,
     worker_id: String,
@@ -73,6 +74,7 @@ impl JobWorker {
         indexer: IndexerService,
         llm: Arc<LlmService>,
         embeddings: Arc<EmbeddingService>,
+        events: Arc<EventBroadcaster>,
     ) -> Self {
         // Generate unique worker ID
         let worker_id = format!("worker-{}-{}", hostname(), nanoid::nanoid!(8));
@@ -87,6 +89,7 @@ impl JobWorker {
                 indexer,
                 llm,
                 embeddings,
+                events,
                 running: RwLock::new(false),
                 active_jobs: RwLock::new(0),
                 worker_id,
@@ -237,6 +240,13 @@ impl JobWorker {
             // If providers just became available, resume paused jobs
             if !was_available && now_available {
                 info!("LLM/embedding providers are now available - resuming paused jobs");
+                // Emit provider available events
+                self.inner
+                    .events
+                    .provider_status_changed("llm", "all", true);
+                self.inner
+                    .events
+                    .provider_status_changed("embedding", "all", true);
                 match db::resume_paused_jobs(&self.inner.db).await {
                     Ok(count) => {
                         if count > 0 {
@@ -249,6 +259,13 @@ impl JobWorker {
                 }
             } else if was_available && !now_available {
                 warn!("LLM/embedding providers are no longer available - new indexing jobs will be paused");
+                // Emit provider unavailable events
+                self.inner
+                    .events
+                    .provider_status_changed("llm", "all", false);
+                self.inner
+                    .events
+                    .provider_status_changed("embedding", "all", false);
             }
 
             // Log paused job count periodically
@@ -278,18 +295,18 @@ impl JobWorker {
                 break;
             }
 
-            // Get all repositories with polling enabled
-            match db::list_polling_repositories(&self.inner.db).await {
-                Ok(repos) => {
-                    for repo in repos {
-                        // Check if we should poll this repo based on its interval
-                        let interval_secs = repo
+            // Get all projects with polling enabled (remote providers without webhooks)
+            match db::list_polling_projects(&self.inner.db).await {
+                Ok(projects) => {
+                    for project in projects {
+                        // Check if we should poll this project based on its interval
+                        let interval_secs = project
                             .sync_cursor
                             .as_deref()
                             .and_then(|s| s.parse::<u64>().ok())
                             .unwrap_or(REPO_POLL_INTERVAL_SECS);
 
-                        let should_poll = repo
+                        let should_poll = project
                             .last_sync
                             .as_ref()
                             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
@@ -305,15 +322,15 @@ impl JobWorker {
 
                         // Check for new commits
                         debug!(
-                            repo = %repo.full_name(),
-                            "Polling repository for new commits"
+                            project = %project.full_name(),
+                            "Polling project for new commits"
                         );
 
-                        match self.poll_repository(&repo).await {
+                        match self.poll_project(&project).await {
                             Ok(new_commits) => {
                                 if new_commits > 0 {
                                     info!(
-                                        repo = %repo.full_name(),
+                                        project = %project.full_name(),
                                         new_commits,
                                         "Found new commits during polling"
                                     );
@@ -321,16 +338,16 @@ impl JobWorker {
                             }
                             Err(e) => {
                                 warn!(
-                                    repo = %repo.full_name(),
+                                    project = %project.full_name(),
                                     error = %e,
-                                    "Error polling repository"
+                                    "Error polling project"
                                 );
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    warn!(error = %e, "Error listing polling repositories");
+                    warn!(error = %e, "Error listing polling projects");
                 }
             }
 
@@ -339,19 +356,29 @@ impl JobWorker {
         }
     }
 
-    /// Poll a single repository for new commits.
-    async fn poll_repository(&self, repo: &db::Repository) -> Result<usize> {
+    /// Poll a single project for new commits.
+    async fn poll_project(&self, project: &db::Project) -> Result<usize> {
+        // Get remote repo info
+        let owner = project.remote_owner.as_deref().ok_or_else(|| {
+            Error::Internal("Project has no remote_owner configured".into())
+        })?;
+        let repo = project.remote_repo.as_deref().ok_or_else(|| {
+            Error::Internal("Project has no remote_repo configured".into())
+        })?;
+        let branch = project.remote_branch.as_deref().unwrap_or("main");
+        let access_token = project.access_token.as_deref().unwrap_or("");
+
         // Fetch commits from GitHub since last sync
         let commits = self
             .inner
             .github
             .get_commits(
-                &repo.owner,
-                &repo.repo,
-                Some(&repo.branch),
-                repo.last_commit_sha.as_deref(),
+                owner,
+                repo,
+                Some(branch),
+                project.last_commit_sha.as_deref(),
                 100,
-                &repo.access_token,
+                access_token,
             )
             .await
             .map_err(|e| Error::Internal(format!("Failed to fetch commits: {}", e)))?;
@@ -359,15 +386,7 @@ impl JobWorker {
         let new_commit_count = commits.len();
 
         // Update last_sync time regardless of whether we found commits
-        db::update_repository(
-            &self.inner.db,
-            &repo.id,
-            db::UpdateRepository {
-                last_sync: Some(chrono::Utc::now().to_rfc3339()),
-                ..Default::default()
-            },
-        )
-        .await?;
+        db::update_project_sync(&self.inner.db, &project.id, None, None).await?;
 
         if new_commit_count == 0 {
             return Ok(0);
@@ -375,15 +394,7 @@ impl JobWorker {
 
         // Update last_commit_sha to the newest commit
         if let Some(newest) = commits.first() {
-            db::update_repository(
-                &self.inner.db,
-                &repo.id,
-                db::UpdateRepository {
-                    last_commit_sha: Some(newest.sha.clone()),
-                    ..Default::default()
-                },
-            )
-            .await?;
+            db::update_project_sync(&self.inner.db, &project.id, Some(&newest.sha), None).await?;
         }
 
         // Create a sync job to process the commits
@@ -395,8 +406,7 @@ impl JobWorker {
         db::create_job(
             &self.inner.db,
             db::CreateJob::new(job_id, db::JobType::SyncMetadata)
-                .with_project(repo.project_id.clone())
-                .with_repository(repo.id.clone())
+                .with_project(project.id.clone())
                 .with_payload(payload),
         )
         .await?;
@@ -419,7 +429,26 @@ impl JobWorker {
         let worker = self.clone();
         let job_id = job.id.clone();
         let job_type = job.job_type.clone();
+        let project_id = job.project_id.clone();
         let retry_count = job.retry_count.unwrap_or(0);
+
+        // Look up project name for SSE events
+        let project_name = if let Some(ref pid) = project_id {
+            db::get_project(&worker.inner.db, pid)
+                .await
+                .ok()
+                .map(|p| p.name)
+        } else {
+            None
+        };
+
+        // Emit job started event
+        worker.inner.events.job_started(
+            &job_id,
+            &job_type,
+            project_id.as_deref(),
+            project_name.as_deref(),
+        );
 
         tokio::spawn(async move {
             // Record execution attempt
@@ -465,17 +494,39 @@ impl JobWorker {
                 .await;
             }
 
-            // Handle result
+            // Handle result and emit SSE events
             match result {
                 Ok(()) => {
                     info!(job_id = %job_id, duration_ms, "Job completed successfully");
+                    // Emit job completed event
+                    worker.inner.events.job_completed(
+                        &job_id,
+                        &job_type,
+                        project_id.as_deref(),
+                        project_name.as_deref(),
+                    );
                 }
                 Err(ref e) if e.to_string().starts_with("PAUSED:") => {
                     // Job was paused, don't retry - it will resume when providers are available
                     info!(job_id = %job_id, duration_ms, "Job paused waiting for providers");
+                    // Emit job paused event
+                    worker.inner.events.job_paused(
+                        &job_id,
+                        &job_type,
+                        project_id.as_deref(),
+                        project_name.as_deref(),
+                    );
                 }
                 Err(e) => {
                     error!(job_id = %job_id, error = %e, "Job processing failed, scheduling retry");
+                    // Emit job failed event
+                    worker.inner.events.job_failed(
+                        &job_id,
+                        &job_type,
+                        project_id.as_deref(),
+                        project_name.as_deref(),
+                        &e.to_string(),
+                    );
                     // Attempt retry (this handles max retries automatically)
                     let _ = db::retry_job(&worker.inner.db, &job_id, &e.to_string()).await;
                 }
@@ -762,72 +813,63 @@ impl JobWorker {
 
         let job = db::get_job(&self.inner.db, job_id).await?;
 
-        let repo_id = job
-            .repository_id
+        let project_id = job
+            .project_id
             .as_ref()
-            .ok_or_else(|| Error::Internal("Job missing repository_id".to_string()))?;
+            .ok_or_else(|| Error::Internal("Job missing project_id".to_string()))?;
 
-        // Get repository details
-        let mut repo = db::get_repository(&self.inner.db, repo_id).await?;
-
-        // Get project
-        let project = db::get_project(&self.inner.db, &repo.project_id).await?;
+        // Get project details (project IS the repository now)
+        let project = db::get_project(&self.inner.db, project_id).await?;
 
         info!(
             job_id,
-            repo = %repo.full_name(),
-            project = %project.slug,
-            "Indexing repository files from push event"
+            project = %project.full_name(),
+            "Indexing project files from push event"
         );
 
-        // Ensure we have a local clone
-        let local_path = match repo.local_path.clone() {
-            Some(path) => PathBuf::from(path),
-            None => {
-                info!(job_id, repo = %repo.full_name(), "Cloning repository locally");
+        // Use project root_path (should already be set for git projects)
+        let local_path = PathBuf::from(&project.root_path);
 
-                let cloned_path = self
-                    .inner
-                    .git_local
-                    .clone_repo(
-                        &project.slug,
-                        &repo.owner,
-                        &repo.repo,
-                        &repo.branch,
-                        &repo.access_token,
-                        &repo.provider,
-                    )
-                    .await?;
+        // For remote projects, ensure we have a local clone
+        if project.is_remote() && !local_path.exists() {
+            let owner = project.remote_owner.as_deref().unwrap_or("");
+            let repo = project.remote_repo.as_deref().unwrap_or("");
+            let branch = project.remote_branch.as_deref().unwrap_or("main");
+            let access_token = project.access_token.as_deref().unwrap_or("");
 
-                let path_str = cloned_path.to_string_lossy().to_string();
-                db::update_repository(
-                    &self.inner.db,
-                    &repo.id,
-                    db::UpdateRepository {
-                        local_path: Some(path_str.clone()),
-                        ..Default::default()
-                    },
+            info!(job_id, project = %project.full_name(), "Cloning project repository locally");
+
+            self.inner
+                .git_local
+                .clone_repo(
+                    &project.slug,
+                    owner,
+                    repo,
+                    branch,
+                    access_token,
+                    &project.provider,
                 )
                 .await?;
+        }
 
-                repo.local_path = Some(path_str);
-                cloned_path
+        // Pull latest changes for remote projects
+        if project.is_remote() {
+            let branch = project.remote_branch.as_deref().unwrap_or("main");
+            let access_token = project.access_token.as_deref().unwrap_or("");
+
+            if let Err(e) = self
+                .inner
+                .git_local
+                .pull_repo(
+                    &local_path,
+                    branch,
+                    access_token,
+                    &project.provider,
+                )
+                .await
+            {
+                warn!(job_id, error = %e, "Failed to pull latest changes, using existing files");
             }
-        };
-
-        // Pull latest changes
-        if let Err(e) = self
-            .inner
-            .git_local
-            .pull_repo(
-                &local_path,
-                &repo.branch,
-                &repo.access_token,
-                &repo.provider,
-            )
-            .await
-        {
-            warn!(job_id, error = %e, "Failed to pull latest changes, using existing files");
         }
 
         // Extract files from job payload (set by webhook handler)
@@ -870,8 +912,18 @@ impl JobWorker {
             // Update progress
             db::update_job_progress(&self.inner.db, job_id, indexed, failed).await?;
 
-            // Log progress periodically
+            // Log and emit progress periodically
             if (i + 1) % 10 == 0 || i + 1 == total {
+                // Emit SSE progress event
+                self.inner.events.job_progress(
+                    job_id,
+                    "index_repo",
+                    Some(&project.id),
+                    Some(&project.name),
+                    indexed,
+                    failed,
+                    Some(total as i32),
+                );
                 debug!(
                     job_id,
                     processed = i + 1,
@@ -887,7 +939,7 @@ impl JobWorker {
         self.log_job(
             job_id,
             LogLevel::Info,
-            &format!("Indexed {} files from {}", total, repo.full_name()),
+            &format!("Indexed {} files from {}", total, project.full_name()),
         )
         .await?;
 
@@ -967,102 +1019,114 @@ impl JobWorker {
     async fn process_reindex_repo(&self, job_id: &str) -> Result<()> {
         let job = db::get_job(&self.inner.db, job_id).await?;
 
-        let repo_id = job
-            .repository_id
+        let project_id = job
+            .project_id
             .as_ref()
-            .ok_or_else(|| Error::Internal("Job missing repository_id".to_string()))?;
+            .ok_or_else(|| Error::Internal("Job missing project_id".to_string()))?;
 
-        let mut repo = db::get_repository(&self.inner.db, repo_id).await?;
-        let project = db::get_project(&self.inner.db, &repo.project_id).await?;
+        // Get project (project IS the repository now)
+        let project = db::get_project(&self.inner.db, project_id).await?;
 
         info!(
             job_id,
-            repo = %repo.full_name(),
-            project = %project.slug,
-            local_path = ?repo.local_path,
-            "Full repository reindex"
+            project = %project.full_name(),
+            root_path = %project.root_path,
+            "Full project reindex"
         );
 
         // Clear in-memory file hash cache to force re-indexing all files
         self.inner.indexer.clear_cache(&project.slug).await;
 
-        // Clone repo locally if we don't have a local path yet
-        let local_path = match repo.local_path.clone() {
-            Some(path) => path,
-            None => {
-                info!(job_id, repo = %repo.full_name(), "Cloning repository locally");
+        // Use project root_path
+        let local_path = project.root_path.clone();
 
-                let cloned_path = self
-                    .inner
-                    .git_local
-                    .clone_repo(
-                        &project.slug,
-                        &repo.owner,
-                        &repo.repo,
-                        &repo.branch,
-                        &repo.access_token,
-                        &repo.provider,
-                    )
-                    .await?;
+        // For remote projects without local clone, clone first
+        if project.is_remote() && !std::path::Path::new(&local_path).exists() {
+            let owner = project.remote_owner.as_deref().unwrap_or("");
+            let repo = project.remote_repo.as_deref().unwrap_or("");
+            let branch = project.remote_branch.as_deref().unwrap_or("main");
+            let access_token = project.access_token.as_deref().unwrap_or("");
 
-                let path_str = cloned_path.to_string_lossy().to_string();
+            info!(job_id, project = %project.full_name(), "Cloning project repository locally");
 
-                // Update repository record with local path
-                db::update_repository(
-                    &self.inner.db,
-                    &repo.id,
-                    db::UpdateRepository {
-                        local_path: Some(path_str.clone()),
-                        ..Default::default()
-                    },
+            self.inner
+                .git_local
+                .clone_repo(
+                    &project.slug,
+                    owner,
+                    repo,
+                    branch,
+                    access_token,
+                    &project.provider,
                 )
                 .await?;
+        }
 
-                repo.local_path = Some(path_str.clone());
-                path_str
-            }
-        };
-
-        self.reindex_from_local(job_id, &repo, &project, &local_path)
+        self.reindex_from_local(job_id, &project, &local_path)
             .await
     }
 
-    /// Reindex using local clone - indexes all files in the repository.
+    /// Reindex using local clone - indexes all files in the project.
     async fn reindex_from_local(
         &self,
         job_id: &str,
-        repo: &db::Repository,
         project: &db::Project,
         local_path: &str,
     ) -> Result<()> {
         use std::path::PathBuf;
 
+        // Log start of reindex to SSE
+        self.log_job(
+            job_id,
+            LogLevel::Info,
+            &format!("Starting reindex for {} from {}", project.full_name(), local_path),
+        )
+        .await?;
+
         info!(
             job_id,
-            repo = %repo.full_name(),
+            project = %project.full_name(),
             path = %local_path,
-            "Reindexing from local clone"
+            "Reindexing from local path"
         );
 
-        // Pull latest changes first
         let path = PathBuf::from(local_path);
-        if let Err(e) = self
-            .inner
-            .git_local
-            .pull_repo(&path, &repo.branch, &repo.access_token, &repo.provider)
-            .await
-        {
-            warn!(
-                job_id,
-                repo = %repo.full_name(),
-                error = %e,
-                "Failed to pull latest changes, indexing existing files"
-            );
+
+        // Pull latest changes first for remote projects
+        if project.is_remote() {
+            self.log_job(job_id, LogLevel::Info, "Pulling latest changes from remote")
+                .await?;
+
+            let branch = project.remote_branch.as_deref().unwrap_or("main");
+            let access_token = project.access_token.as_deref().unwrap_or("");
+
+            if let Err(e) = self
+                .inner
+                .git_local
+                .pull_repo(&path, branch, access_token, &project.provider)
+                .await
+            {
+                self.log_job(
+                    job_id,
+                    LogLevel::Warn,
+                    &format!("Failed to pull latest changes: {}, using existing files", e),
+                )
+                .await?;
+
+                warn!(
+                    job_id,
+                    project = %project.full_name(),
+                    error = %e,
+                    "Failed to pull latest changes, indexing existing files"
+                );
+            }
         }
 
-        // Update the HEAD SHA after pulling
+        // Update the HEAD SHA after pulling (if it's a git repo)
         if let Ok(sha) = self.inner.git_local.get_head_sha(&path).await {
-            db::update_repository_indexed(&self.inner.db, &repo.id, &sha).await?;
+            db::update_project_indexed(&self.inner.db, &project.id, Some(&sha)).await?;
+            self.log_job(job_id, LogLevel::Info, &format!("Updated HEAD to {}", &sha[..8]))
+                .await?;
         }
 
         // Create a temporary project with the local path set
@@ -1071,6 +1135,9 @@ impl JobWorker {
         indexed_project.id = project.id.clone();
         indexed_project.slug = project.slug.clone();
         indexed_project.root_path = Some(local_path.to_string());
+
+        self.log_job(job_id, LogLevel::Info, "Scanning files and generating embeddings...")
+            .await?;
 
         // Use the indexer service for local file indexing
         match self
@@ -1088,8 +1155,7 @@ impl JobWorker {
                     job_id,
                     LogLevel::Info,
                     &format!(
-                        "Reindexed {} from local clone: {} files indexed, {} skipped, {} errors",
-                        repo.full_name(),
+                        "Reindex complete: {} files indexed, {} skipped, {} errors",
                         result.indexed_files,
                         result.skipped_files,
                         result.errors
@@ -1109,7 +1175,7 @@ impl JobWorker {
                 self.log_job(
                     job_id,
                     LogLevel::Error,
-                    &format!("Local reindex failed: {}", e),
+                    &format!("Reindex failed: {}", e),
                 )
                 .await?;
                 return Err(e);
@@ -1123,34 +1189,41 @@ impl JobWorker {
     async fn process_index_history(&self, job_id: &str) -> Result<()> {
         let job = db::get_job(&self.inner.db, job_id).await?;
 
-        let repo_id = job
-            .repository_id
+        let project_id = job
+            .project_id
             .as_ref()
-            .ok_or_else(|| Error::Internal("Job missing repository_id".to_string()))?;
+            .ok_or_else(|| Error::Internal("Job missing project_id".to_string()))?;
 
-        let repo = db::get_repository(&self.inner.db, repo_id).await?;
-        let project = db::get_project(&self.inner.db, &repo.project_id).await?;
+        // Get project (project IS the repository now)
+        let project = db::get_project(&self.inner.db, project_id).await?;
 
         info!(
             job_id,
-            repo = %repo.full_name(),
-            project = %project.slug,
+            project = %project.full_name(),
             "Indexing commit history"
         );
 
-        let token = &repo.access_token;
+        // Get remote repo info
+        let owner = project.remote_owner.as_deref().ok_or_else(|| {
+            Error::Internal("Project has no remote_owner configured".into())
+        })?;
+        let repo = project.remote_repo.as_deref().ok_or_else(|| {
+            Error::Internal("Project has no remote_repo configured".into())
+        })?;
+        let branch = project.remote_branch.as_deref().unwrap_or("main");
+        let access_token = project.access_token.as_deref().unwrap_or("");
 
         // Get recent commits
         let commits = self
             .inner
             .github
             .get_commits(
-                &repo.owner,
-                &repo.repo,
-                Some(&repo.branch),
+                owner,
+                repo,
+                Some(branch),
                 None,
                 100,
-                token,
+                access_token,
             )
             .await
             .map_err(|e| Error::Internal(format!("Failed to get commits: {}", e)))?;
@@ -1164,7 +1237,7 @@ impl JobWorker {
                 &self.inner.db,
                 db::CreateGitCommit {
                     id: nanoid::nanoid!(),
-                    repository_id: repo_id.clone(),
+                    project_id: project.id.clone(),
                     sha: commit.sha.clone(),
                     message: commit.commit.message.clone(),
                     author_name: Some(commit.commit.author.name.clone()),
@@ -1183,37 +1256,38 @@ impl JobWorker {
         self.log_job(
             job_id,
             LogLevel::Info,
-            &format!("Indexed {} commits from {}", total, repo.full_name()),
+            &format!("Indexed {} commits from {}", total, project.full_name()),
         )
         .await?;
 
         Ok(())
     }
 
-    /// Process sync_metadata job - sync repository metadata back to the repo.
+    /// Process sync_metadata job - sync project metadata back to the repo.
     ///
     /// This generates Markdown files in `.fold/` directory and pushes them
     /// to the repository as commits from `fold-meta-bot`.
     async fn process_sync_metadata(&self, job_id: &str) -> Result<()> {
         let job = db::get_job(&self.inner.db, job_id).await?;
 
-        let repo_id = job
-            .repository_id
+        let project_id = job
+            .project_id
             .as_ref()
-            .ok_or_else(|| Error::Internal("Job missing repository_id".to_string()))?;
+            .ok_or_else(|| Error::Internal("Job missing project_id".to_string()))?;
 
-        let repo = db::get_repository(&self.inner.db, repo_id).await?;
+        // Get project (project IS the repository now)
+        let project = db::get_project(&self.inner.db, project_id).await?;
 
         info!(
             job_id,
-            repo = %repo.full_name(),
-            "Syncing repository metadata"
+            project = %project.full_name(),
+            "Syncing project metadata"
         );
 
         self.log_job(
             job_id,
             LogLevel::Info,
-            &format!("Starting metadata sync for {}", repo.full_name()),
+            &format!("Starting metadata sync for {}", project.full_name()),
         )
         .await?;
 
@@ -1221,8 +1295,8 @@ impl JobWorker {
         let work_dir = std::env::temp_dir().join("fold-metadata-sync");
         let metadata_sync = MetadataSyncService::new(self.inner.db.clone(), work_dir);
 
-        // Sync metadata to repository
-        match metadata_sync.sync_repository(&repo).await {
+        // Sync metadata to project repository
+        match metadata_sync.sync_project(&project).await {
             Ok(result) => {
                 if let Some(ref commit_sha) = result.commit_sha {
                     self.log_job(
@@ -1230,7 +1304,7 @@ impl JobWorker {
                         LogLevel::Info,
                         &format!(
                             "Synced metadata for {}: {} files created, {} updated (commit: {})",
-                            repo.full_name(),
+                            project.full_name(),
                             result.files_created,
                             result.files_updated,
                             &commit_sha[..8]
@@ -1241,7 +1315,7 @@ impl JobWorker {
                     self.log_job(
                         job_id,
                         LogLevel::Info,
-                        &format!("No changes to sync for {}", repo.full_name()),
+                        &format!("No changes to sync for {}", project.full_name()),
                     )
                     .await?;
                 }
@@ -1250,7 +1324,7 @@ impl JobWorker {
                 self.log_job(
                     job_id,
                     LogLevel::Error,
-                    &format!("Failed to sync metadata for {}: {}", repo.full_name(), e),
+                    &format!("Failed to sync metadata for {}: {}", project.full_name(), e),
                 )
                 .await?;
                 return Err(e);
@@ -1260,18 +1334,69 @@ impl JobWorker {
         Ok(())
     }
 
-    /// Helper to log job messages.
+    /// Helper to log job messages and emit SSE events.
+    /// Fetches job context from the database for proper SSE event metadata.
     async fn log_job(&self, job_id: &str, level: LogLevel, message: &str) -> Result<()> {
+        // Fetch job to get context for SSE event
+        let (job_type, project_id, project_name) = match db::get_job(&self.inner.db, job_id).await {
+            Ok(job) => {
+                let project_name = if let Some(ref pid) = job.project_id {
+                    db::get_project(&self.inner.db, pid)
+                        .await
+                        .ok()
+                        .map(|p| p.name)
+                } else {
+                    None
+                };
+                (job.job_type, job.project_id, project_name)
+            }
+            Err(_) => ("unknown".to_string(), None, None),
+        };
+
+        self.log_job_with_context(
+            job_id,
+            &job_type,
+            project_id.as_deref(),
+            project_name.as_deref(),
+            level,
+            message,
+        )
+        .await
+    }
+
+    /// Helper to log job messages with full context for SSE.
+    async fn log_job_with_context(
+        &self,
+        job_id: &str,
+        job_type: &str,
+        project_id: Option<&str>,
+        project_name: Option<&str>,
+        level: LogLevel,
+        message: &str,
+    ) -> Result<()> {
+        // Store in database
         db::create_job_log(
             &self.inner.db,
             db::CreateJobLog {
                 job_id: job_id.to_string(),
-                level,
+                level: level.clone(),
                 message: message.to_string(),
                 metadata: None,
             },
         )
         .await?;
+
+        // Emit SSE event for admins
+        self.inner.events.job_log(
+            job_id,
+            job_type,
+            project_id,
+            project_name,
+            level.as_str(),
+            message,
+            None,
+        );
+
         Ok(())
     }
 

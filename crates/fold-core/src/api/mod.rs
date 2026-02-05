@@ -4,12 +4,13 @@
 //! Routes are organized by domain and apply appropriate middleware.
 
 mod auth;
+mod events;
 pub mod groups;
 pub mod mcp;
 mod memories;
 mod projects;
 mod providers;
-mod repositories;
+// mod repositories; // Removed: repository info now lives on projects
 mod search;
 pub mod status;
 pub mod users;
@@ -37,6 +38,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .merge(status::health_routes())
         // Status endpoints (token auth - detailed system info)
         .merge(status_routes(state.clone()))
+        // SSE events endpoint (token auth)
+        .nest("/events", events_routes(state.clone()))
         // Authentication routes (mixed public/protected)
         .nest("/auth", auth::routes(state.clone()))
         // Webhook routes (signature-verified, no auth middleware)
@@ -65,12 +68,9 @@ fn protected_routes(state: AppState) -> Router<AppState> {
         .merge(projects::members_routes())
         // Nested project resources
         .nest("/:project_id/memories", memories::routes(state.clone()))
-        .nest("/:project_id/repositories", repositories::routes())
         .nest("/:project_id/config", projects::config_routes())
         // Search and context endpoints
         .merge(search::routes(state.clone()))
-        // File source provider information (non-project-specific)
-        .nest("/file-sources", repositories::file_source_routes())
         // Apply token authentication to all protected routes
         .layer(axum::middleware::from_fn_with_state(state, require_token))
 }
@@ -110,5 +110,12 @@ fn groups_routes(state: AppState) -> Router<AppState> {
 fn status_routes(state: AppState) -> Router<AppState> {
     Router::<AppState>::new()
         .merge(status::protected_routes())
+        .layer(axum::middleware::from_fn_with_state(state, require_token))
+}
+
+/// SSE events routes (token auth required).
+fn events_routes(state: AppState) -> Router<AppState> {
+    Router::<AppState>::new()
+        .merge(events::routes())
         .layer(axum::middleware::from_fn_with_state(state, require_token))
 }
