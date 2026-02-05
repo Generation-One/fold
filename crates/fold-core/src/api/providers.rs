@@ -372,6 +372,11 @@ async fn create_llm(
 
     info!(provider_id = %provider.id, name = %provider.name, "Created LLM provider");
 
+    // Refresh in-memory provider cache so next operation uses new provider
+    if let Err(e) = state.llm.refresh_providers().await {
+        warn!(error = %e, "Failed to refresh LLM provider cache");
+    }
+
     // Capture borrowed values before moving
     let enabled = provider.is_enabled();
     let has_api_key = provider.api_key.is_some();
@@ -460,6 +465,11 @@ async fn update_llm(
 
     info!(provider_id = %provider.id, "Updated LLM provider");
 
+    // Refresh in-memory provider cache so next operation uses updated config
+    if let Err(e) = state.llm.refresh_providers().await {
+        warn!(error = %e, "Failed to refresh LLM provider cache");
+    }
+
     // Capture borrowed values before moving
     let enabled = provider.is_enabled();
     let has_api_key = provider.api_key.is_some();
@@ -496,6 +506,12 @@ async fn delete_llm(
 ) -> Result<Json<JsonValue>> {
     delete_llm_provider(&state.db, &id).await?;
     info!(provider_id = %id, "Deleted LLM provider");
+
+    // Refresh in-memory provider cache so deleted provider is no longer used
+    if let Err(e) = state.llm.refresh_providers().await {
+        warn!(error = %e, "Failed to refresh LLM provider cache");
+    }
+
     Ok(Json(json!({ "deleted": true })))
 }
 
@@ -930,6 +946,11 @@ async fn create_embedding(
 
     info!(provider_id = %provider.id, name = %provider.name, "Created embedding provider");
 
+    // Refresh in-memory provider cache so next indexing uses new provider
+    if let Err(e) = state.embeddings.refresh_providers().await {
+        warn!(error = %e, "Failed to refresh embedding provider cache");
+    }
+
     // Capture borrowed values before moving
     let enabled = provider.is_enabled();
     let has_api_key = provider.api_key.is_some();
@@ -1023,6 +1044,11 @@ async fn update_embedding(
 
     info!(provider_id = %provider.id, "Updated embedding provider");
 
+    // Refresh in-memory provider cache so next indexing uses updated config
+    if let Err(e) = state.embeddings.refresh_providers().await {
+        warn!(error = %e, "Failed to refresh embedding provider cache");
+    }
+
     // Capture borrowed values before moving
     let enabled = provider.is_enabled();
     let has_api_key = provider.api_key.is_some();
@@ -1061,6 +1087,12 @@ async fn delete_embedding(
 ) -> Result<Json<JsonValue>> {
     delete_embedding_provider(&state.db, &id).await?;
     info!(provider_id = %id, "Deleted embedding provider");
+
+    // Refresh in-memory provider cache so deleted provider is no longer used
+    if let Err(e) = state.embeddings.refresh_providers().await {
+        warn!(error = %e, "Failed to refresh embedding provider cache");
+    }
+
     Ok(Json(json!({ "deleted": true })))
 }
 
@@ -1530,6 +1562,11 @@ async fn oauth_callback(
                 },
             )
             .await?;
+
+            // Refresh in-memory provider cache with new OAuth tokens
+            if let Err(e) = state.llm.refresh_providers().await {
+                warn!(error = %e, "Failed to refresh LLM provider cache after OAuth");
+            }
         }
     } else if oauth_state.provider_type == "embedding" {
         if let Some(provider) =
@@ -1546,6 +1583,11 @@ async fn oauth_callback(
                 },
             )
             .await?;
+
+            // Refresh in-memory provider cache with new OAuth tokens
+            if let Err(e) = state.embeddings.refresh_providers().await {
+                warn!(error = %e, "Failed to refresh embedding provider cache after OAuth");
+            }
         }
     }
 
@@ -1630,6 +1672,11 @@ async fn import_claudecode_token(
         "Claude Code provider created/updated with imported token"
     );
 
+    // Refresh in-memory provider cache with new Claude Code credentials
+    if let Err(e) = state.llm.refresh_providers().await {
+        warn!(error = %e, "Failed to refresh LLM provider cache after Claude Code import");
+    }
+
     Ok(Json(build_llm_provider_response(provider)))
 }
 
@@ -1673,6 +1720,11 @@ async fn auto_import_claudecode_token(
         provider_id = %provider.id,
         "Claude Code provider auto-imported successfully"
     );
+
+    // Refresh in-memory provider cache with new Claude Code credentials
+    if let Err(e) = state.llm.refresh_providers().await {
+        warn!(error = %e, "Failed to refresh LLM provider cache after Claude Code auto-import");
+    }
 
     Ok(Json(build_llm_provider_response(provider)))
 }
