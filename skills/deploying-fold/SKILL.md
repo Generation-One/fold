@@ -39,7 +39,74 @@ The Dockerfile has been simplified to handle the workspace correctly (PR #3). If
 
 ## Quick Start
 
-### 1. Clone and Configure Backend
+### Option A: Pull from Docker Hub (Recommended)
+
+```bash
+# Pull the official image
+docker pull generationone/fold:latest
+
+# Or from GitHub Container Registry
+docker pull ghcr.io/generation-one/fold:latest
+```
+
+Create a `docker-compose.yml`:
+```yaml
+services:
+  fold:
+    image: generationone/fold:latest
+    ports:
+      - "8765:8765"
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - QDRANT_URL=http://qdrant:6334
+      - PUBLIC_URL=${PUBLIC_URL:-http://localhost:8765}
+      - SESSION_SECRET=${SESSION_SECRET}
+      - ADMIN_BOOTSTRAP_TOKEN=${ADMIN_BOOTSTRAP_TOKEN}
+    volumes:
+      - fold-data:/data
+    depends_on:
+      qdrant:
+        condition: service_healthy
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  fold-data:
+  qdrant-data:
+```
+
+Create a `.env` file:
+```bash
+# Required: At least one embedding provider
+GOOGLE_API_KEY=your-google-api-key
+
+# Optional but recommended
+PUBLIC_URL=https://your-domain.com
+SESSION_SECRET=$(openssl rand -hex 32)
+ADMIN_BOOTSTRAP_TOKEN=$(openssl rand -hex 32)  # Save this!
+
+# Optional: LLM for AI features
+OPENROUTER_API_KEY=sk-or-v1-xxx
+ANTHROPIC_API_KEY=sk-ant-xxx
+```
+
+Start:
+```bash
+docker compose up -d
+```
+
+### Option B: Build from Source
 
 ```bash
 git clone https://github.com/Generation-One/fold.git
@@ -47,29 +114,94 @@ cd fold
 
 # Create .env from example
 cp .env.example .env
+# Edit .env with your settings
+
+# Build and start
+docker compose up -d --build
 ```
 
-Edit `.env`:
+## Available Docker Tags
+
+| Tag | Description |
+|-----|-------------|
+| `latest` | Latest stable release from main branch |
+| `0.0.1` | Specific version |
+| `0.0` | Latest patch for minor version |
+| `0` | Latest minor for major version |
+| `<sha>` | Specific commit |
+
+## Environment Variables Reference
+
+All configuration is done via environment variables:
+
+### Required (at least one embedding provider)
+| Variable | Description |
+|----------|-------------|
+| `GOOGLE_API_KEY` | Gemini API key for embeddings (recommended) |
+| `OPENAI_API_KEY` | OpenAI API key for embeddings |
+| `OLLAMA_URL` | Ollama base URL for local embeddings |
+
+### Server
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HOST` | `0.0.0.0` | Bind address |
+| `PORT` | `8765` | Listen port |
+| `PUBLIC_URL` | `http://localhost:8765` | Public URL for OAuth callbacks |
+| `TLS_CERT_PATH` | - | Path to TLS certificate |
+| `TLS_KEY_PATH` | - | Path to TLS private key |
+
+### Database
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_PATH` | `/data/fold.db` | SQLite database path |
+| `QDRANT_URL` | `http://localhost:6334` | Qdrant vector DB URL |
+| `QDRANT_COLLECTION_PREFIX` | `fold_` | Collection name prefix |
+
+### Auth
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ADMIN_BOOTSTRAP_TOKEN` | - | Initial admin token for first-time setup |
+| `SESSION_SECRET` | auto-generated | Secret for session cookies |
+| `SESSION_MAX_AGE` | `604800` | Session lifetime in seconds (7 days) |
+
+OAuth providers use pattern `AUTH_PROVIDER_{NAME}_{FIELD}`:
 ```bash
-# Required
-PUBLIC_URL=https://your-domain.com  # External URL
-SESSION_SECRET=$(openssl rand -hex 32)
-ADMIN_BOOTSTRAP_TOKEN=$(openssl rand -hex 32)  # Save this!
-
-# LLM Provider (at least one required for summaries)
-OPENROUTER_API_KEY=sk-or-v1-xxx
-OPENROUTER_MODEL=anthropic/claude-haiku-4.5
-
-# Or use Gemini (free tier)
-GOOGLE_API_KEY=xxx
-GEMINI_MODEL=gemini-1.5-flash
+AUTH_PROVIDER_GITHUB_TYPE=github
+AUTH_PROVIDER_GITHUB_CLIENT_ID=xxx
+AUTH_PROVIDER_GITHUB_CLIENT_SECRET=xxx
 ```
 
-### 2. Start Backend
+### LLM (optional, for AI features)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | - | Claude API key |
+| `ANTHROPIC_MODEL` | `claude-3-5-haiku-20241022` | Model name |
+| `OPENROUTER_API_KEY` | - | OpenRouter API key |
+| `OPENROUTER_MODEL` | `meta-llama/llama-3-8b-instruct:free` | Model name |
+| `OPENAI_API_KEY` | - | OpenAI API key |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Model name |
 
-```bash
-docker compose up -d
-```
+### Embeddings
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GEMINI_EMBEDDING_MODEL` | `text-embedding-004` | Gemini model |
+| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI model |
+| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text:latest` | Ollama model |
+| `EMBEDDING_DIMENSION` | `768` | Vector dimension |
+
+### Storage
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ATTACHMENTS_PATH` | `/data/attachments` | Path for file attachments |
+| `SUMMARIES_PATH` | `/data/summaries` | Path for summaries |
+| `MAX_ATTACHMENT_SIZE` | `10485760` | Max upload size (10MB) |
+| `FOLD_PATH` | `fold` | Base path for memory content |
+
+### Other
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `INDEXING_CONCURRENCY` | `4` | Parallel file indexing limit |
+| `RUST_LOG` | `fold=info,tower_http=info` | Log level |
 
 Verify:
 ```bash
@@ -262,6 +394,13 @@ SQLite is single-writer. Don't run multiple Fold instances against the same DB f
 
 ## Updating
 
+### From Docker Hub
+```bash
+docker compose pull
+docker compose up -d
+```
+
+### From Source
 ```bash
 cd fold
 git pull
