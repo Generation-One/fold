@@ -780,8 +780,8 @@ Type: {language}
 Return JSON:
 - "title": What this file contains or does (max 80 chars)
 - "summary": 1-2 sentences describing the content. State what it says/does.
-- "keywords": Key terms or identifiers from the file (max 10)
-- "tags": Categories (max 5)
+- "keywords": Key terms or identifiers from the file (max 10), empty array if none
+- "tags": Relevant categories (max 5), empty array if none obvious - never use vague tags like "unclear" or "insufficient-information"
 - "created_date": Earliest date found (YYYY-MM-DD) or null
 
 ONLY valid JSON."#,
