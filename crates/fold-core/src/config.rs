@@ -278,51 +278,41 @@ impl Config {
     }
 
     /// Parse LLM providers from environment.
-    /// Supports Gemini, Anthropic, OpenRouter, and OpenAI with automatic fallback ordering.
+    /// Supports Anthropic, OpenRouter, and OpenAI with automatic fallback ordering.
+    /// Gemini LLM can be added manually via API if needed.
     fn parse_llm_providers() -> Vec<LlmProvider> {
         let mut providers = Vec::new();
 
-        // Gemini (priority 1 - free tier)
-        if let Ok(api_key) = env::var("GOOGLE_API_KEY") {
-            providers.push(LlmProvider {
-                name: "gemini".to_string(),
-                base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
-                model: env_or("GEMINI_MODEL", "gemini-1.5-flash"),
-                api_key,
-                priority: 1,
-            });
-        }
-
-        // Anthropic/Claude (priority 2)
+        // Anthropic/Claude (priority 1)
         if let Ok(api_key) = env::var("ANTHROPIC_API_KEY") {
             providers.push(LlmProvider {
                 name: "anthropic".to_string(),
                 base_url: "https://api.anthropic.com/v1".to_string(),
                 model: env_or("ANTHROPIC_MODEL", "claude-3-5-haiku-20241022"),
                 api_key,
-                priority: 2,
+                priority: 1,
             });
         }
 
-        // OpenRouter (priority 3)
+        // OpenRouter (priority 2)
         if let Ok(api_key) = env::var("OPENROUTER_API_KEY") {
             providers.push(LlmProvider {
                 name: "openrouter".to_string(),
                 base_url: "https://openrouter.ai/api/v1".to_string(),
                 model: env_or("OPENROUTER_MODEL", "meta-llama/llama-3-8b-instruct:free"),
                 api_key,
-                priority: 3,
+                priority: 2,
             });
         }
 
-        // OpenAI (priority 4)
+        // OpenAI (priority 3)
         if let Ok(api_key) = env::var("OPENAI_API_KEY") {
             providers.push(LlmProvider {
                 name: "openai".to_string(),
                 base_url: "https://api.openai.com/v1".to_string(),
                 model: env_or("OPENAI_MODEL", "gpt-4o-mini"),
                 api_key,
-                priority: 4,
+                priority: 3,
             });
         }
 
@@ -332,9 +322,21 @@ impl Config {
     }
 
     /// Parse embedding providers from environment.
-    /// Supports OpenAI and Ollama. Gemini embeddings can be added manually via API.
+    /// Supports Gemini, OpenAI, and Ollama with automatic fallback ordering.
     fn parse_embedding_config() -> EmbeddingConfig {
         let mut providers = Vec::new();
+
+        // Gemini embeddings (priority 1 - free tier, good quality)
+        if let Ok(api_key) = env::var("GOOGLE_API_KEY") {
+            providers.push(EmbeddingProvider {
+                name: "gemini".to_string(),
+                base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
+                model: env_or("GEMINI_EMBEDDING_MODEL", "text-embedding-004"),
+                api_key,
+                priority: 1,
+                search_priority: Some(5),
+            });
+        }
 
         // OpenAI embeddings (priority 2)
         if let Ok(api_key) = env::var("OPENAI_API_KEY") {
