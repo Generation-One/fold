@@ -26,13 +26,17 @@ pub use state::AppState;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize tracing
+    // Create event broadcaster early so it can be used by tracing layer
+    let events = std::sync::Arc::new(services::EventBroadcaster::new());
+
+    // Initialize tracing with SSE layer for real-time log streaming
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "fold=debug,tower_http=debug".into()),
         )
         .with(tracing_subscriber::fmt::layer())
+        .with(services::SseTracingLayer::new(events.clone()))
         .init();
 
     // Load configuration
@@ -43,8 +47,8 @@ async fn main() -> Result<()> {
         config.server.port
     );
 
-    // Initialize application state
-    let state = AppState::new().await?;
+    // Initialize application state with the pre-created event broadcaster
+    let state = AppState::new_with_events(events).await?;
     tracing::info!("Application state initialized");
 
     // Initialize startup time for uptime tracking
@@ -60,6 +64,7 @@ async fn main() -> Result<()> {
         state.indexer.clone(),
         state.llm.clone(),
         state.embeddings.clone(),
+        state.events.clone(),
     );
     let _job_worker_handle = job_worker.start().await;
     tracing::info!("Background job worker started");
