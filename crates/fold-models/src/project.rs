@@ -275,9 +275,8 @@ fn default_ignore_patterns() -> Vec<String> {
         "**/*.generated.*".to_string(),
         "**/*.g.cs".to_string(),
         "**/*.designer.cs".to_string(),
-        // Fold metadata directory - excluded to prevent infinite loops
-        // when metadata is synced back to the repository
-        "fold/**".to_string(),
+        // Note: fold/ directory is NOT ignored - files there are indexed as agent memories
+        // Only the internal .fold/ directory is ignored
         ".fold/**".to_string(),
     ]
 }
