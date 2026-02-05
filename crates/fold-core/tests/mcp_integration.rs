@@ -309,7 +309,7 @@ async fn test_tool_definition_structure() {
     let tool_def = json!({
         "name": "project_list",
         "description": "List all projects in the memory system",
-        "input_schema": {
+        "inputSchema": {
             "type": "object",
             "properties": {},
             "required": []
@@ -318,8 +318,8 @@ async fn test_tool_definition_structure() {
 
     assert!(tool_def["name"].is_string());
     assert!(tool_def["description"].is_string());
-    assert!(tool_def["input_schema"].is_object());
-    assert_eq!(tool_def["input_schema"]["type"], "object");
+    assert!(tool_def["inputSchema"].is_object());
+    assert_eq!(tool_def["inputSchema"]["type"], "object");
 }
 
 /// Test project_create tool schema.

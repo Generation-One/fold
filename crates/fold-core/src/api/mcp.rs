@@ -172,6 +172,7 @@ struct ToolsListResponse {
 struct ToolDefinition {
     name: String,
     description: String,
+    #[serde(rename = "inputSchema")]
     input_schema: Value,
 }
 
