@@ -332,21 +332,9 @@ impl Config {
     }
 
     /// Parse embedding providers from environment.
-    /// Supports Gemini (free) and OpenAI with automatic fallback ordering.
+    /// Supports OpenAI and Ollama. Gemini embeddings can be added manually via API.
     fn parse_embedding_config() -> EmbeddingConfig {
         let mut providers = Vec::new();
-
-        // Gemini embeddings (priority 5 for index, 10 for search)
-        if let Ok(api_key) = env::var("GOOGLE_API_KEY") {
-            providers.push(EmbeddingProvider {
-                name: "gemini".to_string(),
-                base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
-                model: env_or("GEMINI_EMBEDDING_MODEL", "text-embedding-004"),
-                api_key,
-                priority: 5,
-                search_priority: Some(10),
-            });
-        }
 
         // OpenAI embeddings (priority 2)
         if let Ok(api_key) = env::var("OPENAI_API_KEY") {
