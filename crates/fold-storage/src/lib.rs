@@ -747,6 +747,7 @@ More content here."#;
         let now = Utc::now();
         let frontmatter = MemoryFrontmatter {
             id: "test123".to_string(),
+            slug: None,
             title: Some("Test".to_string()),
             author: Some("claude".to_string()),
             tags: vec!["tag1".to_string()],

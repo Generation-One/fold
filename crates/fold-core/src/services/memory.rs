@@ -688,12 +688,17 @@ Return JSON:
             None
         };
 
-        // Generate ID: always use UUID
-        // The optional slug is stored separately for reference (e.g., to identify manually created memories)
-        let memory_id = data.id.clone().unwrap_or_else(crate::models::new_id);
-
-        // Store the slug if provided (for agent memories that want to be overwritten later)
-        let memory_slug = data.slug.clone();
+        // Generate ID from slug if provided, otherwise use random UUID
+        // When a slug is provided, the ID is deterministically derived from it via SHA256
+        // This means the same slug always produces the same ID, enabling upsert behaviour
+        let (memory_id, memory_slug) = if let Some(slug) = data.slug.clone() {
+            let id = fold_storage::slug_to_id(&slug);
+            (id, Some(slug))
+        } else if let Some(id) = data.id.clone() {
+            (id, None)
+        } else {
+            (crate::models::new_id(), None)
+        };
 
         let memory = Memory {
             id: memory_id,
