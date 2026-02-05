@@ -426,6 +426,10 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
                         "enum": ["agent", "file", "git"],
                         "description": "Filter by memory source"
                     },
+                    "created_after": { "type": "string", "description": "Filter by created_at >= this date (ISO 8601 format, e.g. '2025-01-01' or '2025-01-01T00:00:00Z')" },
+                    "created_before": { "type": "string", "description": "Filter by created_at <= this date (ISO 8601 format)" },
+                    "updated_after": { "type": "string", "description": "Filter by updated_at >= this date (ISO 8601 format)" },
+                    "updated_before": { "type": "string", "description": "Filter by updated_at <= this date (ISO 8601 format)" },
                     "limit": { "type": "integer", "default": 10, "description": "Max results" },
                     "min_score": { "type": "number", "default": 0.4, "description": "Minimum similarity score (0-1). Default 0.4 filters to relevant matches only." }
                 },
@@ -434,7 +438,7 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
         },
         ToolDefinition {
             name: "memory_list".into(),
-            description: "List memories with optional filters".into(),
+            description: "List memories with optional filters. Supports date filtering and custom sorting.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -445,6 +449,22 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
                         "description": "Filter by tags (AND - memory must have ALL specified tags)"
                     },
                     "author": { "type": "string", "description": "Filter by author" },
+                    "created_after": { "type": "string", "description": "Filter by created_at >= this date (ISO 8601 format, e.g. '2025-01-01' or '2025-01-01T00:00:00Z')" },
+                    "created_before": { "type": "string", "description": "Filter by created_at <= this date (ISO 8601 format)" },
+                    "updated_after": { "type": "string", "description": "Filter by updated_at >= this date (ISO 8601 format)" },
+                    "updated_before": { "type": "string", "description": "Filter by updated_at <= this date (ISO 8601 format)" },
+                    "sort_by": {
+                        "type": "string",
+                        "enum": ["created_at", "updated_at", "title"],
+                        "default": "updated_at",
+                        "description": "Field to sort by"
+                    },
+                    "sort_dir": {
+                        "type": "string",
+                        "enum": ["asc", "desc"],
+                        "default": "desc",
+                        "description": "Sort direction"
+                    },
                     "limit": { "type": "integer", "default": 20 }
                 },
                 "required": ["project"]
@@ -810,6 +830,10 @@ async fn execute_memory_search(state: &AppState, args: Value) -> Result<String> 
         project: String,
         query: String,
         source: Option<String>,
+        created_after: Option<String>,
+        created_before: Option<String>,
+        updated_after: Option<String>,
+        updated_before: Option<String>,
         #[serde(default = "default_limit")]
         limit: usize,
         #[serde(default = "default_min_score")]
@@ -830,12 +854,19 @@ async fn execute_memory_search(state: &AppState, args: Value) -> Result<String> 
     let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
 
     // Search via memory service (pure similarity)
+    // Fetch more results to account for post-filtering
     let results = state
         .memory
-        .search(&project.id, &project.slug, &params.query, params.limit)
+        .search(&project.id, &project.slug, &params.query, params.limit * 3)
         .await?;
 
-    // Filter by source and min_score
+    // Parse date filters
+    let created_after = params.created_after.as_ref();
+    let created_before = params.created_before.as_ref();
+    let updated_after = params.updated_after.as_ref();
+    let updated_before = params.updated_before.as_ref();
+
+    // Filter by source, min_score, and date ranges
     let filtered_results: Vec<_> = results
         .into_iter()
         .filter(|r| {
@@ -853,8 +884,35 @@ async fn execute_memory_search(state: &AppState, args: Value) -> Result<String> 
                 }
             }
             // Check min_score
-            r.score >= params.min_score
+            if r.score < params.min_score {
+                return false;
+            }
+            // Check date filters
+            let created_at = r.memory.created_at.to_rfc3339();
+            let updated_at = r.memory.updated_at.to_rfc3339();
+            if let Some(after) = created_after {
+                if created_at.as_str() < after.as_str() {
+                    return false;
+                }
+            }
+            if let Some(before) = created_before {
+                if created_at.as_str() > before.as_str() {
+                    return false;
+                }
+            }
+            if let Some(after) = updated_after {
+                if updated_at.as_str() < after.as_str() {
+                    return false;
+                }
+            }
+            if let Some(before) = updated_before {
+                if updated_at.as_str() > before.as_str() {
+                    return false;
+                }
+            }
+            true
         })
+        .take(params.limit)
         .collect();
 
     let results_json: Vec<_> = filtered_results
@@ -868,7 +926,8 @@ async fn execute_memory_search(state: &AppState, args: Value) -> Result<String> 
                 "source": r.memory.source,
                 "score": r.score,
                 "file_path": r.memory.file_path,
-                "created_at": r.memory.created_at.to_rfc3339()
+                "created_at": r.memory.created_at.to_rfc3339(),
+                "updated_at": r.memory.updated_at.to_rfc3339()
             })
         })
         .collect();
@@ -888,6 +947,12 @@ async fn execute_memory_list(state: &AppState, args: Value) -> Result<String> {
         #[serde(default)]
         tags: Vec<String>,
         author: Option<String>,
+        created_after: Option<String>,
+        created_before: Option<String>,
+        updated_after: Option<String>,
+        updated_before: Option<String>,
+        sort_by: Option<String>,
+        sort_dir: Option<String>,
         #[serde(default = "default_list_limit")]
         limit: i64,
     }
@@ -901,18 +966,37 @@ async fn execute_memory_list(state: &AppState, args: Value) -> Result<String> {
     // Get project
     let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
 
-    // List memories via service (with content resolved from fold/)
-    let memories = state
-        .memory
-        .list_with_content(
-            &project.id,
-            &project.slug,
-            None, // No memory type filter
-            params.author.as_deref(),
-            params.limit * 2, // Fetch more to account for filtering
-            0,
-        )
-        .await?;
+    // Build filter with date parameters
+    let filter = db::MemoryFilter {
+        project_id: Some(project.id.clone()),
+        author: params.author.clone(),
+        created_after: params.created_after,
+        created_before: params.created_before,
+        updated_after: params.updated_after,
+        updated_before: params.updated_before,
+        sort_by: params.sort_by.as_deref().and_then(db::MemorySortField::from_str),
+        sort_dir: params.sort_dir.as_deref().and_then(db::SortDirection::from_str),
+        limit: Some(params.limit * 2), // Fetch more to account for tag filtering
+        offset: Some(0),
+        ..Default::default()
+    };
+
+    // List memories via db
+    let mut memories = db::list_memories(&state.db, filter).await?;
+
+    // Resolve content from fold/ storage
+    let project_root = std::path::PathBuf::from(&project.root_path);
+    for memory in &mut memories {
+        if memory.content.is_none() || memory.content.as_ref().is_some_and(|c| c.is_empty()) {
+            if let Ok((_, content)) = state
+                .fold_storage
+                .read_memory(&project_root, &memory.id)
+                .await
+            {
+                memory.content = Some(content);
+            }
+        }
+    }
 
     // Filter by tags (AND - must have ALL specified tags)
     let filtered_memories: Vec<_> = memories
@@ -942,7 +1026,8 @@ async fn execute_memory_list(state: &AppState, args: Value) -> Result<String> {
                 "source": m.source,
                 "tags": m.tags_vec(),
                 "file_path": m.file_path,
-                "created_at": m.created_at.to_rfc3339()
+                "created_at": m.created_at,
+                "updated_at": m.updated_at
             })
         })
         .collect();
