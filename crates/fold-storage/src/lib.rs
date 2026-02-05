@@ -265,7 +265,7 @@ fn default_provider() -> String {
 }
 
 fn default_model() -> String {
-    "text-embedding-004".to_string()
+    "text-embedding-001".to_string()
 }
 
 fn default_dimension() -> usize {

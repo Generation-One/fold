@@ -100,7 +100,8 @@ fn default_endpoint(name: &str) -> String {
 /// Get default model for a provider
 fn default_model(name: &str) -> String {
     match name {
-        "gemini" => "text-embedding-004".to_string(),
+        // text-embedding-001 was discontinued Nov 2025
+        "gemini" => "text-embedding-001".to_string(),
         "openai" => "text-embedding-3-small".to_string(),
         _ => "text-embedding-3-small".to_string(),
     }
@@ -108,7 +109,10 @@ fn default_model(name: &str) -> String {
 
 /// Get default dimension for a model
 fn default_dimension(model: &str) -> usize {
-    if model.contains("text-embedding-004") || model.contains("embedding-001") {
+    if model.contains("gemini-embedding-001") {
+        // gemini-embedding-001 default is 3072, but can be scaled down via MRL
+        3072
+    } else if model.contains("text-embedding-001") || model.contains("embedding-001") {
         768
     } else if model.contains("text-embedding-3-small") {
         1536
@@ -899,7 +903,7 @@ mod tests {
 
     #[test]
     fn test_default_dimensions() {
-        assert_eq!(default_dimension("text-embedding-004"), 768);
+        assert_eq!(default_dimension("text-embedding-001"), 768);
         assert_eq!(default_dimension("text-embedding-3-small"), 1536);
         assert_eq!(default_dimension("text-embedding-3-large"), 3072);
         assert_eq!(default_dimension("unknown-model"), 384);

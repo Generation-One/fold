@@ -65,10 +65,10 @@ mod gemini {
         let client = create_client();
 
         let response = client
-            .post("https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent")
+            .post("https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent")
             .query(&[("key", &api_key)])
             .json(&json!({
-                "model": "models/text-embedding-004",
+                "model": "models/gemini-embedding-001",
                 "content": {
                     "parts": [{
                         "text": "Hello, this is a test embedding"
@@ -491,7 +491,7 @@ mod service_integration {
                 auth_type: "api_key".to_string(),
                 api_key: Some(api_key),
                 config: json!({
-                    "model": "text-embedding-004",
+                    "model": "text-embedding-001",
                     "endpoint": "https://generativelanguage.googleapis.com/v1beta",
                     "dimension": 768
                 }),
