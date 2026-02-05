@@ -269,6 +269,7 @@ async fn handle_mcp_sse(
 async fn handle_mcp_post(
     headers: HeaderMap,
     State(state): State<AppState>,
+    axum::extract::Extension(auth): axum::extract::Extension<crate::middleware::AuthContext>,
     Json(request): Json<JsonRpcRequest>,
 ) -> Response {
     // Validate JSON-RPC version
@@ -333,8 +334,8 @@ async fn handle_mcp_post(
 
             // Route to existing handlers
             let response = match request.method.as_str() {
-                "tools/list" => handle_tools_list(request.id.clone()),
-                "tools/call" => handle_tools_call(&state, request.id.clone(), request.params).await,
+                "tools/list" => handle_tools_list(&state, &auth, request.id.clone()).await,
+                "tools/call" => handle_tools_call(&state, &auth, request.id.clone(), request.params).await,
                 "resources/list" => handle_resources_list(request.id.clone()),
                 "resources/read" => handle_resources_read(request.id.clone(), request.params),
                 _ => JsonRpcResponse::error(
@@ -369,8 +370,20 @@ fn handle_initialize(id: Option<Value>) -> JsonRpcResponse {
 }
 
 /// Handle tools/list method.
-fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
-    let tools = vec![
+///
+/// All tools are listed for authenticated users except:
+/// - Admin only: github_project_create
+///
+/// Permission checks on specific projects happen at execution time.
+async fn handle_tools_list(
+    _state: &AppState,
+    auth: &crate::middleware::AuthContext,
+    id: Option<Value>,
+) -> JsonRpcResponse {
+    let is_admin = auth.is_admin;
+
+    let mut tools = vec![
+        // Available to all authenticated users
         ToolDefinition {
             name: "project_list".into(),
             description: "List all projects in the memory system".into(),
@@ -378,39 +391,6 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
                 "type": "object",
                 "properties": {},
                 "required": []
-            }),
-        },
-        ToolDefinition {
-            name: "github_project_create".into(),
-            description: "Create a new project from a GitHub repository".into(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "repo_url": { "type": "string", "description": "GitHub repository URL (https://github.com/owner/repo)" },
-                    "name": { "type": "string", "description": "Project name" },
-                    "description": { "type": "string", "description": "Project description" }
-                },
-                "required": ["repo_url", "name"]
-            }),
-        },
-        ToolDefinition {
-            name: "memory_add".into(),
-            description: "Add a memory to a project. Agent memories are stored in the fold/ directory and indexed for semantic search. Use this to persist knowledge, decisions, context, or any information that should be recalled later. If a slug is provided, the memory ID is derived from it - using the same slug again will update the existing memory instead of creating a new one.".into(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "project": { "type": "string", "description": "Project ID or slug" },
-                    "content": { "type": "string", "description": "Memory content - the full text to remember" },
-                    "title": { "type": "string", "description": "Short descriptive title for the memory" },
-                    "author": { "type": "string", "description": "Who created this memory (e.g. 'claude', 'user')" },
-                    "slug": { "type": "string", "description": "Optional unique slug. If provided, the memory ID is derived from the slug deterministically, enabling upsert behaviour - same slug always refers to the same memory." },
-                    "tags": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Optional tags for categorisation"
-                    }
-                },
-                "required": ["project", "content"]
             }),
         },
         ToolDefinition {
@@ -484,6 +464,26 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
             }),
         },
         ToolDefinition {
+            name: "memory_add".into(),
+            description: "Add a memory to a project. Agent memories are stored in the fold/ directory and indexed for semantic search. Use this to persist knowledge, decisions, context, or any information that should be recalled later. If a slug is provided, the memory ID is derived from it - using the same slug again will update the existing memory instead of creating a new one.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string", "description": "Project ID or slug" },
+                    "content": { "type": "string", "description": "Memory content - the full text to remember" },
+                    "title": { "type": "string", "description": "Short descriptive title for the memory" },
+                    "author": { "type": "string", "description": "Who created this memory (e.g. 'claude', 'user')" },
+                    "slug": { "type": "string", "description": "Optional unique slug. If provided, the memory ID is derived from the slug deterministically, enabling upsert behaviour - same slug always refers to the same memory." },
+                    "tags": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional tags for categorisation"
+                    }
+                },
+                "required": ["project", "content"]
+            }),
+        },
+        ToolDefinition {
             name: "memory_update".into(),
             description: "Update an existing memory. Only memories with source 'agent' (stored in fold/) can be updated via MCP. The memory_id is required to identify which memory to update.".into(),
             input_schema: serde_json::json!({
@@ -527,6 +527,23 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
         },
     ];
 
+    // Admin-only tools
+    if is_admin {
+        tools.push(ToolDefinition {
+            name: "github_project_create".into(),
+            description: "Create a new project from a GitHub repository".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "repo_url": { "type": "string", "description": "GitHub repository URL (https://github.com/owner/repo)" },
+                    "name": { "type": "string", "description": "Project name" },
+                    "description": { "type": "string", "description": "Project description" }
+                },
+                "required": ["repo_url", "name"]
+            }),
+        });
+    }
+
     JsonRpcResponse::success(
         id,
         serde_json::to_value(ToolsListResponse { tools }).unwrap(),
@@ -534,7 +551,18 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
 }
 
 /// Handle tools/call method.
-async fn handle_tools_call(state: &AppState, id: Option<Value>, params: Value) -> JsonRpcResponse {
+///
+/// Permission checks:
+/// - github_project_create: Admin only
+/// - memory_add, memory_update, memory_delete: Requires project membership (member role)
+/// - project_stats: Requires project access (viewer or member)
+/// - Other tools: Available to all authenticated users
+async fn handle_tools_call(
+    state: &AppState,
+    auth: &crate::middleware::AuthContext,
+    id: Option<Value>,
+    params: Value,
+) -> JsonRpcResponse {
     let call_params: ToolCallParams = match serde_json::from_value(params) {
         Ok(p) => p,
         Err(e) => {
@@ -546,6 +574,67 @@ async fn handle_tools_call(state: &AppState, id: Option<Value>, params: Value) -
             );
         }
     };
+
+    // Admin-only tools
+    if call_params.name == "github_project_create" && !auth.is_admin {
+        return JsonRpcResponse::error(
+            id,
+            INVALID_PARAMS,
+            "Permission denied: admin access required".into(),
+            None,
+        );
+    }
+
+    // For project-scoped tools that require write access, check membership
+    let write_tools = ["memory_add", "memory_update", "memory_delete"];
+    let read_tools = ["project_stats"];
+
+    if write_tools.contains(&call_params.name.as_str()) || read_tools.contains(&call_params.name.as_str()) {
+        // Extract project from arguments
+        if let Some(project_ref) = call_params.arguments.get("project").and_then(|v| v.as_str()) {
+            // Get project
+            let project = match db::get_project_by_id_or_slug(&state.db, project_ref).await {
+                Ok(p) => p,
+                Err(_) => {
+                    return JsonRpcResponse::error(
+                        id,
+                        INVALID_PARAMS,
+                        format!("Project not found: {}", project_ref),
+                        None,
+                    );
+                }
+            };
+
+            // Admin has access to everything
+            if !auth.is_admin {
+                // Check project membership
+                let membership = db::get_project_member(&state.db, &project.id, &auth.user_id).await;
+
+                match membership {
+                    Ok(Some(member)) => {
+                        // For write tools, require member role (not just viewer)
+                        if write_tools.contains(&call_params.name.as_str()) && member.role != "member" {
+                            return JsonRpcResponse::error(
+                                id,
+                                INVALID_PARAMS,
+                                "Permission denied: write access required".into(),
+                                None,
+                            );
+                        }
+                        // For read tools, viewer or member is fine
+                    }
+                    _ => {
+                        return JsonRpcResponse::error(
+                            id,
+                            INVALID_PARAMS,
+                            "Permission denied: project access required".into(),
+                            None,
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     let result = match call_params.name.as_str() {
         "project_list" => execute_project_list(state).await,

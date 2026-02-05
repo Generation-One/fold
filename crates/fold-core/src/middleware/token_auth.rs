@@ -68,6 +68,8 @@ pub struct AuthContext {
     pub token_id: String,
     /// User ID that owns this token
     pub user_id: String,
+    /// Whether the user has admin role
+    pub is_admin: bool,
 }
 
 /// Database row for API tokens.
@@ -249,10 +251,13 @@ async fn validate_token(state: &AppState, token: &str) -> Result<AuthContext, Er
         }
     }
 
-    // Parse project_ids
+    // Look up user to get role
+    let user = crate::db::get_user(&state.db, &token_row.user_id).await?;
+
     Ok(AuthContext {
         token_id: token_row.id,
         user_id: token_row.user_id,
+        is_admin: user.is_admin(),
     })
 }
 

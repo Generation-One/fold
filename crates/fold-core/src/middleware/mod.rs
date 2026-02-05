@@ -253,9 +253,13 @@ async fn validate_token_internal(state: &AppState, token: &str) -> Result<AuthCo
         }
     }
 
+    // Look up user to get role
+    let user = crate::db::get_user(&state.db, &token_row.user_id).await?;
+
     Ok(AuthContext {
         token_id: token_row.id,
         user_id: token_row.user_id,
+        is_admin: user.is_admin(),
     })
 }
 
