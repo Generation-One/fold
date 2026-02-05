@@ -44,7 +44,7 @@ ADMIN_BOOTSTRAP_TOKEN=$(openssl rand -hex 32)  # Save this!
 
 # LLM Provider (at least one required for summaries)
 OPENROUTER_API_KEY=sk-or-v1-xxx
-OPENROUTER_MODEL=anthropic/claude-3-5-sonnet
+OPENROUTER_MODEL=anthropic/claude-haiku-4.5
 
 # Or use Gemini (free tier)
 GOOGLE_API_KEY=xxx
