@@ -78,7 +78,7 @@ impl AppState {
         let llm = Arc::new(LlmService::new(db.clone(), &config.llm).await?);
         let github = Arc::new(GitHubService::new());
         let gitlab = Arc::new(GitLabService::new());
-        let git_local = Arc::new(GitLocalService::new());
+        let git_local = Arc::new(GitLocalService::with_base_dir(&config.storage.repos_path));
         let providers = Arc::new(ProviderRegistry::with_defaults());
 
         // Initialize filesystem storage services
@@ -191,7 +191,7 @@ impl AppState {
         let llm = Arc::new(LlmService::new(db.clone(), &config.llm).await?);
         let github = Arc::new(GitHubService::new());
         let gitlab = Arc::new(GitLabService::new());
-        let git_local = Arc::new(GitLocalService::new());
+        let git_local = Arc::new(GitLocalService::with_base_dir(&config.storage.repos_path));
         let providers = Arc::new(ProviderRegistry::with_defaults());
 
         // Initialize filesystem storage services

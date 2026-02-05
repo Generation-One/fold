@@ -71,7 +71,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 // ============================================================================
 
 /// Default base directory for cloned repositories.
-const DEFAULT_REPOS_DIR: &str = "data/repos";
+const DEFAULT_REPOS_DIR: &str = "/data/repos";
 
 /// Service for local git operations.
 ///
@@ -323,7 +323,7 @@ mod tests {
     #[test]
     fn test_base_dir() {
         let service = GitLocalService::new();
-        assert_eq!(service.base_dir(), Path::new(DEFAULT_REPOS_DIR));
+        assert_eq!(service.base_dir(), Path::new("/data/repos"));
 
         let custom = GitLocalService::with_base_dir("/tmp/repos");
         assert_eq!(custom.base_dir(), Path::new("/tmp/repos"));
@@ -332,7 +332,7 @@ mod tests {
     #[test]
     fn test_default() {
         let service = GitLocalService::default();
-        assert_eq!(service.base_dir(), Path::new(DEFAULT_REPOS_DIR));
+        assert_eq!(service.base_dir(), Path::new("/data/repos"));
     }
 
     #[test]

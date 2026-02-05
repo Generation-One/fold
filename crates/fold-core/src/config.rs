@@ -140,6 +140,8 @@ pub struct StorageConfig {
     pub max_attachment_size: usize,
     /// Base path for memory content storage (default: "fold")
     pub fold_path: String,
+    /// Base path for cloned repositories (default: "/data/repos")
+    pub repos_path: String,
 }
 
 #[derive(Debug, Clone)]
@@ -188,6 +190,7 @@ impl Config {
                     .parse()
                     .unwrap_or(10 * 1024 * 1024), // 10MB
                 fold_path: env_or("FOLD_PATH", "fold"),
+                repos_path: env_or("REPOS_PATH", "/data/repos"),
             },
             indexing: IndexingConfig {
                 concurrency_limit: env_or("INDEXING_CONCURRENCY", "4").parse().unwrap_or(4),
