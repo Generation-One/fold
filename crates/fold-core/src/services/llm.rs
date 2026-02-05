@@ -759,7 +759,8 @@ impl LlmService {
         None
     }
 
-    /// Summarize source code and extract detailed metadata.
+    /// Summarize a file and extract detailed metadata.
+    /// Works with any file type: source code, documentation, configuration, data, etc.
     pub async fn summarize_code(
         &self,
         content: &str,
@@ -767,42 +768,30 @@ impl LlmService {
         language: &str,
     ) -> Result<CodeSummary> {
         let prompt = format!(
-            r#"Perform a comprehensive analysis of this source code file.
+            r#"Analyse this file. Be brief but precise - pack maximum information into minimum words. No fluff.
 
 File: {path}
-Language: {language}
-Lines of code: {lines}
+Type: {language}
+Lines: {lines}
 
 ```
 {content}
 ```
 
-Generate a detailed JSON object with:
-- "title": Clear, concise description of this file's primary purpose (max 100 chars)
-- "summary": Comprehensive 2-4 sentence description covering:
-  * What this file does
-  * Its role in the broader system
-  * Key responsibilities and functionality
-  * Notable patterns or architectural approach used
-- "keywords": Array of important function names, class names, constants, and key variable names (max 15)
-- "tags": Array of descriptive category tags like:
-  * Functional role: "api", "service", "model", "controller", "utility", "middleware", "test"
-  * Tech patterns: "async", "database", "http", "validation", "auth", "caching"
-  * Domain: "user-management", "payments", "analytics", etc.
-  (max 6 tags)
-- "exports": Complete array of all exported/public functions, classes, types, or constants with their names
-- "dependencies": Array of imported modules/packages with package names
-- "architecture_notes": Brief note about architectural patterns used (e.g., "Uses repository pattern", "Implements Observer pattern", "RESTful API endpoint")
-- "key_functions": Array of the 3-5 most important function/method names in this file
-- "created_date": If any dates are found in comments, docstrings, headers, or @date/@since/@created annotations, extract the EARLIEST date in ISO format (YYYY-MM-DD). Look for patterns like "Created: 2024-01-15", "@date 2024-01-15", "Copyright 2023", "Since: 2024", etc. Return null if no dates found.
+Return JSON:
+- "title": What this file does (max 80 chars, be specific)
+- "summary": 1-2 dense sentences. Include specific details that matter (names, values, patterns). Omit obvious/generic statements. Adapt to file type - code: what it does and how; docs: key points; config: what it controls; data: structure and contents.
+- "keywords": Important identifiers from the file (max 12). Function/class names, key terms, settings, fields.
+- "tags": Category tags (max 5). File type + role + domain.
+- "exports": What this defines (functions, sections, settings, columns)
+- "dependencies": What this requires (imports, external refs)
+- "architecture_notes": One line on structure/patterns if notable, else empty
+- "key_functions": Main elements (max 5)
+- "created_date": Earliest date found (YYYY-MM-DD) or null
 
-Respond with ONLY a valid JSON object, no markdown or explanation."#,
+ONLY valid JSON, no markdown."#,
             path = path,
-            language = if language.is_empty() {
-                "unknown"
-            } else {
-                language
-            },
+            language = if language.is_empty() { "unknown" } else { language },
             lines = content.lines().count(),
             content = &content[..content.len().min(4000)]
         );
