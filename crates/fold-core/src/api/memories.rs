@@ -402,11 +402,7 @@ async fn list_memories(
     let mut memories = db::list_memories(&state.db, filter).await?;
 
     // Resolve content from external storage (fold/)
-    let project_root = project
-        .root_path
-        .as_ref()
-        .map(|p| std::path::PathBuf::from(p))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let project_root = std::path::PathBuf::from(&project.root_path);
 
     for memory in &mut memories {
         if memory.content.is_none() || memory.content.as_ref().is_some_and(|c| c.is_empty()) {
@@ -478,7 +474,7 @@ async fn create_memory(
         slug: db_project.slug.clone(),
         name: db_project.name.clone(),
         description: db_project.description.clone(),
-        root_path: db_project.root_path.clone(),
+        root_path: Some(db_project.root_path.clone()),
         index_patterns: None,
         ignore_patterns: None,
         team_members: None,

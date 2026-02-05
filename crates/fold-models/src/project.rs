@@ -324,9 +324,7 @@ pub struct Project {
     pub name: String,
     pub description: Option<String>,
 
-    /// Root path for project files (derived from repository local_path, not stored)
-    #[cfg_attr(feature = "sqlx", sqlx(default))]
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Root path for project files (required - where fold/ lives)
     pub root_path: Option<String>,
 
     /// JSON array of glob patterns

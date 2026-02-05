@@ -336,9 +336,9 @@ async fn handle_gitlab_webhook(
 // Verification Functions
 // ============================================================================
 
-/// Get GitHub webhook secret for a repository.
-async fn get_github_webhook_secret(state: &AppState, repo_id: Uuid) -> Result<String> {
-    let secret = db::get_webhook_secret(&state.db, &repo_id.to_string()).await?;
+/// Get GitHub webhook secret for a project.
+async fn get_github_webhook_secret(state: &AppState, project_id: Uuid) -> Result<String> {
+    let secret = db::get_webhook_secret(&state.db, &project_id.to_string()).await?;
     Ok(secret.unwrap_or_default())
 }
 
@@ -361,10 +361,10 @@ fn verify_github_signature(body: &[u8], secret: &str, signature: &str) -> Result
     Ok(())
 }
 
-/// Get GitLab webhook token for a repository.
-async fn get_gitlab_webhook_token(state: &AppState, repo_id: Uuid) -> Result<String> {
+/// Get GitLab webhook token for a project.
+async fn get_gitlab_webhook_token(state: &AppState, project_id: Uuid) -> Result<String> {
     // GitLab uses the same secret field as GitHub
-    let secret = db::get_webhook_secret(&state.db, &repo_id.to_string()).await?;
+    let secret = db::get_webhook_secret(&state.db, &project_id.to_string()).await?;
     Ok(secret.unwrap_or_default())
 }
 
@@ -375,29 +375,30 @@ async fn get_gitlab_webhook_token(state: &AppState, repo_id: Uuid) -> Result<Str
 /// Process GitHub push event.
 async fn process_github_push(
     state: &AppState,
-    repo_id: Uuid,
+    project_id: Uuid,
     payload: &GitHubWebhookPayload,
 ) -> Result<Option<Uuid>> {
     let git_ref = payload.git_ref.as_deref().unwrap_or("");
     let commits = payload.commits.as_ref().map(|c| c.len()).unwrap_or(0);
 
     tracing::info!(
-        repo_id = %repo_id,
+        project_id = %project_id,
         git_ref = %git_ref,
         commits = commits,
         "Processing GitHub push"
     );
 
-    // Get repository from database
-    let repo_id_str = repo_id.to_string();
-    let repo = db::get_repository(&state.db, &repo_id_str).await?;
+    // Get project from database (project IS the repository now)
+    let project_id_str = project_id.to_string();
+    let project = db::get_project(&state.db, &project_id_str).await?;
 
     // Only process pushes to the tracked branch
     let branch = git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref);
-    if branch != repo.branch {
+    let tracked_branch = project.remote_branch.as_deref().unwrap_or("main");
+    if branch != tracked_branch {
         tracing::debug!(
             branch = %branch,
-            tracked = %repo.branch,
+            tracked = %tracked_branch,
             "Ignoring push to non-tracked branch"
         );
         return Ok(None);
@@ -421,8 +422,7 @@ async fn process_github_push(
     let job = db::create_job(
         &state.db,
         db::CreateJob::new(job_id.clone(), db::JobType::IndexRepo)
-            .with_project(repo.project_id.clone())
-            .with_repository(repo_id_str.clone())
+            .with_project(project.id.clone())
             .with_total_items(changed_files.len() as i32),
     )
     .await?;
@@ -441,7 +441,7 @@ async fn process_github_push(
 /// Process GitHub pull request event.
 async fn process_github_pull_request(
     state: &AppState,
-    repo_id: Uuid,
+    project_id: Uuid,
     payload: &GitHubWebhookPayload,
 ) -> Result<Option<Uuid>> {
     let action = payload.action.as_deref().unwrap_or("");
@@ -449,14 +449,14 @@ async fn process_github_pull_request(
 
     if let Some(pr) = pr {
         tracing::info!(
-            repo_id = %repo_id,
+            project_id = %project_id,
             action = %action,
             pr_number = pr.number,
             title = %pr.title,
             "Processing GitHub pull request"
         );
 
-        let repo_id_str = repo_id.to_string();
+        let project_id_str = project_id.to_string();
 
         // Determine PR state
         let pr_state = if pr.merged.unwrap_or(false) {
@@ -473,7 +473,7 @@ async fn process_github_pull_request(
             &state.db,
             db::CreateGitPullRequest {
                 id: crate::models::new_id(),
-                repository_id: repo_id_str.clone(),
+                project_id: project_id_str.clone(),
                 number: pr.number as i32,
                 title: pr.title.clone(),
                 description: None, // GitHub webhook doesn't include body in simplified payload
@@ -503,7 +503,7 @@ async fn process_github_pull_request(
             "opened" | "synchronize" => {
                 // Hybrid diff indexing: fetch files, rank by impact, analyze top 4
                 if let Err(e) =
-                    process_pr_diff_hybrid(state, &repo_id_str, pr.number, &pr.title).await
+                    process_pr_diff_hybrid(state, &project_id_str, pr.number, &pr.title).await
                 {
                     tracing::warn!(
                         pr_number = pr.number,
@@ -531,17 +531,26 @@ async fn process_github_pull_request(
 /// the most important changes.
 async fn process_pr_diff_hybrid(
     state: &AppState,
-    repo_id: &str,
+    project_id: &str,
     pr_number: u32,
     pr_title: &str,
 ) -> Result<()> {
-    // Get repository details
-    let repo = db::get_repository(&state.db, repo_id).await?;
+    // Get project details (project IS the repository now)
+    let project = db::get_project(&state.db, project_id).await?;
+
+    // Get remote repo info
+    let owner = project.remote_owner.as_deref().ok_or_else(|| {
+        Error::Internal("Project has no remote_owner configured".into())
+    })?;
+    let repo = project.remote_repo.as_deref().ok_or_else(|| {
+        Error::Internal("Project has no remote_repo configured".into())
+    })?;
+    let access_token = project.access_token.as_deref().unwrap_or("");
 
     // Fetch PR files from GitHub
     let files = state
         .github
-        .get_pull_request_files(&repo.owner, &repo.repo, pr_number, &repo.access_token)
+        .get_pull_request_files(owner, repo, pr_number, access_token)
         .await?;
 
     if files.is_empty() {
@@ -624,10 +633,10 @@ async fn process_pr_diff_hybrid(
 
         // Update PR record with analysis (stored in description field)
         sqlx::query(
-            "UPDATE git_pull_requests SET description = ? WHERE repository_id = ? AND number = ?",
+            "UPDATE git_pull_requests SET description = ? WHERE project_id = ? AND number = ?",
         )
         .bind(&analysis_text)
-        .bind(repo_id)
+        .bind(project_id)
         .bind(pr_number as i32)
         .execute(&state.db)
         .await?;
@@ -639,29 +648,30 @@ async fn process_pr_diff_hybrid(
 /// Process GitLab push event.
 async fn process_gitlab_push(
     state: &AppState,
-    repo_id: Uuid,
+    project_id: Uuid,
     payload: &GitLabWebhookPayload,
 ) -> Result<Option<Uuid>> {
     let git_ref = payload.git_ref.as_deref().unwrap_or("");
     let commits = payload.commits.as_ref().map(|c| c.len()).unwrap_or(0);
 
     tracing::info!(
-        repo_id = %repo_id,
+        project_id = %project_id,
         git_ref = %git_ref,
         commits = commits,
         "Processing GitLab push"
     );
 
-    // Get repository from database
-    let repo_id_str = repo_id.to_string();
-    let repo = db::get_repository(&state.db, &repo_id_str).await?;
+    // Get project from database (project IS the repository now)
+    let project_id_str = project_id.to_string();
+    let project = db::get_project(&state.db, &project_id_str).await?;
 
     // Only process pushes to the tracked branch
     let branch = git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref);
-    if branch != repo.branch {
+    let tracked_branch = project.remote_branch.as_deref().unwrap_or("main");
+    if branch != tracked_branch {
         tracing::debug!(
             branch = %branch,
-            tracked = %repo.branch,
+            tracked = %tracked_branch,
             "Ignoring push to non-tracked branch"
         );
         return Ok(None);
@@ -685,8 +695,7 @@ async fn process_gitlab_push(
     let job = db::create_job(
         &state.db,
         db::CreateJob::new(job_id.clone(), db::JobType::IndexRepo)
-            .with_project(repo.project_id.clone())
-            .with_repository(repo_id_str.clone())
+            .with_project(project.id.clone())
             .with_total_items(changed_files.len() as i32),
     )
     .await?;
@@ -699,7 +708,7 @@ async fn process_gitlab_push(
 /// Process GitLab merge request event.
 async fn process_gitlab_merge_request(
     state: &AppState,
-    repo_id: Uuid,
+    project_id: Uuid,
     payload: &GitLabWebhookPayload,
 ) -> Result<Option<Uuid>> {
     let mr = payload.object_attributes.as_ref();
@@ -708,14 +717,14 @@ async fn process_gitlab_merge_request(
         let action = mr.action.as_deref().unwrap_or("");
 
         tracing::info!(
-            repo_id = %repo_id,
+            project_id = %project_id,
             action = %action,
             mr_iid = mr.iid,
             title = %mr.title,
             "Processing GitLab merge request"
         );
 
-        let repo_id_str = repo_id.to_string();
+        let project_id_str = project_id.to_string();
 
         // Determine MR state
         let mr_state = match mr.state.as_str() {
@@ -732,7 +741,7 @@ async fn process_gitlab_merge_request(
             &state.db,
             db::CreateGitPullRequest {
                 id: crate::models::new_id(),
-                repository_id: repo_id_str.clone(),
+                project_id: project_id_str.clone(),
                 number: mr.iid as i32,
                 title: mr.title.clone(),
                 description: None,

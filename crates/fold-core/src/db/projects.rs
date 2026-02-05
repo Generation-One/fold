@@ -68,6 +68,7 @@ impl GitProvider {
 }
 
 /// Project record from the database.
+/// A project IS a repository - they are merged into a single entity.
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct Project {
     pub id: String,
@@ -75,10 +76,25 @@ pub struct Project {
     pub name: String,
     pub description: Option<String>,
 
-    /// Root path for project files (derived from repository local_path, not stored in DB)
-    #[sqlx(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub root_path: Option<String>,
+    // Repository info (required)
+    /// Provider type: 'github' | 'gitlab' | 'local'
+    pub provider: String,
+    /// Local path where fold/ directory lives
+    pub root_path: String,
+
+    // Remote repo info (for github/gitlab providers)
+    pub remote_owner: Option<String>,
+    pub remote_repo: Option<String>,
+    pub remote_branch: Option<String>,
+    pub access_token: Option<String>,
+    pub webhook_id: Option<String>,
+    pub webhook_secret: Option<String>,
+
+    // Sync state
+    pub last_sync: Option<String>,
+    pub last_commit_sha: Option<String>,
+    pub last_indexed_at: Option<String>,
+    pub sync_cursor: Option<String>,
 
     // Metadata repo sync config
     pub metadata_repo_enabled: i32,
@@ -103,6 +119,38 @@ pub struct Project {
 }
 
 impl Project {
+    /// Get the project's provider type.
+    pub fn provider_type(&self) -> Option<GitProvider> {
+        GitProvider::from_str(&self.provider)
+    }
+
+    /// Check if this is a remote repository (github/gitlab).
+    pub fn is_remote(&self) -> bool {
+        matches!(self.provider.as_str(), "github" | "gitlab")
+    }
+
+    /// Check if this is a local-only project.
+    pub fn is_local(&self) -> bool {
+        self.provider == "local"
+    }
+
+    /// Get the remote URL for display (e.g., https://github.com/owner/repo).
+    pub fn remote_url(&self) -> Option<String> {
+        match self.provider.as_str() {
+            "github" => {
+                let owner = self.remote_owner.as_ref()?;
+                let repo = self.remote_repo.as_ref()?;
+                Some(format!("https://github.com/{}/{}", owner, repo))
+            }
+            "gitlab" => {
+                let owner = self.remote_owner.as_ref()?;
+                let repo = self.remote_repo.as_ref()?;
+                Some(format!("https://gitlab.com/{}/{}", owner, repo))
+            }
+            _ => None,
+        }
+    }
+
     /// Check if metadata repo sync is enabled.
     pub fn is_metadata_sync_enabled(&self) -> bool {
         self.metadata_repo_enabled != 0
@@ -127,6 +175,18 @@ impl Project {
     pub fn auto_commit_enabled(&self) -> bool {
         true
     }
+
+    /// Get the full name of the project's repository (e.g., "owner/repo" or slug for local).
+    pub fn full_name(&self) -> String {
+        match self.provider.as_str() {
+            "github" | "gitlab" => {
+                let owner = self.remote_owner.as_deref().unwrap_or("unknown");
+                let repo = self.remote_repo.as_deref().unwrap_or("unknown");
+                format!("{}/{}", owner, repo)
+            }
+            _ => self.slug.clone(),
+        }
+    }
 }
 
 /// Input for creating a new project.
@@ -136,6 +196,15 @@ pub struct CreateProject {
     pub slug: String,
     pub name: String,
     pub description: Option<String>,
+    /// Provider type: 'github' | 'gitlab' | 'local'
+    pub provider: String,
+    /// Local path where fold/ directory lives (required)
+    pub root_path: String,
+    // Remote repo info (for github/gitlab)
+    pub remote_owner: Option<String>,
+    pub remote_repo: Option<String>,
+    pub remote_branch: Option<String>,
+    pub access_token: Option<String>,
 }
 
 /// Input for updating a project.
@@ -170,8 +239,8 @@ pub struct MetadataRepoConfig {
 pub async fn create_project(pool: &DbPool, input: CreateProject) -> Result<Project> {
     sqlx::query_as::<_, Project>(
         r#"
-        INSERT INTO projects (id, slug, name, description)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO projects (id, slug, name, description, provider, root_path, remote_owner, remote_repo, remote_branch, access_token)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING *
         "#,
     )
@@ -179,6 +248,12 @@ pub async fn create_project(pool: &DbPool, input: CreateProject) -> Result<Proje
     .bind(&input.slug)
     .bind(&input.name)
     .bind(&input.description)
+    .bind(&input.provider)
+    .bind(&input.root_path)
+    .bind(&input.remote_owner)
+    .bind(&input.remote_repo)
+    .bind(&input.remote_branch)
+    .bind(&input.access_token)
     .fetch_one(pool)
     .await
     .map_err(|e| match e {
@@ -190,63 +265,27 @@ pub async fn create_project(pool: &DbPool, input: CreateProject) -> Result<Proje
 }
 
 /// Get a project by ID.
-/// Also populates root_path from the first repository's local_path if available.
 pub async fn get_project(pool: &DbPool, id: &str) -> Result<Project> {
-    let mut project = sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = ?")
+    sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = ?")
         .bind(id)
         .fetch_optional(pool)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Project not found: {}", id)))?;
-
-    // Populate root_path from repository's local_path if not already set
-    if project.root_path.is_none() {
-        if let Ok(Some(local_path)) = sqlx::query_scalar::<_, String>(
-            "SELECT local_path FROM repositories WHERE project_id = ? AND local_path IS NOT NULL LIMIT 1"
-        )
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        {
-            project.root_path = Some(local_path);
-        }
-    }
-
-    Ok(project)
+        .ok_or_else(|| Error::NotFound(format!("Project not found: {}", id)))
 }
 
 /// Get a project by slug.
 /// Uses idx_projects_slug index.
-/// Also populates root_path from the first repository's local_path if available.
 pub async fn get_project_by_slug(pool: &DbPool, slug: &str) -> Result<Option<Project>> {
-    let project = sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE slug = ?")
+    sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE slug = ?")
         .bind(slug)
         .fetch_optional(pool)
         .await
-        .map_err(Error::Database)?;
-
-    // Populate root_path from repository's local_path if not already set
-    if let Some(mut project) = project {
-        if project.root_path.is_none() {
-            if let Ok(Some(local_path)) = sqlx::query_scalar::<_, String>(
-                "SELECT local_path FROM repositories WHERE project_id = ? AND local_path IS NOT NULL LIMIT 1"
-            )
-            .bind(&project.id)
-            .fetch_optional(pool)
-            .await
-            {
-                project.root_path = Some(local_path);
-            }
-        }
-        Ok(Some(project))
-    } else {
-        Ok(None)
-    }
+        .map_err(Error::Database)
 }
 
 /// Get a project by ID or slug.
-/// Also populates root_path from the first repository's local_path if available.
 pub async fn get_project_by_id_or_slug(pool: &DbPool, id_or_slug: &str) -> Result<Project> {
-    let mut project = sqlx::query_as::<_, Project>(
+    sqlx::query_as::<_, Project>(
         r#"
         SELECT * FROM projects
         WHERE id = ? OR slug = ?
@@ -256,22 +295,7 @@ pub async fn get_project_by_id_or_slug(pool: &DbPool, id_or_slug: &str) -> Resul
     .bind(id_or_slug)
     .fetch_optional(pool)
     .await?
-    .ok_or_else(|| Error::NotFound(format!("Project not found: {}", id_or_slug)))?;
-
-    // Populate root_path from repository's local_path if not already set
-    if project.root_path.is_none() {
-        if let Ok(Some(local_path)) = sqlx::query_scalar::<_, String>(
-            "SELECT local_path FROM repositories WHERE project_id = ? AND local_path IS NOT NULL LIMIT 1"
-        )
-        .bind(&project.id)
-        .fetch_optional(pool)
-        .await
-        {
-            project.root_path = Some(local_path);
-        }
-    }
-
-    Ok(project)
+    .ok_or_else(|| Error::NotFound(format!("Project not found: {}", id_or_slug)))
 }
 
 /// Update a project.
@@ -519,6 +543,77 @@ pub async fn list_projects_with_metadata_sync(pool: &DbPool) -> Result<Vec<Proje
     .fetch_all(pool)
     .await
     .map_err(Error::Database)
+}
+
+/// Get webhook secret for a project.
+/// Returns None if not set.
+pub async fn get_webhook_secret(pool: &DbPool, project_id: &str) -> Result<Option<String>> {
+    let project = get_project(pool, project_id).await?;
+    Ok(project.webhook_secret)
+}
+
+/// Update project sync state after indexing.
+pub async fn update_project_indexed(
+    pool: &DbPool,
+    project_id: &str,
+    last_commit_sha: Option<&str>,
+) -> Result<Project> {
+    sqlx::query_as::<_, Project>(
+        r#"
+        UPDATE projects SET
+            last_indexed_at = datetime('now'),
+            last_commit_sha = COALESCE(?, last_commit_sha),
+            updated_at = datetime('now')
+        WHERE id = ?
+        RETURNING *
+        "#,
+    )
+    .bind(last_commit_sha)
+    .bind(project_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| Error::NotFound(format!("Project not found: {}", project_id)))
+}
+
+/// List projects that need polling (remote providers with webhook not set up).
+pub async fn list_polling_projects(pool: &DbPool) -> Result<Vec<Project>> {
+    sqlx::query_as::<_, Project>(
+        r#"
+        SELECT * FROM projects
+        WHERE provider IN ('github', 'gitlab')
+          AND (webhook_id IS NULL OR webhook_id = '')
+        ORDER BY last_sync ASC NULLS FIRST
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(Error::Database)
+}
+
+/// Update project after sync.
+pub async fn update_project_sync(
+    pool: &DbPool,
+    project_id: &str,
+    last_commit_sha: Option<&str>,
+    sync_cursor: Option<&str>,
+) -> Result<Project> {
+    sqlx::query_as::<_, Project>(
+        r#"
+        UPDATE projects SET
+            last_sync = datetime('now'),
+            last_commit_sha = COALESCE(?, last_commit_sha),
+            sync_cursor = COALESCE(?, sync_cursor),
+            updated_at = datetime('now')
+        WHERE id = ?
+        RETURNING *
+        "#,
+    )
+    .bind(last_commit_sha)
+    .bind(sync_cursor)
+    .bind(project_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| Error::NotFound(format!("Project not found: {}", project_id)))
 }
 
 // ============================================================================
@@ -936,24 +1031,33 @@ mod tests {
         pool
     }
 
+    fn test_create_input(id: &str, slug: &str, name: &str) -> CreateProject {
+        CreateProject {
+            id: id.to_string(),
+            slug: slug.to_string(),
+            name: name.to_string(),
+            description: None,
+            provider: "local".to_string(),
+            root_path: format!("/tmp/test/{}", slug),
+            remote_owner: None,
+            remote_repo: None,
+            remote_branch: None,
+            access_token: None,
+        }
+    }
+
     #[tokio::test]
     async fn test_create_and_get_project() {
         let pool = setup_test_db().await;
 
-        let project = create_project(
-            &pool,
-            CreateProject {
-                id: "proj-1".to_string(),
-                slug: "test-project".to_string(),
-                name: "Test Project".to_string(),
-                description: Some("A test project".to_string()),
-            },
-        )
-        .await
-        .unwrap();
+        let mut input = test_create_input("proj-1", "test-project", "Test Project");
+        input.description = Some("A test project".to_string());
+
+        let project = create_project(&pool, input).await.unwrap();
 
         assert_eq!(project.id, "proj-1");
         assert_eq!(project.slug, "test-project");
+        assert_eq!(project.provider, "local");
 
         let fetched = get_project(&pool, "proj-1").await.unwrap();
         assert_eq!(fetched.name, "Test Project");
@@ -963,17 +1067,9 @@ mod tests {
     async fn test_get_project_by_slug() {
         let pool = setup_test_db().await;
 
-        create_project(
-            &pool,
-            CreateProject {
-                id: "proj-1".to_string(),
-                slug: "my-project".to_string(),
-                name: "My Project".to_string(),
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
+        create_project(&pool, test_create_input("proj-1", "my-project", "My Project"))
+            .await
+            .unwrap();
 
         let project = get_project_by_slug(&pool, "my-project").await.unwrap();
         assert!(project.is_some());
@@ -984,28 +1080,11 @@ mod tests {
     async fn test_duplicate_slug_error() {
         let pool = setup_test_db().await;
 
-        create_project(
-            &pool,
-            CreateProject {
-                id: "proj-1".to_string(),
-                slug: "unique-slug".to_string(),
-                name: "Project 1".to_string(),
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
+        create_project(&pool, test_create_input("proj-1", "unique-slug", "Project 1"))
+            .await
+            .unwrap();
 
-        let result = create_project(
-            &pool,
-            CreateProject {
-                id: "proj-2".to_string(),
-                slug: "unique-slug".to_string(),
-                name: "Project 2".to_string(),
-                description: None,
-            },
-        )
-        .await;
+        let result = create_project(&pool, test_create_input("proj-2", "unique-slug", "Project 2")).await;
 
         assert!(matches!(result, Err(Error::AlreadyExists(_))));
     }
@@ -1017,12 +1096,7 @@ mod tests {
         for i in 1..=3 {
             create_project(
                 &pool,
-                CreateProject {
-                    id: format!("proj-{}", i),
-                    slug: format!("project-{}", i),
-                    name: format!("Project {}", i),
-                    description: None,
-                },
+                test_create_input(&format!("proj-{}", i), &format!("project-{}", i), &format!("Project {}", i)),
             )
             .await
             .unwrap();

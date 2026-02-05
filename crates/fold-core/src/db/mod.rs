@@ -5,6 +5,7 @@
 
 mod attachments;
 mod chunks;
+mod git;
 mod groups;
 mod jobs;
 mod links;
@@ -12,7 +13,7 @@ mod memories;
 mod pool;
 mod projects;
 mod providers;
-mod repositories;
+// mod repositories; // Removed: repository info now lives on projects
 mod sessions;
 mod users;
 
@@ -22,13 +23,14 @@ pub mod qdrant;
 // Re-export all query modules
 pub use attachments::*;
 pub use chunks::*;
+pub use git::*;
 pub use groups::*;
 pub use jobs::*;
 pub use links::*;
 pub use memories::*;
 pub use projects::*;
 pub use providers::*;
-pub use repositories::*;
+// pub use repositories::*; // Removed: repository info now lives on projects
 pub use sessions::*;
 pub use users::*;
 
@@ -143,10 +145,6 @@ mod tests {
 
         // Check core required tables
         assert!(table_names.contains(&"projects"), "projects table missing");
-        assert!(
-            table_names.contains(&"repositories"),
-            "repositories table missing"
-        );
         assert!(table_names.contains(&"memories"), "memories table missing");
         assert!(
             table_names.contains(&"memory_links"),
@@ -160,10 +158,10 @@ mod tests {
             "api_tokens table missing"
         );
 
-        // Verify we have at least the core tables
+        // Verify we have at least the core tables (minus repositories)
         assert!(
-            table_names.len() >= 9,
-            "Expected at least 9 tables, got {}: {:?}",
+            table_names.len() >= 8,
+            "Expected at least 8 tables, got {}: {:?}",
             table_names.len(),
             table_names
         );

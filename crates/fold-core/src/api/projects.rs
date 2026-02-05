@@ -11,7 +11,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use chrono::{DateTime, Utc};
@@ -30,6 +30,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
             get(get_project).put(update_project).delete(delete_project),
         )
         .route("/:id/stats", get(get_project_stats))
+        .route("/:id/reindex", post(reindex_project))
+        .route("/:id/sync", post(sync_project))
         .layer(axum::middleware::from_fn_with_state(
             state,
             crate::middleware::require_auth,
@@ -92,6 +94,18 @@ pub struct CreateProjectRequest {
     pub name: String,
     /// Project description
     pub description: Option<String>,
+    /// Provider type: 'local', 'github', or 'gitlab'
+    pub provider: String,
+    /// Local path where the project root (and fold/) lives
+    pub root_path: String,
+    /// Remote repository owner (for github/gitlab)
+    pub remote_owner: Option<String>,
+    /// Remote repository name (for github/gitlab)
+    pub remote_repo: Option<String>,
+    /// Remote branch (default: main)
+    pub remote_branch: Option<String>,
+    /// Access token for remote provider
+    pub access_token: Option<String>,
 }
 
 /// Request to update a project.
@@ -112,6 +126,19 @@ pub struct ProjectResponse {
     pub slug: String,
     pub name: String,
     pub description: Option<String>,
+    /// Provider type: 'local', 'github', or 'gitlab'
+    pub provider: String,
+    /// Local path where the project root (and fold/) lives
+    pub root_path: String,
+    /// Remote repository owner (for github/gitlab)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_owner: Option<String>,
+    /// Remote repository name (for github/gitlab)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_repo: Option<String>,
+    /// Remote branch
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_branch: Option<String>,
     pub memory_count: u32,
     /// Author patterns to ignore during webhook processing
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -146,8 +173,6 @@ pub struct ProjectStatsResponse {
     pub total_links: u64,
     /// Total number of vectors in Qdrant.
     pub total_vectors: u64,
-    /// Number of connected repositories.
-    pub repositories: u32,
 }
 
 /// Memory counts by type.
@@ -213,6 +238,11 @@ async fn list_projects(
                     slug: p.slug,
                     name: p.name,
                     description: p.description,
+                    provider: p.provider,
+                    root_path: p.root_path,
+                    remote_owner: p.remote_owner,
+                    remote_repo: p.remote_repo,
+                    remote_branch: p.remote_branch,
                     memory_count: 0,
                     ignored_commit_authors: ignored_authors,
                     created_at: p.created_at.parse().unwrap_or_else(|_| Utc::now()),
@@ -271,6 +301,11 @@ async fn list_projects(
                 slug: p.slug,
                 name: p.name,
                 description: p.description,
+                provider: p.provider,
+                root_path: p.root_path,
+                remote_owner: p.remote_owner,
+                remote_repo: p.remote_repo,
+                remote_branch: p.remote_branch,
                 memory_count: 0,
                 ignored_commit_authors: ignored_authors,
                 created_at: p.created_at.parse().unwrap_or_else(|_| Utc::now()),
@@ -306,12 +341,35 @@ async fn create_project(
         ));
     }
 
+    // Validate provider
+    let valid_providers = ["local", "github", "gitlab"];
+    if !valid_providers.contains(&request.provider.as_str()) {
+        return Err(Error::Validation(
+            "Provider must be 'local', 'github', or 'gitlab'".into(),
+        ));
+    }
+
+    // For remote providers, require owner and repo
+    if request.provider != "local" {
+        if request.remote_owner.is_none() || request.remote_repo.is_none() {
+            return Err(Error::Validation(
+                "remote_owner and remote_repo are required for github/gitlab providers".into(),
+            ));
+        }
+    }
+
     // Create project in database
     let input = crate::db::CreateProject {
         id: Uuid::new_v4().to_string(),
         slug: request.slug,
         name: request.name,
         description: request.description,
+        provider: request.provider,
+        root_path: request.root_path,
+        remote_owner: request.remote_owner,
+        remote_repo: request.remote_repo,
+        remote_branch: request.remote_branch,
+        access_token: request.access_token,
     };
 
     let project = crate::db::create_project(&state.db, input).await?;
@@ -349,6 +407,11 @@ async fn create_project(
         slug: project.slug,
         name: project.name,
         description: project.description,
+        provider: project.provider,
+        root_path: project.root_path,
+        remote_owner: project.remote_owner,
+        remote_repo: project.remote_repo,
+        remote_branch: project.remote_branch,
         memory_count: 0,
         ignored_commit_authors: ignored_authors,
         created_at: project.created_at.parse().unwrap_or_else(|_| Utc::now()),
@@ -379,6 +442,11 @@ async fn get_project(
         slug: project.slug,
         name: project.name,
         description: project.description,
+        provider: project.provider,
+        root_path: project.root_path,
+        remote_owner: project.remote_owner,
+        remote_repo: project.remote_repo,
+        remote_branch: project.remote_branch,
         memory_count: 0,
         ignored_commit_authors: ignored_authors,
         created_at: project.created_at.parse().unwrap_or_else(|_| Utc::now()),
@@ -426,6 +494,11 @@ async fn update_project(
         slug: project.slug,
         name: project.name,
         description: project.description,
+        provider: project.provider,
+        root_path: project.root_path,
+        remote_owner: project.remote_owner,
+        remote_repo: project.remote_repo,
+        remote_branch: project.remote_branch,
         memory_count: 0,
         ignored_commit_authors: ignored_authors,
         created_at: project.created_at.parse().unwrap_or_else(|_| Utc::now()),
@@ -439,9 +512,8 @@ async fn update_project(
 ///
 /// Deletes the project and all associated data:
 /// - Cancels all pending/running jobs
-/// - Removes repository clones from disk
 /// - Deletes all jobs for the project
-/// - Deletes the project (cascades to memories, links, repositories, etc.)
+/// - Deletes the project (cascades to memories, links, chunks, etc.)
 /// - Deletes the Qdrant vector collection
 ///
 /// This action is irreversible.
@@ -461,44 +533,17 @@ async fn delete_project(
         info!(project_id = %existing.id, count = cancelled_jobs, "Cancelled pending jobs");
     }
 
-    // 2. Get all repositories and delete their local clones from disk
-    let repositories = crate::db::list_project_repositories(&state.db, &existing.id).await?;
-    for repo in &repositories {
-        if let Some(local_path) = &repo.local_path {
-            let path = std::path::Path::new(local_path);
-            if path.exists() {
-                match tokio::fs::remove_dir_all(path).await {
-                    Ok(()) => {
-                        info!(
-                            repo_id = %repo.id,
-                            path = %local_path,
-                            "Deleted repository clone from disk"
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            repo_id = %repo.id,
-                            path = %local_path,
-                            error = %e,
-                            "Failed to delete repository clone from disk"
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    // 3. Delete all jobs for this project (including completed/failed)
+    // 2. Delete all jobs for this project (including completed/failed)
     let deleted_jobs = crate::db::delete_project_jobs(&state.db, &existing.id).await?;
     if deleted_jobs > 0 {
         info!(project_id = %existing.id, count = deleted_jobs, "Deleted jobs");
     }
 
-    // 4. Delete project and all associated data (cascade handled by DB)
-    // This deletes: memories, memory_links, repositories, chunks, project_members, etc.
+    // 3. Delete project and all associated data (cascade handled by DB)
+    // This deletes: memories, memory_links, chunks, project_members, etc.
     crate::db::delete_project(&state.db, &existing.id).await?;
 
-    // 5. Delete Qdrant collection (vector database cleanup)
+    // 4. Delete Qdrant collection (vector database cleanup)
     match state.qdrant.delete_collection(&existing.slug).await {
         Ok(()) => info!(slug = %existing.slug, "Deleted Qdrant collection"),
         Err(e) => warn!(error = %e, slug = %existing.slug, "Failed to delete Qdrant collection"),
@@ -507,14 +552,12 @@ async fn delete_project(
     info!(
         project_id = %existing.id,
         slug = %existing.slug,
-        repos_cleaned = repositories.len(),
         "Project deletion complete"
     );
 
     Ok(Json(serde_json::json!({
         "deleted": true,
         "id": existing.id,
-        "repositories_cleaned": repositories.len(),
         "jobs_cancelled": cancelled_jobs,
         "jobs_deleted": deleted_jobs
     })))
@@ -573,9 +616,6 @@ async fn get_project_stats(
         .map(|info| info.points_count)
         .unwrap_or(0);
 
-    // Get repository count
-    let repos = crate::db::list_project_repositories(&state.db, &project.id).await?;
-
     Ok(Json(ProjectStatsResponse {
         project_id: project.id.parse().unwrap_or_default(),
         project_slug: project.slug,
@@ -585,7 +625,6 @@ async fn get_project_stats(
         total_chunks,
         total_links,
         total_vectors,
-        repositories: repos.len() as u32,
     }))
 }
 
@@ -987,4 +1026,169 @@ async fn update_algorithm_config(
         decay_half_life_days: updated.decay_half_life_days.unwrap_or(30.0),
         ignored_commit_authors: ignored_authors,
     }))
+}
+
+// ============================================================================
+// Reindex and Sync Endpoints
+// ============================================================================
+
+/// Response for reindex operation.
+#[derive(Debug, Serialize)]
+pub struct ReindexResponse {
+    pub job_id: Uuid,
+    pub status: String,
+    pub message: String,
+}
+
+/// Response for sync operation.
+#[derive(Debug, Serialize)]
+pub struct SyncResponse {
+    pub project_id: Uuid,
+    pub new_commits: usize,
+    pub job_id: Option<Uuid>,
+    pub message: String,
+}
+
+/// Reindex all files in a project.
+///
+/// POST /projects/:id/reindex
+///
+/// Starts a background job to scan and re-index all files in the project's root path.
+#[axum::debug_handler]
+async fn reindex_project(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<ReindexResponse>> {
+    // Verify project exists
+    let project = crate::db::get_project(&state.db, &id).await?;
+
+    // Create background job for reindexing
+    let job_id = crate::models::new_id();
+    let job = crate::db::create_job(
+        &state.db,
+        crate::db::CreateJob::new(job_id.clone(), crate::db::JobType::ReindexRepo)
+            .with_project(&project.id),
+    )
+    .await?;
+
+    info!(
+        project_id = %project.id,
+        project_slug = %project.slug,
+        job_id = %job.id,
+        "Queued reindex job for project"
+    );
+
+    Ok(Json(ReindexResponse {
+        job_id: Uuid::parse_str(&job.id).unwrap_or_else(|_| Uuid::new_v4()),
+        status: job.status,
+        message: format!("Reindex job queued for project {}", project.slug),
+    }))
+}
+
+/// Sync project with remote (for github/gitlab providers).
+///
+/// POST /projects/:id/sync
+///
+/// For remote providers: fetches new commits and queues indexing.
+/// For local providers: triggers a file scan.
+#[axum::debug_handler]
+async fn sync_project(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<SyncResponse>> {
+    let project = crate::db::get_project(&state.db, &id).await?;
+    let project_uuid = Uuid::parse_str(&project.id).unwrap_or_else(|_| Uuid::new_v4());
+
+    match project.provider.as_str() {
+        "local" => {
+            // For local projects, just trigger a reindex (file scan)
+            let job_id = crate::models::new_id();
+            let job = crate::db::create_job(
+                &state.db,
+                crate::db::CreateJob::new(job_id.clone(), crate::db::JobType::IndexRepo)
+                    .with_project(&project.id),
+            )
+            .await?;
+
+            info!(
+                project_id = %project.id,
+                project_slug = %project.slug,
+                job_id = %job.id,
+                "Queued index job for local project"
+            );
+
+            Ok(Json(SyncResponse {
+                project_id: project_uuid,
+                new_commits: 0,
+                job_id: Some(Uuid::parse_str(&job.id).unwrap_or_else(|_| Uuid::new_v4())),
+                message: format!("Scan job queued for local project {}", project.slug),
+            }))
+        }
+        "github" | "gitlab" => {
+            // For remote providers, sync with the remote
+            let owner = project.remote_owner.as_deref().ok_or_else(|| {
+                Error::Validation("Remote owner not configured".to_string())
+            })?;
+            let repo = project.remote_repo.as_deref().ok_or_else(|| {
+                Error::Validation("Remote repo not configured".to_string())
+            })?;
+            let branch = project.remote_branch.as_deref().unwrap_or("main");
+            let token = project.access_token.as_deref().unwrap_or("");
+
+            // Fetch commits since last sync
+            let since_sha = project.last_commit_sha.clone();
+            let commits = state
+                .github
+                .get_commits(owner, repo, Some(branch), since_sha.as_deref(), 100, token)
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to fetch commits: {}", e)))?;
+
+            let new_commit_count = commits.len();
+
+            if new_commit_count == 0 {
+                return Ok(Json(SyncResponse {
+                    project_id: project_uuid,
+                    new_commits: 0,
+                    job_id: None,
+                    message: format!("No new commits in {}", project.slug),
+                }));
+            }
+
+            // Update last_commit_sha
+            if let Some(newest) = commits.first() {
+                crate::db::update_project_sync(&state.db, &project.id, Some(&newest.sha), None).await?;
+            }
+
+            // Queue index job
+            let job_id = crate::models::new_id();
+            let job = crate::db::create_job(
+                &state.db,
+                crate::db::CreateJob::new(job_id.clone(), crate::db::JobType::IndexRepo)
+                    .with_project(&project.id),
+            )
+            .await?;
+
+            info!(
+                project_id = %project.id,
+                project_slug = %project.slug,
+                job_id = %job.id,
+                new_commits = new_commit_count,
+                "Queued index job for remote project"
+            );
+
+            Ok(Json(SyncResponse {
+                project_id: project_uuid,
+                new_commits: new_commit_count,
+                job_id: Some(Uuid::parse_str(&job.id).unwrap_or_else(|_| Uuid::new_v4())),
+                message: format!(
+                    "Found {} new commits, index job queued for {}",
+                    new_commit_count, project.slug
+                ),
+            }))
+        }
+        _ => Err(Error::Validation(format!(
+            "Unknown provider: {}",
+            project.provider
+        ))),
+    }
 }

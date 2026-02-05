@@ -10,7 +10,7 @@ use chrono::Utc;
 use git2::{Cred, PushOptions, RemoteCallbacks, Repository as Git2Repo, Signature};
 use tracing::{debug, info};
 
-use crate::db::{self, DbPool, Memory, MemoryLink, Repository};
+use crate::db::{self, DbPool, Memory, MemoryLink, Project};
 use crate::error::{Error, Result};
 
 /// Bot identity for metadata commits.
@@ -33,23 +33,24 @@ impl MetadataSyncService {
         Self { db, work_dir }
     }
 
-    /// Sync metadata for a repository.
+    /// Sync metadata for a project (which now contains repository info).
     ///
     /// This will:
     /// 1. Clone/open the repository locally
     /// 2. Generate MD files for indexed files
     /// 3. Commit changes as fold-meta-bot
     /// 4. Push to remote
-    pub async fn sync_repository(&self, repo: &Repository) -> Result<SyncResult> {
+    pub async fn sync_project(&self, project: &Project) -> Result<SyncResult> {
+        let full_name = project.full_name();
         info!(
-            repo = %repo.full_name(),
+            project = %full_name,
             "Starting metadata sync"
         );
 
-        // Get all codebase memories for this repo
-        let memories = self.get_repo_memories(repo).await?;
+        // Get all codebase memories for this project
+        let memories = self.get_project_memories(project).await?;
         if memories.is_empty() {
-            debug!(repo = %repo.full_name(), "No memories to sync");
+            debug!(project = %full_name, "No memories to sync");
             return Ok(SyncResult {
                 files_created: 0,
                 files_updated: 0,
@@ -58,10 +59,10 @@ impl MetadataSyncService {
         }
 
         // Get links for context
-        let links = self.get_repo_links(&memories).await?;
+        let links = self.get_project_links(&memories).await?;
 
         // Clone/open repo locally
-        let repo_path = self.ensure_repo_cloned(repo).await?;
+        let repo_path = self.ensure_repo_cloned(project).await?;
 
         // Generate MD files
         let changes = self
@@ -69,7 +70,7 @@ impl MetadataSyncService {
             .await?;
 
         if changes.is_empty() {
-            debug!(repo = %repo.full_name(), "No changes to commit");
+            debug!(project = %full_name, "No changes to commit");
             return Ok(SyncResult {
                 files_created: 0,
                 files_updated: 0,
@@ -78,7 +79,7 @@ impl MetadataSyncService {
         }
 
         // Commit and push
-        let commit_sha = self.commit_and_push(&repo_path, repo, &changes).await?;
+        let commit_sha = self.commit_and_push(&repo_path, project, &changes).await?;
 
         let (created, updated) = changes.iter().fold((0, 0), |(c, u), change| match change {
             FileChange::Created(_) => (c + 1, u),
@@ -86,7 +87,7 @@ impl MetadataSyncService {
         });
 
         info!(
-            repo = %repo.full_name(),
+            project = %full_name,
             files_created = created,
             files_updated = updated,
             commit = %commit_sha,
@@ -100,14 +101,14 @@ impl MetadataSyncService {
         })
     }
 
-    /// Get all codebase memories for a repository.
-    async fn get_repo_memories(&self, repo: &Repository) -> Result<Vec<Memory>> {
-        let memories = db::list_memories_by_repository(&self.db, &repo.id).await?;
+    /// Get all codebase memories for a project.
+    async fn get_project_memories(&self, project: &Project) -> Result<Vec<Memory>> {
+        let memories = db::list_project_memories(&self.db, &project.id, 10000, 0).await?;
         Ok(memories)
     }
 
     /// Get links between memories.
-    async fn get_repo_links(
+    async fn get_project_links(
         &self,
         memories: &[Memory],
     ) -> Result<HashMap<String, Vec<MemoryLink>>> {
@@ -122,31 +123,32 @@ impl MetadataSyncService {
     }
 
     /// Ensure the repository is cloned locally.
-    async fn ensure_repo_cloned(&self, repo: &Repository) -> Result<PathBuf> {
-        let repo_dir = self.work_dir.join(&repo.id);
+    async fn ensure_repo_cloned(&self, project: &Project) -> Result<PathBuf> {
+        let repo_dir = self.work_dir.join(&project.id);
 
         if repo_dir.exists() {
             // Pull latest changes
-            self.pull_repo(&repo_dir, repo).await?;
+            self.pull_repo(&repo_dir, project).await?;
         } else {
             // Clone the repo
-            self.clone_repo(&repo_dir, repo).await?;
+            self.clone_repo(&repo_dir, project).await?;
         }
 
         Ok(repo_dir)
     }
 
     /// Clone a repository.
-    async fn clone_repo(&self, repo_dir: &Path, repo: &Repository) -> Result<()> {
-        let clone_url = self.get_clone_url(repo);
+    async fn clone_repo(&self, repo_dir: &Path, project: &Project) -> Result<()> {
+        let clone_url = self.get_clone_url(project);
+        let full_name = project.full_name();
 
         info!(
-            repo = %repo.full_name(),
+            project = %full_name,
             path = %repo_dir.display(),
             "Cloning repository"
         );
 
-        let token = repo.access_token.clone();
+        let token = project.access_token.clone().unwrap_or_default();
         let repo_dir = repo_dir.to_path_buf();
 
         // Clone in a blocking task since git2 is sync
@@ -176,15 +178,16 @@ impl MetadataSyncService {
     }
 
     /// Pull latest changes from remote.
-    async fn pull_repo(&self, repo_dir: &Path, repo: &Repository) -> Result<()> {
+    async fn pull_repo(&self, repo_dir: &Path, project: &Project) -> Result<()> {
+        let full_name = project.full_name();
         debug!(
-            repo = %repo.full_name(),
+            project = %full_name,
             path = %repo_dir.display(),
             "Pulling latest changes"
         );
 
         let repo_dir = repo_dir.to_path_buf();
-        let token = repo.access_token.clone();
+        let token = project.access_token.clone().unwrap_or_default();
 
         tokio::task::spawn_blocking(move || {
             let git_repo = Git2Repo::open(&repo_dir)
@@ -426,11 +429,11 @@ impl MetadataSyncService {
     async fn commit_and_push(
         &self,
         repo_dir: &Path,
-        repo: &Repository,
+        project: &Project,
         changes: &[FileChange],
     ) -> Result<String> {
         let repo_dir = repo_dir.to_path_buf();
-        let token = repo.access_token.clone();
+        let token = project.access_token.clone().unwrap_or_default();
 
         let file_count = changes.len();
         let message = if file_count == 1 {
@@ -526,11 +529,13 @@ impl MetadataSyncService {
     }
 
     /// Get clone URL with authentication.
-    fn get_clone_url(&self, repo: &Repository) -> String {
-        match repo.provider.as_str() {
-            "github" => format!("https://github.com/{}/{}.git", repo.owner, repo.repo),
-            "gitlab" => format!("https://gitlab.com/{}/{}.git", repo.owner, repo.repo),
-            _ => format!("https://github.com/{}/{}.git", repo.owner, repo.repo),
+    fn get_clone_url(&self, project: &Project) -> String {
+        let owner = project.remote_owner.as_deref().unwrap_or("");
+        let repo = project.remote_repo.as_deref().unwrap_or("");
+        match project.provider.as_str() {
+            "github" => format!("https://github.com/{}/{}.git", owner, repo),
+            "gitlab" => format!("https://gitlab.com/{}/{}.git", owner, repo),
+            _ => format!("https://github.com/{}/{}.git", owner, repo),
         }
     }
 }

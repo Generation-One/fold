@@ -27,8 +27,76 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time;
 
+use std::collections::HashMap;
+use std::sync::OnceLock;
+use tokio::sync::RwLock;
+
 use crate::middleware::{require_auth, require_session, AuthUser};
 use crate::{AppState, Error, Result};
+
+// ============================================================================
+// OIDC Discovery Cache
+// ============================================================================
+
+/// Cached OIDC discovery documents
+static OIDC_DISCOVERY_CACHE: OnceLock<RwLock<HashMap<String, OidcDiscovery>>> = OnceLock::new();
+
+fn discovery_cache() -> &'static RwLock<HashMap<String, OidcDiscovery>> {
+    OIDC_DISCOVERY_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// OIDC Discovery document (subset of fields we need)
+#[derive(Debug, Clone, Deserialize)]
+struct OidcDiscovery {
+    authorization_endpoint: String,
+    token_endpoint: String,
+    userinfo_endpoint: String,
+}
+
+/// Fetch OIDC discovery document for an issuer (with caching)
+async fn get_oidc_discovery(issuer: &str) -> Result<OidcDiscovery> {
+    // Check cache first
+    {
+        let cache = discovery_cache().read().await;
+        if let Some(discovery) = cache.get(issuer) {
+            return Ok(discovery.clone());
+        }
+    }
+
+    // Fetch from well-known endpoint
+    let discovery_url = format!("{}/.well-known/openid-configuration", issuer.trim_end_matches('/'));
+
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true) // Allow self-signed certs for local dev
+        .build()
+        .map_err(|e| Error::Internal(format!("Failed to create HTTP client: {}", e)))?;
+
+    let response = client
+        .get(&discovery_url)
+        .send()
+        .await
+        .map_err(|e| Error::Internal(format!("Failed to fetch OIDC discovery: {}", e)))?;
+
+    if !response.status().is_success() {
+        return Err(Error::Internal(format!(
+            "OIDC discovery failed with status: {}",
+            response.status()
+        )));
+    }
+
+    let discovery: OidcDiscovery = response
+        .json()
+        .await
+        .map_err(|e| Error::Internal(format!("Failed to parse OIDC discovery: {}", e)))?;
+
+    // Cache it
+    {
+        let mut cache = discovery_cache().write().await;
+        cache.insert(issuer.to_string(), discovery.clone());
+    }
+
+    Ok(discovery)
+}
 
 /// Build authentication routes.
 pub fn routes(state: AppState) -> Router<AppState> {
@@ -274,9 +342,13 @@ async fn login_redirect(
                 .issuer
                 .as_ref()
                 .ok_or_else(|| Error::InvalidInput("OIDC provider requires issuer".into()))?;
+
+            // Use OIDC discovery to get the correct authorization endpoint
+            let discovery = get_oidc_discovery(issuer).await?;
+
             format!(
-                "{}/authorize?client_id={}&redirect_uri={}/auth/callback/{}&response_type=code&scope={}&state={}",
-                issuer,
+                "{}?client_id={}&redirect_uri={}/auth/callback/{}&response_type=code&scope={}&state={}",
+                discovery.authorization_endpoint,
                 provider_config.client_id,
                 config.server.public_url,
                 provider,
@@ -897,7 +969,10 @@ async fn exchange_code_for_tokens(
     code: &str,
     redirect_uri: &str,
 ) -> Result<(String, Option<String>)> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true) // Allow self-signed certs for local dev
+        .build()
+        .map_err(|e| Error::Internal(format!("Failed to create HTTP client: {}", e)))?;
 
     let token_url = match provider.provider_type {
         crate::config::AuthProviderType::GitHub => {
@@ -912,7 +987,10 @@ async fn exchange_code_for_tokens(
                 .issuer
                 .as_ref()
                 .ok_or_else(|| Error::InvalidInput("OIDC provider requires issuer".into()))?;
-            format!("{}/token", issuer)
+
+            // Use OIDC discovery to get the correct token endpoint
+            let discovery = get_oidc_discovery(issuer).await?;
+            discovery.token_endpoint
         }
     };
 
@@ -949,7 +1027,10 @@ async fn fetch_user_info(
     provider: &crate::config::AuthProvider,
     access_token: &str,
 ) -> Result<OAuthUserInfo> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true) // Allow self-signed certs for local dev
+        .build()
+        .map_err(|e| Error::Internal(format!("Failed to create HTTP client: {}", e)))?;
 
     let (url, auth_header) = match provider.provider_type {
         crate::config::AuthProviderType::GitHub => (
@@ -968,8 +1049,11 @@ async fn fetch_user_info(
                 .issuer
                 .as_ref()
                 .ok_or_else(|| Error::InvalidInput("OIDC provider requires issuer".into()))?;
+
+            // Use OIDC discovery to get the correct userinfo endpoint
+            let discovery = get_oidc_discovery(issuer).await?;
             (
-                format!("{}/userinfo", issuer),
+                discovery.userinfo_endpoint,
                 format!("Bearer {}", access_token),
             )
         }

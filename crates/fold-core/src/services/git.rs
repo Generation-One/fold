@@ -296,15 +296,8 @@ impl GitService {
     pub async fn sync_from_remote(&self, project: &Project) -> Result<SyncStats> {
         let mut stats = SyncStats::default();
 
-        // Get the project root path
-        let repo_path = match &project.root_path {
-            Some(path) => std::path::PathBuf::from(path),
-            None => {
-                return Err(Error::Validation(
-                    "Project has no root_path configured".to_string(),
-                ));
-            }
-        };
+        // Get the project root path (now always present)
+        let repo_path = std::path::PathBuf::from(&project.root_path);
 
         // Check if this is a git repository
         if !Self::is_git_repo(&repo_path) {

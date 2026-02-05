@@ -136,7 +136,6 @@ pub struct Job {
     pub job_type: String,
     pub status: String,
     pub project_id: Option<String>,
-    pub repository_id: Option<String>,
     pub total_items: Option<i32>,
     pub processed_items: i32,
     pub failed_items: i32,
@@ -202,7 +201,6 @@ pub struct CreateJob {
     pub id: String,
     pub job_type: JobType,
     pub project_id: Option<String>,
-    pub repository_id: Option<String>,
     pub total_items: Option<i32>,
     pub payload: Option<serde_json::Value>,
     pub priority: Option<JobPriority>,
@@ -217,7 +215,6 @@ impl CreateJob {
             id,
             job_type,
             project_id: None,
-            repository_id: None,
             total_items: None,
             payload: None,
             priority: None,
@@ -229,12 +226,6 @@ impl CreateJob {
     /// Set the project ID.
     pub fn with_project(mut self, project_id: impl Into<String>) -> Self {
         self.project_id = Some(project_id.into());
-        self
-    }
-
-    /// Set the repository ID.
-    pub fn with_repository(mut self, repository_id: impl Into<String>) -> Self {
-        self.repository_id = Some(repository_id.into());
         self
     }
 
@@ -402,15 +393,14 @@ pub async fn create_job(pool: &DbPool, input: CreateJob) -> Result<Job> {
 
     sqlx::query_as::<_, Job>(
         r#"
-        INSERT INTO jobs (id, type, project_id, repository_id, total_items, payload, priority, max_retries, scheduled_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO jobs (id, type, project_id, total_items, payload, priority, max_retries, scheduled_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING *
         "#,
     )
     .bind(&input.id)
     .bind(input.job_type.as_str())
     .bind(&input.project_id)
-    .bind(&input.repository_id)
     .bind(input.total_items)
     .bind(&payload_json)
     .bind(priority)
@@ -1121,19 +1111,19 @@ pub async fn list_project_jobs(
     .map_err(Error::Database)
 }
 
-/// Get running job for repository (to prevent duplicate indexing).
-pub async fn get_running_repo_job(
+/// Get running job for project (to prevent duplicate indexing).
+pub async fn get_running_project_job(
     pool: &DbPool,
-    repository_id: &str,
+    project_id: &str,
     job_type: JobType,
 ) -> Result<Option<Job>> {
     sqlx::query_as::<_, Job>(
         r#"
         SELECT * FROM jobs
-        WHERE repository_id = ? AND type = ? AND status = 'running'
+        WHERE project_id = ? AND type = ? AND status = 'running'
         "#,
     )
-    .bind(repository_id)
+    .bind(project_id)
     .bind(job_type.as_str())
     .fetch_optional(pool)
     .await

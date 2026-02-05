@@ -426,8 +426,6 @@ impl ContentStorage {
 pub struct Memory {
     pub id: String,
     pub project_id: String,
-    /// Repository ID for codebase memories
-    pub repository_id: Option<String>,
     /// 'codebase', 'session', 'spec', 'decision', 'task', 'general'
     #[serde(rename = "type")]
     #[cfg_attr(feature = "sqlx", sqlx(rename = "type"))]
@@ -600,7 +598,6 @@ impl Memory {
         Self {
             id: new_id(),
             project_id,
-            repository_id: None,
             memory_type: memory_type.as_str().to_string(),
             source: Some(source.as_str().to_string()),
             content: None, // Content stored externally
@@ -640,7 +637,6 @@ impl Memory {
         Self {
             id,
             project_id,
-            repository_id: None,
             memory_type: memory_type.as_str().to_string(),
             source: Some(source.as_str().to_string()),
             content: None,
