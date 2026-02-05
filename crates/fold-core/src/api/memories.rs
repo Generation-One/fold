@@ -12,8 +12,11 @@
 //! - GET /projects/:project_id/context/:id - Get context for a memory
 
 use axum::{
+    body::Body,
     extract::{Path, Query, State},
+    http::{header, StatusCode},
     middleware,
+    response::Response,
     routing::{get, post},
     Json, Router,
 };
@@ -30,9 +33,10 @@ use crate::{AppState, Error, Result};
 /// Build memory routes (project-scoped).
 pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
-        // Read operations (list, search, context)
+        // Read operations (list, search, context, source file download)
         .route("/search", post(search_memories))
         .route("/context/:memory_id", get(get_context))
+        .route("/:memory_id/source", get(download_source_file))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             require_project_read,
@@ -869,4 +873,77 @@ async fn list_all_memories(
         offset: query.offset,
         limit: limit as u32,
     }))
+}
+
+/// Download the original source file for a memory.
+///
+/// GET /projects/:project_id/memories/:memory_id/source
+///
+/// Returns the raw file content with appropriate Content-Type header.
+/// Only works for memories that have a file_path set.
+#[axum::debug_handler]
+async fn download_source_file(
+    State(state): State<AppState>,
+    Path(path): Path<MemoryPath>,
+) -> Result<Response> {
+    // Resolve project
+    let project = db::get_project_by_id_or_slug(&state.db, &path.project_id).await?;
+
+    // Get the memory
+    let memory = db::get_memory(&state.db, &path.memory_id.to_string()).await?;
+
+    // Ensure the memory belongs to this project
+    if memory.project_id != project.id {
+        return Err(Error::NotFound("Memory not found in this project".into()));
+    }
+
+    // Check if memory has a file_path
+    let file_path = memory.file_path.ok_or_else(|| {
+        Error::NotFound("Memory does not have an associated source file".into())
+    })?;
+
+    // Build the full path: project_root + file_path
+    let project_root = std::path::PathBuf::from(&project.root_path);
+    let full_path = project_root.join(&file_path);
+
+    // Security: ensure the resolved path is within the project root
+    let canonical_root = project_root.canonicalize().map_err(|e| {
+        Error::Internal(format!("Failed to resolve project root: {}", e))
+    })?;
+    let canonical_path = full_path.canonicalize().map_err(|_| {
+        Error::NotFound(format!("Source file not found: {}", file_path))
+    })?;
+
+    if !canonical_path.starts_with(&canonical_root) {
+        return Err(Error::Validation("Invalid file path".into()));
+    }
+
+    // Read the file
+    let content = tokio::fs::read(&canonical_path).await.map_err(|e| {
+        Error::NotFound(format!("Failed to read source file: {}", e))
+    })?;
+
+    // Determine content type based on file extension
+    let content_type = mime_guess::from_path(&file_path)
+        .first_or_octet_stream()
+        .to_string();
+
+    // Get the filename for Content-Disposition
+    let filename = std::path::Path::new(&file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("source");
+
+    // Build response with appropriate headers
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{}\"", filename),
+        )
+        .body(Body::from(content))
+        .map_err(|e| Error::Internal(format!("Failed to build response: {}", e)))?;
+
+    Ok(response)
 }
