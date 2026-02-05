@@ -403,7 +403,7 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
         },
         ToolDefinition {
             name: "memory_search".into(),
-            description: "Search memories using semantic similarity".into(),
+            description: "Search memories using semantic similarity. Returns metadata and a summary of each match. If you have direct access to the source repository, use your file tools instead. Otherwise, use memory_content to fetch the full original content.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -494,7 +494,7 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
         },
         ToolDefinition {
             name: "codebase_search".into(),
-            description: "Search indexed codebase (file-source memories)".into(),
+            description: "Search indexed codebase (file-source memories). Returns metadata and a summary of each match. If you have direct access to the source repository, use your file tools instead. Otherwise, use memory_content to fetch the full file content.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -543,6 +543,20 @@ fn handle_tools_list(id: Option<Value>) -> JsonRpcResponse {
                 "required": ["project", "files"]
             }),
         },
+        ToolDefinition {
+            name: "memory_content".into(),
+            description: "Fetch the full original content of a memory. Search results return summaries only. If you have direct access to the source repository, read files directly instead. Otherwise, use this tool to retrieve the complete file or document.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string", "description": "Project ID or slug" },
+                    "memory_id": { "type": "string", "description": "Memory ID to fetch content for" },
+                    "start_line": { "type": "integer", "description": "Start line (1-indexed). If omitted, starts from beginning." },
+                    "end_line": { "type": "integer", "description": "End line (inclusive). If omitted, reads to end." }
+                },
+                "required": ["project", "memory_id"]
+            }),
+        },
     ];
 
     JsonRpcResponse::success(
@@ -582,6 +596,7 @@ async fn handle_tools_call(
         "codebase_search" => execute_codebase_search(state, call_params.arguments).await,
         "file_upload" => execute_file_upload(state, call_params.arguments).await,
         "files_upload" => execute_files_upload(state, call_params.arguments).await,
+        "memory_content" => execute_memory_content(state, call_params.arguments).await,
         _ => {
             return JsonRpcResponse::error(
                 id,
@@ -1234,4 +1249,85 @@ async fn execute_files_upload(state: &AppState, args: Value) -> Result<String> {
         "failed_count": failed_count,
         "memories": memories
     }))?)
+}
+
+async fn execute_memory_content(state: &AppState, args: Value) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Params {
+        project: String,
+        memory_id: String,
+        start_line: Option<usize>,
+        end_line: Option<usize>,
+    }
+
+    let params: Params = serde_json::from_value(args)?;
+
+    // Get project
+    let project = db::get_project_by_id_or_slug(&state.db, &params.project).await?;
+
+    // Get the memory with full content
+    let memory = state
+        .memory
+        .get(&project.id, &params.memory_id)
+        .await?
+        .ok_or_else(|| Error::NotFound(format!("Memory not found: {}", params.memory_id)))?;
+
+    // Extract line range if specified
+    let (content, total_lines, returned_range) = if let Some(full_content) = &memory.content {
+        let lines: Vec<&str> = full_content.lines().collect();
+        let total = lines.len();
+
+        match (params.start_line, params.end_line) {
+            (Some(start), Some(end)) => {
+                // Convert to 0-indexed, clamp to valid range
+                let start_idx = start.saturating_sub(1).min(total);
+                let end_idx = end.min(total);
+                let selected: Vec<&str> = lines[start_idx..end_idx].to_vec();
+                (
+                    Some(selected.join("\n")),
+                    total,
+                    Some((start_idx + 1, end_idx)),
+                )
+            }
+            (Some(start), None) => {
+                let start_idx = start.saturating_sub(1).min(total);
+                let selected: Vec<&str> = lines[start_idx..].to_vec();
+                (
+                    Some(selected.join("\n")),
+                    total,
+                    Some((start_idx + 1, total)),
+                )
+            }
+            (None, Some(end)) => {
+                let end_idx = end.min(total);
+                let selected: Vec<&str> = lines[..end_idx].to_vec();
+                (Some(selected.join("\n")), total, Some((1, end_idx)))
+            }
+            (None, None) => (Some(full_content.clone()), total, None),
+        }
+    } else {
+        (None, 0, None)
+    };
+
+    let mut response = serde_json::json!({
+        "id": memory.id,
+        "title": memory.title,
+        "author": memory.author,
+        "source": memory.source,
+        "file_path": memory.file_path,
+        "language": memory.language,
+        "content": content,
+        "total_lines": total_lines,
+        "created_at": memory.created_at.to_rfc3339(),
+        "updated_at": memory.updated_at.to_rfc3339()
+    });
+
+    if let Some((start, end)) = returned_range {
+        response["lines"] = serde_json::json!({
+            "start": start,
+            "end": end
+        });
+    }
+
+    Ok(serde_json::to_string_pretty(&response)?)
 }
