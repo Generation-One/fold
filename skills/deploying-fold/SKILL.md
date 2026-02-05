@@ -23,6 +23,20 @@ Fold is a semantic memory system for coding projects. This skill covers deployin
    VITE_API_URL (build-time)
 ```
 
+## Known Build Issues
+
+Before deploying, be aware of these issues that may require manual fixes:
+
+### Rust 1.85+ Build Error (floor_char_boundary)
+
+If building from source fails with `floor_char_boundary is unstable`, the fix is merged in PR #2. Either:
+- Pull the latest code: `git pull origin main`
+- Or cherry-pick: `git cherry-pick fix/floor-char-boundary`
+
+### Dockerfile Workspace Build
+
+The Dockerfile has been simplified to handle the workspace correctly (PR #3). If you have build failures about missing crates, pull the latest Dockerfile.
+
 ## Quick Start
 
 ### 1. Clone and Configure Backend
@@ -155,7 +169,37 @@ sqlite3 /path/to/fold.db "INSERT INTO llm_providers
 docker compose restart fold
 ```
 
-Supported providers: `gemini`, `openai`, `anthropic`, `openrouter`, `claudecode`
+Supported LLM providers: `gemini`, `openai`, `anthropic`, `openrouter`, `claudecode`
+
+### Local Embeddings with Ollama
+
+For air-gapped or cost-sensitive deployments, use Ollama for embeddings:
+
+```bash
+# Install embedding model
+docker exec ollama ollama pull nomic-embed-text
+
+# Find Docker network gateway (Fold container needs to reach Ollama)
+docker network inspect fold_default | jq -r '.[0].IPAM.Config[0].Gateway'
+# Returns something like 172.19.0.1
+
+# Add Ollama as embedding provider
+sudo sqlite3 /var/lib/docker/volumes/fold_fold-data/_data/fold.db "
+INSERT INTO embedding_providers (id, name, enabled, priority, auth_type, config)
+VALUES (
+  '$(uuidgen)',
+  'ollama',
+  1,
+  100,  -- High priority for indexing
+  'none',
+  '{\"endpoint\":\"http://172.19.0.1:11434\",\"model\":\"nomic-embed-text\",\"search_priority\":1}'
+);"
+
+# Restart to pick up changes
+docker compose restart fold
+```
+
+**Note:** `priority` controls indexing preference (higher = preferred). `search_priority` in config controls search preference. This lets you use cheap local embeddings for indexing but cloud for search quality.
 
 ## MCP Integration
 
