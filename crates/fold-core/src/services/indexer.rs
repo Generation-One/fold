@@ -560,6 +560,13 @@ impl IndexerService {
             .to_string_lossy()
             .replace('\\', "/");
 
+        // Handle fold/ directory files specially - they are agent memories with frontmatter
+        if rel_path.starts_with("fold/") && rel_path.ends_with(".md") {
+            return self
+                .index_fold_memory(&content, &rel_path, project, root)
+                .await;
+        }
+
         let language = Self::detect_language(&rel_path);
 
         // Calculate content hash for change detection
@@ -713,6 +720,95 @@ impl IndexerService {
                 .or_insert_with(HashMap::new);
             project_hashes.insert(rel_path, content_hash_value);
         }
+
+        Ok(true)
+    }
+
+    /// Index a memory from the fold/ directory.
+    ///
+    /// Files in fold/ are agent memories with YAML frontmatter. They are imported
+    /// without LLM summarisation, using the metadata from the frontmatter directly.
+    async fn index_fold_memory(
+        &self,
+        content: &str,
+        rel_path: &str,
+        project: &Project,
+        _root: &Path,
+    ) -> Result<bool> {
+        // Parse the frontmatter to extract memory metadata
+        let (storage_memory, body) = match self.fold_storage.parse_memory_file(content) {
+            Ok(result) => result,
+            Err(e) => {
+                debug!(file = %rel_path, error = %e, "Failed to parse fold memory, skipping");
+                return Ok(false);
+            }
+        };
+
+        // Skip if body is empty
+        if body.trim().is_empty() {
+            debug!(file = %rel_path, "Skipping fold memory with empty content");
+            return Ok(false);
+        }
+
+        // Check if memory already exists in database
+        if let Ok(Some(_existing)) = self
+            .memory_service
+            .get(&project.id, &storage_memory.id)
+            .await
+        {
+            debug!(
+                file = %rel_path,
+                memory_id = %storage_memory.id,
+                "Fold memory already exists in database, skipping"
+            );
+            return Ok(false);
+        }
+
+        // Convert memory type from string
+        let memory_type = MemoryType::from_str(&storage_memory.memory_type)
+            .unwrap_or(MemoryType::General);
+
+        // Parse tags from storage memory
+        let tags = storage_memory.tags_vec();
+
+        info!(
+            file = %rel_path,
+            memory_id = %storage_memory.id,
+            title = ?storage_memory.title,
+            memory_type = %memory_type.as_str(),
+            "Importing fold memory"
+        );
+
+        // Create memory - note source is Agent, not File
+        let create = MemoryCreate {
+            id: Some(storage_memory.id.clone()),
+            slug: storage_memory.slug.clone(),
+            memory_type,
+            content: body.clone(),
+            author: storage_memory.author.clone(),
+            title: storage_memory.title.clone(),
+            keywords: Vec::new(), // Will be analysed by memory service if auto_metadata=true
+            tags,
+            context: None,
+            file_path: Some(rel_path.to_string()),
+            language: Some("markdown".to_string()),
+            source: Some(MemorySource::Agent), // Mark as agent memory, not file
+            metadata: HashMap::new(),
+            ..Default::default()
+        };
+
+        // Add memory to database and vector store
+        // auto_metadata=true will analyse content for keywords/context
+        let memory = self
+            .memory_service
+            .add(&project.id, &project.slug, create, true)
+            .await?;
+
+        info!(
+            memory_id = %memory.id,
+            title = ?memory.title,
+            "Imported fold memory"
+        );
 
         Ok(true)
     }
