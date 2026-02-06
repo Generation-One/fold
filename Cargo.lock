@@ -998,7 +998,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "fold-chunker"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "regex",
  "serde",
@@ -1100,7 +1100,7 @@ dependencies = [
 
 [[package]]
 name = "fold-embeddings"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "async-trait",
  "reqwest 0.12.28",
@@ -1124,7 +1124,7 @@ dependencies = [
 
 [[package]]
 name = "fold-llm"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "async-trait",
  "reqwest 0.12.28",
@@ -1137,7 +1137,7 @@ dependencies = [
 
 [[package]]
 name = "fold-models"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "chrono",
  "fold-storage",
@@ -1151,7 +1151,7 @@ dependencies = [
 
 [[package]]
 name = "fold-qdrant"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "qdrant-client",
  "serde",
@@ -1163,7 +1163,7 @@ dependencies = [
 
 [[package]]
 name = "fold-storage"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "chrono",
  "hex",
