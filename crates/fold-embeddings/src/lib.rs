@@ -1169,6 +1169,6 @@ mod tests {
     fn test_default_models() {
         assert_eq!(default_model("gemini"), "embedding-001");
         assert_eq!(default_model("openai"), "text-embedding-3-small");
-        assert_eq!(default_model("ollama"), "nomic-embed-text");
+        assert_eq!(default_model("ollama"), "nomic-embed-text:latest");
     }
 }
