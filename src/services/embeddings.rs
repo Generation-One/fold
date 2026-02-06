@@ -54,9 +54,10 @@ impl RuntimeEmbeddingProvider {
             .or(self.api_key.as_deref())
     }
 
-    /// Check if provider has valid credentials
+    /// Check if provider has valid credentials.
+    /// Ollama doesn't require authentication, so it always returns true for Ollama.
     pub fn has_credentials(&self) -> bool {
-        self.api_key.is_some() || self.oauth_access_token.is_some()
+        self.name == "ollama" || self.api_key.is_some() || self.oauth_access_token.is_some()
     }
 }
 
@@ -93,6 +94,7 @@ fn default_endpoint(name: &str) -> String {
     match name {
         "gemini" => "https://generativelanguage.googleapis.com/v1beta".to_string(),
         "openai" => "https://api.openai.com/v1".to_string(),
+        "ollama" => "http://localhost:11434".to_string(),
         _ => "https://api.openai.com/v1".to_string(),
     }
 }
@@ -103,6 +105,7 @@ fn default_model(name: &str) -> String {
         // embedding-001 was discontinued Nov 2025
         "gemini" => "embedding-001".to_string(),
         "openai" => "text-embedding-3-small".to_string(),
+        "ollama" => "nomic-embed-text:latest".to_string(),
         _ => "text-embedding-3-small".to_string(),
     }
 }
@@ -120,6 +123,12 @@ fn default_dimension(model: &str) -> usize {
         3072
     } else if model.contains("text-embedding-ada-002") {
         1536
+    } else if model.contains("nomic-embed-text") {
+        768
+    } else if model.contains("mxbai-embed") {
+        1024
+    } else if model.contains("all-minilm") {
+        384
     } else if model.contains("MiniLM-L6") {
         384
     } else if model.contains("mpnet") {
@@ -191,6 +200,13 @@ struct OpenAIError {
     #[serde(rename = "type")]
     #[allow(dead_code)]
     error_type: Option<String>,
+}
+
+/// Ollama embedding response (single)
+#[derive(Debug, Deserialize)]
+struct OllamaEmbedResponse {
+    embedding: Option<Vec<f32>>,
+    error: Option<String>,
 }
 
 impl EmbeddingService {
@@ -576,6 +592,7 @@ impl EmbeddingService {
         match provider.name.as_str() {
             "gemini" => self.call_gemini_batch(provider, texts).await,
             "openai" => self.call_openai_batch(provider, texts).await,
+            "ollama" => self.call_ollama_batch(provider, texts).await,
             _ => Err(Error::Internal(format!(
                 "Unknown embedding provider: {}",
                 provider.name
@@ -592,6 +609,7 @@ impl EmbeddingService {
         match provider.name.as_str() {
             "gemini" => self.call_gemini_single(provider, text).await,
             "openai" => self.call_openai_single(provider, text).await,
+            "ollama" => self.call_ollama_single(provider, text).await,
             _ => Err(Error::Internal(format!(
                 "Unknown embedding provider: {}",
                 provider.name
@@ -795,6 +813,59 @@ impl EmbeddingService {
         data.sort_by_key(|e| e.index);
 
         Ok(data.into_iter().map(|e| e.embedding).collect())
+    }
+
+    /// Call Ollama embedding API for single text
+    async fn call_ollama_single(
+        &self,
+        provider: &RuntimeEmbeddingProvider,
+        text: &str,
+    ) -> Result<Vec<f32>> {
+        let url = format!("{}/api/embeddings", provider.base_url);
+
+        let body = json!({
+            "model": provider.model,
+            "prompt": text
+        });
+
+        let response = self
+            .inner
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| Error::Internal(format!("Ollama request failed: {}", e)))?;
+
+        let resp: OllamaEmbedResponse = response
+            .json()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to parse Ollama response: {}", e)))?;
+
+        if let Some(error) = resp.error {
+            return Err(Error::Internal(format!("Ollama error: {}", error)));
+        }
+
+        resp.embedding
+            .ok_or_else(|| Error::Internal("No embedding in Ollama response".to_string()))
+    }
+
+    /// Call Ollama batch embedding API
+    async fn call_ollama_batch(
+        &self,
+        provider: &RuntimeEmbeddingProvider,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>> {
+        // Ollama doesn't have a true batch API, so we call single endpoint for each text
+        // This is less efficient but ensures compatibility across Ollama versions
+        let mut embeddings = Vec::with_capacity(texts.len());
+
+        for text in texts {
+            let embedding = self.call_ollama_single(provider, text).await?;
+            embeddings.push(embedding);
+        }
+
+        Ok(embeddings)
     }
 
     /// Check if an error is retryable (rate limit, temporary failure)

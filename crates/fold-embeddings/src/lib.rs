@@ -153,8 +153,9 @@ impl RuntimeEmbeddingProvider {
     }
 
     /// Check if provider has valid credentials.
+    /// Ollama doesn't require authentication, so it always returns true for Ollama.
     pub fn has_credentials(&self) -> bool {
-        self.api_key.is_some() || self.oauth_access_token.is_some()
+        self.name == "ollama" || self.api_key.is_some() || self.oauth_access_token.is_some()
     }
 }
 
