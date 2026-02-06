@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use chrono::Utc;
 use futures::stream::{self, StreamExt};
@@ -89,6 +89,10 @@ pub struct IndexerService {
 
 /// Progress callback for indexing
 pub type ProgressCallback = Box<dyn Fn(usize, usize, &str) + Send + Sync>;
+
+/// Cancellation check callback - returns true if the job should be cancelled.
+/// The indexer will call this periodically and stop processing if it returns true.
+pub type CancellationCheck = Arc<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>> + Send + Sync>;
 
 /// Result of indexing operation
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -253,11 +257,15 @@ impl IndexerService {
     }
 
     /// Index a project's codebase.
+    ///
+    /// If `cancellation_check` is provided, it will be called periodically
+    /// and indexing will stop early if it returns true.
     pub async fn index_project(
         &self,
         project: &Project,
         author: Option<&str>,
         progress: Option<ProgressCallback>,
+        cancellation_check: Option<CancellationCheck>,
     ) -> Result<IndexResult> {
         let root_path = project
             .root_path
@@ -303,22 +311,51 @@ impl IndexerService {
         let error_count = Arc::new(AtomicUsize::new(0));
         let processed_count = Arc::new(AtomicUsize::new(0));
 
+        // Flag to stop processing on first error or cancellation
+        let should_stop = Arc::new(AtomicBool::new(false));
+        // Store the first error message for reporting
+        let first_error: Arc<tokio::sync::RwLock<Option<String>>> = Arc::new(tokio::sync::RwLock::new(None));
+
         let total_files = files.len();
         let progress = Arc::new(progress);
+        let cancellation_check = Arc::new(cancellation_check);
 
         // Process files in parallel with concurrency limit
         stream::iter(files.into_iter().enumerate())
-            .for_each_concurrent(self.concurrency_limit, |(_, file_path)| {
+            .for_each_concurrent(self.concurrency_limit, |(i, file_path)| {
                 let indexed_count = Arc::clone(&indexed_count);
                 let skipped_count = Arc::clone(&skipped_count);
                 let error_count = Arc::clone(&error_count);
                 let processed_count = Arc::clone(&processed_count);
+                let should_stop = Arc::clone(&should_stop);
+                let first_error = Arc::clone(&first_error);
                 let progress = Arc::clone(&progress);
+                let cancellation_check = Arc::clone(&cancellation_check);
                 let project = project.clone();
                 let root = root.clone();
                 let author = author.map(String::from);
 
                 async move {
+                    // Check if we should stop before starting this file
+                    if should_stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+
+                    // Check cancellation every 10 files or on first file
+                    if i % 10 == 0 {
+                        if let Some(ref check) = *cancellation_check {
+                            if check().await {
+                                info!(project = %project.slug, "Indexing cancelled by external request");
+                                should_stop.store(true, Ordering::Relaxed);
+                                let mut err = first_error.write().await;
+                                if err.is_none() {
+                                    *err = Some("Indexing cancelled".to_string());
+                                }
+                                return;
+                            }
+                        }
+                    }
+
                     match self
                         .index_file(&file_path, &project, &root, author.as_deref())
                         .await
@@ -331,12 +368,23 @@ impl IndexerService {
                             }
                         }
                         Err(e) => {
+                            // FAIL FAST: Stop processing on first error
+                            let error_msg = format!("Error indexing {}: {}", file_path.display(), e);
                             warn!(
                                 file = %file_path.display(),
                                 error = %e,
-                                "Error indexing file"
+                                "Error indexing file - stopping immediately"
                             );
                             error_count.fetch_add(1, Ordering::Relaxed);
+
+                            // Signal all other tasks to stop
+                            should_stop.store(true, Ordering::Relaxed);
+
+                            // Store the error message if this is the first error
+                            let mut err = first_error.write().await;
+                            if err.is_none() {
+                                *err = Some(error_msg);
+                            }
                         }
                     }
 
@@ -356,21 +404,27 @@ impl IndexerService {
         let duration = (Utc::now() - start_time).num_milliseconds() as f64 / 1000.0;
         stats.duration_seconds = duration;
 
+        // Check if we were stopped early
+        let stopped = should_stop.load(Ordering::Relaxed);
+        let stored_error = first_error.read().await.clone();
+
         info!(
             project = %project.slug,
             indexed = stats.indexed_files,
             total = stats.total_files,
             errors = stats.errors,
+            stopped_early = stopped,
             duration_s = duration,
             "Indexing completed"
         );
 
-        // Fail immediately if any errors occurred - don't continue with partial results
-        if stats.errors > 0 {
-            return Err(Error::Internal(format!(
+        // Fail immediately if any errors occurred or we were stopped
+        if stats.errors > 0 || stored_error.is_some() {
+            let error_msg = stored_error.unwrap_or_else(|| format!(
                 "Indexing failed: {} errors out of {} files (indexed: {}, skipped: {})",
                 stats.errors, stats.total_files, stats.indexed_files, stats.skipped_files
-            )));
+            ));
+            return Err(Error::Internal(error_msg));
         }
 
         // Auto-commit fold/ changes if git service is available and files were indexed

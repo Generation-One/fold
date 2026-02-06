@@ -985,11 +985,23 @@ impl JobWorker {
         indexed_project.slug = project.slug.clone();
         indexed_project.root_path = Some(local_path.to_string());
 
+        // Create cancellation check that queries the job status
+        let db_pool = self.inner.db.clone();
+        let job_id_owned = job_id.to_string();
+        let cancellation_check: super::indexer::CancellationCheck = Arc::new(move || {
+            let db = db_pool.clone();
+            let jid = job_id_owned.clone();
+            Box::pin(async move {
+                db::is_job_cancelled(&db, &jid).await.unwrap_or(false)
+            })
+        });
+
         // Use the indexer service for local file indexing
         match self.inner.indexer.index_project(
             &indexed_project,
             Some("system"),
             None, // No progress callback
+            Some(cancellation_check), // Pass cancellation check
         ).await {
             Ok(result) => {
                 self.log_job(

@@ -869,6 +869,20 @@ pub async fn count_paused_jobs(pool: &DbPool) -> Result<i64> {
     Ok(result.0)
 }
 
+/// Check if a job has been cancelled.
+/// Used for cooperative cancellation - running jobs should check this periodically.
+pub async fn is_job_cancelled(pool: &DbPool, job_id: &str) -> Result<bool> {
+    let result: Option<(String,)> = sqlx::query_as(
+        "SELECT status FROM jobs WHERE id = ?",
+    )
+    .bind(job_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(Error::Database)?;
+
+    Ok(result.map(|(s,)| s == "cancelled").unwrap_or(false))
+}
+
 // ============================================================================
 // Job Execution Tracking
 // ============================================================================
