@@ -342,7 +342,7 @@ impl Config {
             providers.push(EmbeddingProvider {
                 name: "gemini".to_string(),
                 base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
-                model: env_or("GEMINI_EMBEDDING_MODEL", "text-embedding-001"),
+                model: env_or("GEMINI_EMBEDDING_MODEL", "embedding-001"),
                 api_key,
                 priority: 1,
             });
@@ -379,7 +379,7 @@ impl Config {
     /// Get embedding dimension for known models
     fn embedding_dimension(model: &str) -> usize {
         // Gemini models
-        if model.contains("text-embedding-001") {
+        if model.contains("embedding-001") {
             768
         } else if model.contains("embedding-001") {
             768

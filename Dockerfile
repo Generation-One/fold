@@ -78,7 +78,7 @@ EXPOSE 8765
 #   OPENAI_MODEL          - Model name (default: gpt-4o-mini)
 #
 # EMBEDDINGS:
-#   GEMINI_EMBEDDING_MODEL  - Gemini model (default: text-embedding-001)
+#   GEMINI_EMBEDDING_MODEL  - Gemini model (default: embedding-001)
 #   OPENAI_EMBEDDING_MODEL  - OpenAI model (default: text-embedding-3-small)
 #   OLLAMA_EMBEDDING_MODEL  - Ollama model (default: nomic-embed-text:latest)
 #   EMBEDDING_DIMENSION     - Vector dimension (default: 768)

@@ -570,7 +570,7 @@ fn default_model_for_provider(provider: &str) -> String {
 /// Default embedding models for each provider.
 fn default_embedding_model_for_provider(provider: &str) -> String {
     match provider {
-        "gemini" => "text-embedding-001".to_string(),
+        "gemini" => "embedding-001".to_string(),
         "openai" => "text-embedding-3-small".to_string(),
         _ => "unknown".to_string(),
     }

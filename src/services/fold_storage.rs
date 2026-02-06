@@ -170,7 +170,7 @@ fn default_provider() -> String {
 }
 
 fn default_model() -> String {
-    "text-embedding-001".to_string()
+    "embedding-001".to_string()
 }
 
 fn default_dimension() -> usize {

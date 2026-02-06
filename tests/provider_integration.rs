@@ -491,7 +491,7 @@ mod service_integration {
                 auth_type: "api_key".to_string(),
                 api_key: Some(api_key),
                 config: json!({
-                    "model": "text-embedding-001",
+                    "model": "embedding-001",
                     "endpoint": "https://generativelanguage.googleapis.com/v1beta",
                     "dimension": 768
                 }),

@@ -138,7 +138,7 @@ Vector embedding generation via Gemini or OpenAI.
 
 **Config:**
 - Provider: `EMBEDDING_PROVIDER` (gemini or openai)
-- Model: `EMBEDDING_MODEL` (default: text-embedding-001)
+- Model: `EMBEDDING_MODEL` (default: embedding-001)
 - Dimension: `EMBEDDING_DIMENSION` (default: 768)
 
 ### 8. Git Service (`src/services/git.rs`)
@@ -404,7 +404,7 @@ cd srv
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `EMBEDDING_PROVIDER` | `gemini` | Provider: gemini or openai |
-| `EMBEDDING_MODEL` | `text-embedding-001` | Model identifier |
+| `EMBEDDING_MODEL` | `embedding-001` | Model identifier |
 | `EMBEDDING_DIMENSION` | `768` | Vector dimension |
 
 ### Server
@@ -445,7 +445,7 @@ exclude = ["node_modules/**", "dist/**", ".git/**", "fold/**"]
 
 [embedding]
 provider = "gemini"
-model = "text-embedding-001"
+model = "embedding-001"
 dimension = 768
 ```
 
