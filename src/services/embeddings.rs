@@ -102,8 +102,7 @@ fn default_endpoint(name: &str) -> String {
 /// Get default model for a provider
 fn default_model(name: &str) -> String {
     match name {
-        // embedding-001 was discontinued Nov 2025
-        "gemini" => "embedding-001".to_string(),
+        "gemini" => "gemini-embedding-001".to_string(),
         "openai" => "text-embedding-3-small".to_string(),
         "ollama" => "nomic-embed-text:latest".to_string(),
         _ => "text-embedding-3-small".to_string(),
@@ -113,9 +112,6 @@ fn default_model(name: &str) -> String {
 /// Get default dimension for a model
 fn default_dimension(model: &str) -> usize {
     if model.contains("gemini-embedding-001") {
-        // gemini-embedding-001 default is 3072, but can be scaled down via MRL
-        3072
-    } else if model.contains("embedding-001") || model.contains("embedding-001") {
         768
     } else if model.contains("text-embedding-3-small") {
         1536
@@ -632,11 +628,13 @@ impl EmbeddingService {
             provider.base_url, provider.model, auth_token
         );
 
+        let dimension = provider.dimension.unwrap_or(*self.inner.dimension.read().await);
         let body = json!({
             "model": format!("models/{}", provider.model),
             "content": {
                 "parts": [{"text": text}]
-            }
+            },
+            "outputDimensionality": dimension
         });
 
         let response = self
@@ -974,7 +972,7 @@ mod tests {
 
     #[test]
     fn test_default_dimensions() {
-        assert_eq!(default_dimension("embedding-001"), 768);
+        assert_eq!(default_dimension("gemini-embedding-001"), 768);
         assert_eq!(default_dimension("text-embedding-3-small"), 1536);
         assert_eq!(default_dimension("text-embedding-3-large"), 3072);
         assert_eq!(default_dimension("unknown-model"), 384);

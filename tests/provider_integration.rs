@@ -73,7 +73,8 @@ mod gemini {
                     "parts": [{
                         "text": "Hello, this is a test embedding"
                     }]
-                }
+                },
+                "outputDimensionality": 768
             }))
             .send()
             .await
@@ -491,7 +492,7 @@ mod service_integration {
                 auth_type: "api_key".to_string(),
                 api_key: Some(api_key),
                 config: json!({
-                    "model": "embedding-001",
+                    "model": "gemini-embedding-001",
                     "endpoint": "https://generativelanguage.googleapis.com/v1beta",
                     "dimension": 768
                 }),

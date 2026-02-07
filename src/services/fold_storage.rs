@@ -170,7 +170,7 @@ fn default_provider() -> String {
 }
 
 fn default_model() -> String {
-    "embedding-001".to_string()
+    "gemini-embedding-001".to_string()
 }
 
 fn default_dimension() -> usize {

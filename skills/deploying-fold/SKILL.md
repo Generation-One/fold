@@ -197,7 +197,7 @@ AUTH_PROVIDER_GITHUB_CLIENT_SECRET=xxx
 ### Embeddings
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GEMINI_EMBEDDING_MODEL` | `embedding-001` | Gemini model |
+| `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-001` | Gemini model |
 | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI model |
 | `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text:latest` | Ollama model |
 | `EMBEDDING_DIMENSION` | `768` | Vector dimension |

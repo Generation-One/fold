@@ -638,7 +638,7 @@ OPENROUTER_API_KEY=...      # OpenRouter
 
 # Embedding
 EMBEDDING_PROVIDER=gemini   # or openai
-EMBEDDING_MODEL=embedding-001
+EMBEDDING_MODEL=gemini-embedding-001
 EMBEDDING_DIMENSION=768
 
 # Server
@@ -662,7 +662,7 @@ exclude = ["node_modules/**", "dist/**", ".git/**", "fold/**"]
 
 [embedding]
 provider = "gemini"
-model = "embedding-001"
+model = "gemini-embedding-001"
 dimension = 768
 ```
 

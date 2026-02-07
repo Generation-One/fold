@@ -606,7 +606,7 @@ fn default_model_for_provider(provider: &str) -> String {
 /// Default embedding models for each provider.
 fn default_embedding_model_for_provider(provider: &str) -> String {
     match provider {
-        "gemini" => "embedding-001".to_string(),
+        "gemini" => "gemini-embedding-001".to_string(),
         "openai" => "text-embedding-3-small".to_string(),
         _ => "unknown".to_string(),
     }
@@ -1220,7 +1220,8 @@ async fn test_gemini_embedding(
         "model": format!("models/{}", model),
         "content": {
             "parts": [{"text": "Hello"}]
-        }
+        },
+        "outputDimensionality": 768
     });
 
     let response = client

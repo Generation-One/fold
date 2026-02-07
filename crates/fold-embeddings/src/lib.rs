@@ -15,7 +15,7 @@
 //!         EmbeddingProviderConfig {
 //!             name: "gemini".to_string(),
 //!             base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
-//!             model: "embedding-001".to_string(),
+//!             model: "gemini-embedding-001".to_string(),
 //!             api_key: "your-api-key".to_string(),
 //!             priority: 1,
 //!         },
@@ -196,7 +196,7 @@ pub fn default_endpoint(name: &str) -> String {
 /// Get default model for a provider.
 pub fn default_model(name: &str) -> String {
     match name {
-        "gemini" => "embedding-001".to_string(),
+        "gemini" => "gemini-embedding-001".to_string(),
         "openai" => "text-embedding-3-small".to_string(),
         "ollama" => "nomic-embed-text:latest".to_string(),
         _ => "text-embedding-3-small".to_string(),
@@ -205,7 +205,7 @@ pub fn default_model(name: &str) -> String {
 
 /// Get default dimension for a model.
 pub fn default_dimension(model: &str) -> usize {
-    if model.contains("embedding-001") || model.contains("embedding-001") {
+    if model.contains("gemini-embedding-001") {
         768
     } else if model.contains("text-embedding-3-small") {
         1536
@@ -776,11 +776,13 @@ impl EmbeddingService {
             provider.base_url, provider.model, auth_token
         );
 
+        let dimension = provider.dimension.unwrap_or(*self.inner.dimension.read().await);
         let body = json!({
             "model": format!("models/{}", provider.model),
             "content": {
                 "parts": [{"text": text}]
-            }
+            },
+            "outputDimensionality": dimension
         });
 
         let response = self
@@ -1149,7 +1151,7 @@ mod tests {
 
     #[test]
     fn test_default_dimensions() {
-        assert_eq!(default_dimension("embedding-001"), 768);
+        assert_eq!(default_dimension("gemini-embedding-001"), 768);
         assert_eq!(default_dimension("text-embedding-3-small"), 1536);
         assert_eq!(default_dimension("text-embedding-3-large"), 3072);
         assert_eq!(default_dimension("unknown-model"), 384);
@@ -1167,7 +1169,7 @@ mod tests {
 
     #[test]
     fn test_default_models() {
-        assert_eq!(default_model("gemini"), "embedding-001");
+        assert_eq!(default_model("gemini"), "gemini-embedding-001");
         assert_eq!(default_model("openai"), "text-embedding-3-small");
         assert_eq!(default_model("ollama"), "nomic-embed-text:latest");
     }
