@@ -243,6 +243,12 @@ pub struct MemoryCreate {
     // Custom metadata
     #[serde(default)]
     pub metadata: HashMap<String, serde_json::Value>,
+
+    /// Optional creation timestamp. If provided, used as the memory's created_at.
+    /// For codebase files, this should be the earliest known date (from filesystem
+    /// metadata or dates extracted from the file content by the LLM).
+    #[serde(default)]
+    pub created_at: Option<DateTime<Utc>>,
 }
 
 impl Default for MemoryCreate {
@@ -262,6 +268,7 @@ impl Default for MemoryCreate {
             status: None,
             assignee: None,
             metadata: HashMap::new(),
+            created_at: None,
         }
     }
 }

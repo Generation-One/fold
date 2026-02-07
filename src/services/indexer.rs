@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use chrono::Utc;
+use chrono::{DateTime, NaiveDate, Utc};
 use futures::stream::{self, StreamExt};
 use sha2::{Sha256, Digest};
 use tokio::fs;
@@ -232,6 +232,40 @@ impl IndexerService {
         hasher.update(content.as_bytes());
         let result = hasher.finalize();
         hex::encode(&result)
+    }
+
+    /// Resolve the earliest creation date for a file from multiple sources:
+    /// 1. LLM-extracted date from file content (comments, headers, annotations)
+    /// 2. Filesystem created/modified timestamps
+    ///
+    /// Returns the earliest date found, or None if no dates could be determined.
+    async fn resolve_creation_date(
+        file_path: &Path,
+        llm_date: Option<&str>,
+    ) -> Option<DateTime<Utc>> {
+        let mut candidates: Vec<DateTime<Utc>> = Vec::new();
+
+        // Parse LLM-extracted date (YYYY-MM-DD format)
+        if let Some(date_str) = llm_date {
+            if let Ok(naive) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+                if let Some(dt) = naive.and_hms_opt(0, 0, 0) {
+                    candidates.push(DateTime::from_naive_utc_and_offset(dt, Utc));
+                }
+            }
+        }
+
+        // Get filesystem metadata timestamps
+        if let Ok(metadata) = fs::metadata(file_path).await {
+            if let Ok(created) = metadata.created() {
+                candidates.push(DateTime::from(created));
+            }
+            if let Ok(modified) = metadata.modified() {
+                candidates.push(DateTime::from(modified));
+            }
+        }
+
+        // Return the earliest date
+        candidates.into_iter().min()
     }
 
     /// Generate a stable memory ID from project slug and file path.
@@ -583,6 +617,12 @@ impl IndexerService {
             return Err(Error::Llm("LLM returned empty summary - cannot index without proper summarization".to_string()));
         }
 
+        // Resolve the earliest creation date from LLM-extracted dates and filesystem
+        let resolved_created_at = Self::resolve_creation_date(
+            file_path,
+            created_date.as_deref(),
+        ).await;
+
         let mut metadata = HashMap::new();
         metadata.insert(
             "content_hash".to_string(),
@@ -619,6 +659,7 @@ impl IndexerService {
                 Some(language.clone())
             },
             metadata,
+            created_at: resolved_created_at,
             ..Default::default()
         };
 
@@ -686,11 +727,20 @@ impl IndexerService {
         let summary_content = code_summary.summary;
         let keywords = code_summary.keywords;
         let tags = code_summary.tags;
+        let created_date = code_summary.created_date;
 
         // Ensure we got a real summary, not empty
         if summary_content.trim().is_empty() {
             return Err(Error::Llm("LLM returned empty summary - cannot index without proper summarization".to_string()));
         }
+
+        // Resolve earliest creation date from LLM extraction and filesystem
+        let abs_path = project.root_path.as_ref()
+            .map(|root| Path::new(root).join(file_path));
+        let resolved_created_at = Self::resolve_creation_date(
+            abs_path.as_deref().unwrap_or(Path::new(file_path)),
+            created_date.as_deref(),
+        ).await;
 
         // Include hash and file stats in metadata
         let mut metadata = HashMap::new();
@@ -706,6 +756,12 @@ impl IndexerService {
             "line_count".to_string(),
             serde_json::Value::Number((content.lines().count()).into()),
         );
+        if let Some(ref date) = created_date {
+            metadata.insert(
+                "original_date".to_string(),
+                serde_json::Value::String(date.clone()),
+            );
+        }
 
         let create = MemoryCreate {
             id: Some(memory_id),
@@ -723,6 +779,7 @@ impl IndexerService {
                 Some(language.clone())
             },
             metadata,
+            created_at: resolved_created_at,
             ..Default::default()
         };
 

@@ -594,6 +594,7 @@ Return JSON:
         // Use provided ID if available (e.g. path-based hash for codebase files),
         // otherwise generate a new UUID
         let now = Utc::now();
+        let created_at = data.created_at.unwrap_or(now);
 
         // Compute content hash for deduplication and change detection
         let content_hash = {
@@ -635,7 +636,7 @@ Return JSON:
             } else {
                 Some(serde_json::to_string(&data.metadata).unwrap())
             },
-            created_at: now,
+            created_at,
             updated_at: now,
             retrieval_count: 0,
             last_accessed: None,
