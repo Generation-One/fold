@@ -99,6 +99,8 @@ impl QdrantService {
     }
 
     /// Create a collection for a project if it doesn't exist.
+    /// If the collection exists but has a different dimension, it will be
+    /// deleted and recreated with the correct dimension.
     pub async fn create_collection(&self, project_slug: &str, dimension: usize) -> Result<()> {
         let collection_name = self.collection_name(project_slug);
 
@@ -111,8 +113,47 @@ impl QdrantService {
             .map_err(|e| Error::VectorStore(format!("Failed to check collection: {}", e)))?;
 
         if exists {
-            debug!(collection = %collection_name, "Collection already exists");
-            return Ok(());
+            // Check if the existing collection has the right dimension
+            let info = self
+                .inner
+                .client
+                .collection_info(&collection_name)
+                .await
+                .map_err(|e| Error::VectorStore(format!("Failed to get collection info: {}", e)))?;
+
+            // Extract vector dimension from collection config
+            let existing_dim = info
+                .result
+                .as_ref()
+                .and_then(|r| r.config.as_ref())
+                .and_then(|c| c.params.as_ref())
+                .and_then(|p| p.vectors_config.as_ref())
+                .and_then(|vc| match vc.config.as_ref() {
+                    Some(qdrant_client::qdrant::vectors_config::Config::Params(params)) => {
+                        Some(params.size as usize)
+                    }
+                    _ => None,
+                })
+                .unwrap_or(0);
+
+            if existing_dim == dimension {
+                debug!(collection = %collection_name, dimension, "Collection already exists with correct dimension");
+                return Ok(());
+            }
+
+            // Dimension mismatch - delete and recreate
+            info!(
+                collection = %collection_name,
+                existing_dim,
+                new_dim = dimension,
+                "Collection dimension mismatch - recreating"
+            );
+
+            self.inner
+                .client
+                .delete_collection(&collection_name)
+                .await
+                .map_err(|e| Error::VectorStore(format!("Failed to delete mismatched collection: {}", e)))?;
         }
 
         // Create collection using builder
@@ -303,6 +344,20 @@ impl QdrantService {
             .await
             .map_err(|e| Error::VectorStore(format!("Failed to get collection info: {}", e)))?;
 
+        let dim = info
+            .result
+            .as_ref()
+            .and_then(|r| r.config.as_ref())
+            .and_then(|c| c.params.as_ref())
+            .and_then(|p| p.vectors_config.as_ref())
+            .and_then(|vc| match vc.config.as_ref() {
+                Some(qdrant_client::qdrant::vectors_config::Config::Params(params)) => {
+                    Some(params.size as usize)
+                }
+                _ => None,
+            })
+            .unwrap_or(0);
+
         Ok(CollectionInfo {
             name: collection_name,
             exists: true,
@@ -310,7 +365,7 @@ impl QdrantService {
                 .result
                 .map(|r| r.points_count.unwrap_or(0))
                 .unwrap_or(0),
-            dimension: 384, // Would need to extract from config
+            dimension: dim,
         })
     }
 

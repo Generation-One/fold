@@ -632,50 +632,19 @@ impl IndexerService {
         // The linker service provides ADDITIONAL semantic similarity-based linking.
         if let Some(ref linker) = self.linker {
             info!(memory_id = %memory.id, "Starting auto-link for memory");
-            match linker.auto_link(&project.id, &project.slug, &memory.id, 0.3).await {
-                Ok(result) => {
-                    info!(
-                        memory_id = %memory.id,
-                        links_created = result.links_created,
-                        suggestions = result.suggestions.len(),
-                        "Auto-link completed"
-                    );
-                }
-                Err(e) => {
-                    warn!(memory_id = %memory.id, error = %e, "Auto-linking failed");
-                }
-            }
-        } else {
-            debug!(memory_id = %memory.id, "No linker configured, skipping auto-link");
+            linker.auto_link(&project.id, &project.slug, &memory.id, 0.3).await
+                .map_err(|e| {
+                    Error::Internal(format!("Auto-linking failed for {}: {}", rel_path, e))
+                })?;
         }
-
-        // NOTE: The fold file write is handled by memory.add() via FoldStorageService.
-        // We removed the duplicate write here that was erasing the related_to links.
-        // The memory.add() call above already writes to fold/ with evolution-based links.
 
         // Extract and store semantic chunks for fine-grained search
         if self.chunking_enabled() {
-            match self
-                .process_chunks(&memory.id, &project.id, &project.slug, &content, &language)
+            self.process_chunks(&memory.id, &project.id, &project.slug, &content, &language)
                 .await
-            {
-                Ok(chunk_count) => {
-                    if chunk_count > 0 {
-                        debug!(
-                            memory_id = %memory.id,
-                            chunks = chunk_count,
-                            "Extracted and stored chunks"
-                        );
-                    }
-                }
-                Err(e) => {
-                    warn!(
-                        memory_id = %memory.id,
-                        error = %e,
-                        "Failed to process chunks (non-fatal)"
-                    );
-                }
-            }
+                .map_err(|e| {
+                    Error::Internal(format!("Chunk processing failed for {}: {}", rel_path, e))
+                })?;
         }
 
         // Update in-memory hash cache
@@ -765,49 +734,19 @@ impl IndexerService {
         // Auto-link to related memories for holographic context
         if let Some(ref linker) = self.linker {
             info!(memory_id = %memory.id, "Starting auto-link for memory");
-            match linker.auto_link(&project.id, &project.slug, &memory.id, 0.3).await {
-                Ok(result) => {
-                    info!(
-                        memory_id = %memory.id,
-                        links_created = result.links_created,
-                        suggestions = result.suggestions.len(),
-                        "Auto-link completed"
-                    );
-                }
-                Err(e) => {
-                    warn!(memory_id = %memory.id, error = %e, "Auto-linking failed");
-                }
-            }
-        } else {
-            debug!(memory_id = %memory.id, "No linker configured, skipping auto-link");
+            linker.auto_link(&project.id, &project.slug, &memory.id, 0.3).await
+                .map_err(|e| {
+                    Error::Internal(format!("Auto-linking failed for {}: {}", file_path, e))
+                })?;
         }
-
-        // NOTE: The fold file write is handled by memory.add() via FoldStorageService.
-        // We removed the duplicate write here that was erasing the related_to links.
 
         // Extract and store semantic chunks for fine-grained search
         if self.chunking_enabled() {
-            match self
-                .process_chunks(&memory.id, &project.id, &project.slug, content, &language)
+            self.process_chunks(&memory.id, &project.id, &project.slug, content, &language)
                 .await
-            {
-                Ok(chunk_count) => {
-                    if chunk_count > 0 {
-                        debug!(
-                            memory_id = %memory.id,
-                            chunks = chunk_count,
-                            "Extracted and stored chunks"
-                        );
-                    }
-                }
-                Err(e) => {
-                    warn!(
-                        memory_id = %memory.id,
-                        error = %e,
-                        "Failed to process chunks (non-fatal)"
-                    );
-                }
-            }
+                .map_err(|e| {
+                    Error::Internal(format!("Chunk processing failed for {}: {}", file_path, e))
+                })?;
         }
 
         Ok(memory)
@@ -884,17 +823,10 @@ impl IndexerService {
         let texts: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
 
         // Generate embeddings for all chunks
-        let embeddings = match embedding.embed(texts).await {
-            Ok(embs) => embs,
-            Err(e) => {
-                warn!(
-                    memory_id = %memory_id,
-                    error = %e,
-                    "Failed to generate chunk embeddings"
-                );
-                return Ok(chunk_count); // Still return chunk count - DB storage succeeded
-            }
-        };
+        let embeddings = embedding.embed(texts).await
+            .map_err(|e| {
+                Error::Internal(format!("Embedding generation failed: {}", e))
+            })?;
 
         // Prepare Qdrant points
         let points: Vec<(String, Vec<f32>, HashMap<String, serde_json::Value>)> = chunks
@@ -942,20 +874,16 @@ impl IndexerService {
             .collect();
 
         // Store in Qdrant
-        if let Err(e) = qdrant.upsert_batch(project_slug, points).await {
-            warn!(
-                memory_id = %memory_id,
-                error = %e,
-                "Failed to store chunk vectors in Qdrant"
-            );
-            // Don't fail - DB storage succeeded
-        } else {
-            info!(
-                memory_id = %memory_id,
-                chunks = chunk_count,
-                "Stored chunk vectors in Qdrant"
-            );
-        }
+        qdrant.upsert_batch(project_slug, points).await
+            .map_err(|e| {
+                Error::Internal(format!("Qdrant upsert failed: {}", e))
+            })?;
+
+        info!(
+            memory_id = %memory_id,
+            chunks = chunk_count,
+            "Stored chunk vectors in Qdrant"
+        );
 
         Ok(chunk_count)
     }
