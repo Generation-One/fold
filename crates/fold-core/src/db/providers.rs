@@ -152,6 +152,12 @@ impl EmbeddingProviderRow {
         })
     }
 
+    pub fn endpoint(&self) -> Option<String> {
+        self.config_json()
+            .ok()
+            .and_then(|c| c.get("endpoint").and_then(|e| e.as_str()).map(String::from))
+    }
+
     /// Get search priority from config (if set).
     /// Search priority determines provider ordering for search queries.
     pub fn search_priority(&self) -> Option<i32> {

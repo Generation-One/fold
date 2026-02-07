@@ -608,6 +608,8 @@ fn default_embedding_model_for_provider(provider: &str) -> String {
     match provider {
         "gemini" => "gemini-embedding-001".to_string(),
         "openai" => "text-embedding-3-small".to_string(),
+        "openrouter" => "openai/text-embedding-3-small".to_string(),
+        "ollama" => "nomic-embed-text".to_string(),
         _ => "unknown".to_string(),
     }
 }
@@ -617,6 +619,8 @@ fn default_dimension_for_provider(provider: &str) -> usize {
     match provider {
         "gemini" => 768,
         "openai" => 1536,
+        "openrouter" => 1536,
+        "ollama" => 768,
         _ => 768,
     }
 }
@@ -922,7 +926,7 @@ async fn create_embedding(
     Json(req): Json<CreateEmbeddingProviderRequest>,
 ) -> Result<Json<EmbeddingProviderResponse>> {
     // Validate provider name
-    let valid_names = ["gemini", "openai", "ollama"];
+    let valid_names = ["gemini", "openai", "openrouter", "ollama"];
     if !valid_names.contains(&req.name.as_str()) {
         return Err(Error::Validation(format!(
             "Invalid embedding provider name '{}'. Must be one of: {:?}",
@@ -1140,6 +1144,7 @@ async fn test_embedding(
     let result = match provider.name.as_str() {
         "gemini" => test_gemini_embedding(&client, api_key, &model).await,
         "openai" => test_openai_embedding(&client, api_key, &model).await,
+        "openrouter" => test_openrouter_embedding(&client, api_key, &model).await,
         "ollama" => {
             let base_url = provider
                 .config_json()
@@ -1286,6 +1291,51 @@ async fn test_openai_embedding(
     let json: JsonValue = response
         .json()
         .await
+        .map_err(|e| ("PARSE_ERROR".to_string(), e.to_string()))?;
+
+    let embedding = json["data"][0]["embedding"].as_array().ok_or_else(|| {
+        (
+            "INVALID_RESPONSE".to_string(),
+            "No embedding in response".to_string(),
+        )
+    })?;
+
+    let usage = ProviderTestUsage {
+        input_tokens: json["usage"]["prompt_tokens"].as_i64(),
+        output_tokens: None,
+        total_tokens: json["usage"]["total_tokens"].as_i64(),
+    };
+
+    Ok((embedding.len(), usage))
+}
+
+/// Test OpenRouter Embedding API (OpenAI-compatible).
+async fn test_openrouter_embedding(
+    client: &reqwest::Client,
+    api_key: &str,
+    model: &str,
+) -> std::result::Result<(usize, ProviderTestUsage), (String, String)> {
+    let body = json!({
+        "model": model,
+        "input": "Hello"
+    });
+
+    let response = client
+        .post("https://openrouter.ai/api/v1/embeddings")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("HTTP-Referer", "https://fold.dev")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| ("REQUEST_FAILED".to_string(), e.to_string()))?;
+
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let error_text = response.text().await.unwrap_or_default();
+        return Err((format!("HTTP_{}", status), error_text));
+    }
+
+    let json: JsonValue = response.json().await
         .map_err(|e| ("PARSE_ERROR".to_string(), e.to_string()))?;
 
     let embedding = json["data"][0]["embedding"].as_array().ok_or_else(|| {
