@@ -188,6 +188,7 @@ pub fn default_endpoint(name: &str) -> String {
     match name {
         "gemini" => "https://generativelanguage.googleapis.com/v1beta".to_string(),
         "openai" => "https://api.openai.com/v1".to_string(),
+        "openrouter" => "https://openrouter.ai/api/v1".to_string(),
         "ollama" => "http://localhost:11434".to_string(),
         _ => "https://api.openai.com/v1".to_string(),
     }
@@ -198,6 +199,7 @@ pub fn default_model(name: &str) -> String {
     match name {
         "gemini" => "gemini-embedding-001".to_string(),
         "openai" => "text-embedding-3-small".to_string(),
+        "openrouter" => "openai/text-embedding-3-small".to_string(),
         "ollama" => "nomic-embed-text:latest".to_string(),
         _ => "text-embedding-3-small".to_string(),
     }
@@ -737,7 +739,7 @@ impl EmbeddingService {
     ) -> Result<Vec<Vec<f32>>> {
         match provider.name.as_str() {
             "gemini" => self.call_gemini_batch(provider, texts).await,
-            "openai" => self.call_openai_batch(provider, texts).await,
+            "openai" | "openrouter" => self.call_openai_batch(provider, texts).await,
             "ollama" => self.call_ollama_batch(provider, texts).await,
             _ => Err(Error::Internal(format!(
                 "Unknown embedding provider: {}",
@@ -754,7 +756,7 @@ impl EmbeddingService {
     ) -> Result<Vec<f32>> {
         match provider.name.as_str() {
             "gemini" => self.call_gemini_single(provider, text).await,
-            "openai" => self.call_openai_single(provider, text).await,
+            "openai" | "openrouter" => self.call_openai_single(provider, text).await,
             "ollama" => self.call_ollama_single(provider, text).await,
             _ => Err(Error::Internal(format!(
                 "Unknown embedding provider: {}",
@@ -1164,6 +1166,7 @@ mod tests {
             "https://generativelanguage.googleapis.com/v1beta"
         );
         assert_eq!(default_endpoint("openai"), "https://api.openai.com/v1");
+        assert_eq!(default_endpoint("openrouter"), "https://openrouter.ai/api/v1");
         assert_eq!(default_endpoint("ollama"), "http://localhost:11434");
     }
 
@@ -1171,6 +1174,7 @@ mod tests {
     fn test_default_models() {
         assert_eq!(default_model("gemini"), "gemini-embedding-001");
         assert_eq!(default_model("openai"), "text-embedding-3-small");
+        assert_eq!(default_model("openrouter"), "openai/text-embedding-3-small");
         assert_eq!(default_model("ollama"), "nomic-embed-text:latest");
     }
 }

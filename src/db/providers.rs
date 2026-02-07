@@ -150,6 +150,12 @@ impl EmbeddingProviderRow {
             .and_then(|c| c.get("dimension").and_then(|d| d.as_u64()).map(|d| d as usize))
     }
 
+    pub fn endpoint(&self) -> Option<String> {
+        self.config_json()
+            .ok()
+            .and_then(|c| c.get("endpoint").and_then(|e| e.as_str()).map(String::from))
+    }
+
     pub fn is_oauth_token_expired(&self) -> bool {
         if let Some(ref expires) = self.oauth_token_expires_at {
             if let Ok(dt) = DateTime::parse_from_rfc3339(expires) {
